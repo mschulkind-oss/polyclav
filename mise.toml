@@ -1,0 +1,19 @@
+[tools]
+go = "1.26"
+just = "1.51.0"
+rust = "stable"
+
+[env]
+GOCACHE = "{{ config_root }}/.gocache"
+GOFLAGS = "-mod=mod"
+RUSTUP_HOME = "{{ config_root }}/.rustup"
+CARGO_HOME = "{{ config_root }}/.cargo"
+_.path = ["{{ config_root }}/.cargo/bin"]
+
+# The jail/nix build env (LIBCLANG_PATH, CGO_CFLAGS, CGO_CXXFLAGS, CGO_LDFLAGS,
+# C_INCLUDE_PATH, CPLUS_INCLUDE_PATH, PKG_CONFIG_PATH, and the
+# pkg-config-wrapper PATH entry) is host/jail-specific and intentionally NOT
+# committed here — those values pin exact /nix/store/... paths that only exist
+# in one particular jail. They live in .mise.local.toml, which is gitignored
+# and auto-provided inside the yolo jail. nix users get the same env from
+# `nix develop` via flake.nix. This keeps the committed mise.toml portable.

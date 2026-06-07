@@ -1,0 +1,290 @@
+# polyclav example config — copy to ~/.config/polyclav/polyclav.toml and edit.
+#
+#   mkdir -p ~/.config/polyclav
+#   cp polyclav.example.toml ~/.config/polyclav/polyclav.toml
+#
+# A missing config file is fine: polyclav falls back to compiled-in defaults
+# (no soundfont -> sine fallback; "launchkey" MIDI port match; OSC mixer
+# control OFF by default -> no XR18 host, so no OSC is sent until you set
+# [osc.xr18].host yourself).
+#
+# All soundfont paths below are EXAMPLES and use `~/.local/share/polyclav/soundfonts/`.
+# polyclav expands a leading `~` to your home directory. Drop your soundfonts
+# under that directory, or edit the paths to point wherever you have them.
+# See docs/INSTALL.md for free starter soundfont sources.
+
+[mastering]
+# Final-stage DSP applied after the per-patch chain, before the brick-wall
+# limiter. See docs/USER_GUIDE.md for the full DSP chain order.
+#
+# Optional: if this block is absent, polyclav applies the defaults shown below
+# (comp_amount = 0.5, limiter_ceiling_db = -0.3).
+
+# Mastering compressor amount (0..1). 0 = bypass; sensible default 0.5.
+comp_amount = 0.5
+# Brick-wall limiter ceiling in dBFS. Default -0.3 (catches inter-sample
+# peaks while leaving a hair of headroom for D/A reconstruction).
+# Clamped to [-12, 0] in Rust.
+limiter_ceiling_db = -0.3
+
+[soundfont]
+# Path to a SoundFont or SFZ. Extension picks the backend:
+#   .sf2 / .sf3 -> oxisynth (pure Rust)
+#   .sfz        -> sfizz (C library)
+# Empty / unset / missing file -> sine fallback (440 Hz @ -20 dBFS).
+# Leading `~` is expanded to your home directory.
+#
+# Example free soundfonts you might want to install (filenames only — pick a
+# location, e.g. ~/.local/share/polyclav/soundfonts/, and drop them there):
+#
+#   acoustic grand (SF2, ~113 MB, oxisynth path):
+#     YDP-GrandPiano-SF2-20160804/YDP-GrandPiano-20160804.sf2
+#
+#   general MIDI (SF3, ~39 MB, oxisynth path):
+#     MuseScore_General.sf3
+#
+#   acoustic grand (SFZ, sfizz path):
+#     SalamanderGrandPianoV3_44.1khz16bit/SalamanderGrandPianoV3.sfz
+#     SplendidGrandPiano-master/Splendid Grand Piano.sfz
+#     BengtNilsson.HeadroomPiano-master/Headroom Piano.sfz
+#
+#   upright (SFZ):
+#     KeyPleezer LivingRoom Upright - Free Micro SFZ.sfz
+#
+#   electric pianos (SFZ — Greg Sullivan):
+#     GregSullivan.E-Pianos-master/Wurlitzer EP200/Wurlitzer EP200.sfz
+#     GregSullivan.E-Pianos-master/CP80/CP80.sfz
+#     GregSullivan.E-Pianos-master/Pianet T/Pianet T.sfz
+#
+#   rhodes (SFZ):
+#     jlearman.jRhodes3d-master/jRhodes3d-mono/_jRhodes3d-mono-flac.sfz
+#
+#   character / effected (SFZ):
+#     Scarypiano/Programs/Scarypiano.sfz
+path = "~/.local/share/polyclav/soundfonts/YDP-GrandPiano-SF2-20160804/YDP-GrandPiano-20160804.sf2"
+
+[midi]
+# Case-insensitive substring matched against ALSA-seq MIDI input port names.
+# The Launchkey 61 MK4 enumerates as "Launchkey MK4 61 MIDI" (keys, wheels,
+# pads) and "Launchkey MK4 61 DAW" (transport, knobs, faders) — the default
+# "launchkey" picks the first match (the MIDI port).
+# Set "" to open the first available input regardless of name.
+port_match = "launchkey"
+
+[osc.xr18]
+# Behringer X-Air OSC speaks UDP. XR18 default port is 10024.
+# OSC mixer control is OFF until you set a host. Uncomment and set this to
+# YOUR X-Air mixer's IP (192.0.2.6 is just a placeholder showing the format).
+# host = "192.0.2.6"
+port = 10024
+
+# Bindings map a single MIDI control event to an OSC dispatch. Lookup is
+# keyed by (source_kind, channel, controller); NoteOff is ignored to avoid
+# double-fires on pad releases.
+#
+# Each binding takes:
+#   source_kind = "cc" | "note"
+#   channel     = 1..16 (MIDI channel)
+#   controller  = CC number (source_kind="cc") or note number (source_kind="note")
+#   osc         = OSC address on the XR18
+#   transform   = "scalar" (default) -> float32 in 0.0..1.0   — for faders/knobs
+#                 "press"            -> int32 0/1 on NoteOn   — for pad-press toggles
+#
+# Launchkey 61 MK4 in DAW mode (from the Programmer's Reference Guide):
+#   8 knobs:        CC 21..28, ch16 (absolute)
+#   9 faders:       CC 5..13,  ch16
+#   fader buttons:  CC 37..45, ch16
+#   pads, top:      notes 96..103, ch1
+#   pads, bottom:   notes 112..119, ch1
+
+# Fader 9 → main L/R fader (the "room volume" pattern).
+[[osc.xr18.bindings]]
+source_kind = "cc"
+channel     = 16
+controller  = 13          # Fader 9
+osc         = "/lr/mix/fader"
+transform   = "scalar"
+
+# Faders 1–8 → XR18 input channel faders 1–8.
+[[osc.xr18.bindings]]
+source_kind = "cc"
+channel     = 16
+controller  = 5           # Fader 1
+osc         = "/ch/01/mix/fader"
+transform   = "scalar"
+
+[[osc.xr18.bindings]]
+source_kind = "cc"
+channel     = 16
+controller  = 6           # Fader 2
+osc         = "/ch/02/mix/fader"
+transform   = "scalar"
+
+# (...add fader 3–8 if you actually use them — same pattern, controller += 1,
+# channel address += 1.)
+
+# Bottom-row pads as mute buttons. With transform="press" polyclav sends
+# `1` on note-on (mute on) and nothing on note-off. To unmute, re-press
+# and the XR18 will receive `1` again — XR18 doesn't toggle by itself.
+# (Real toggle is on the v1 roadmap; for now treat as "tap to mute".)
+[[osc.xr18.bindings]]
+source_kind = "note"
+channel     = 1
+controller  = 112         # Pad bottom-row position 0
+osc         = "/ch/01/mix/on"
+transform   = "press"
+
+[[osc.xr18.bindings]]
+source_kind = "note"
+channel     = 1
+controller  = 113         # Pad bottom-row position 1
+osc         = "/ch/02/mix/on"
+transform   = "press"
+
+# ---------------------------------------------------------------------------
+# Patches — selectable soundfonts, surfaced on the Launchkey's top-row pads.
+#
+# All `soundfont = ...` paths below are EXAMPLES. Replace them with where
+# you have soundfonts installed. Leading `~` is expanded to your home
+# directory. See docs/INSTALL.md for free soundfont sources.
+#
+# Layout: top-row pads (notes 96..103, channel 1, DAW layout) — one pad per
+# `[[patches]]` block, in order. The daemon only lights as many pads as fit
+# on the row (8 max); extra entries are kept in the registry but won't show
+# up on hardware until the layout grows.
+#
+# Each entry:
+#   name      — internal id, used by logs and any future CLI/OSC hooks.
+#   display   — what the Launchkey screen shows when the patch is selected.
+#   soundfont — path to a soundfont file. Extension picks backend:
+#                 .sf2 / .sf3 -> oxisynth (pure Rust)
+#                 .sfz        -> sfizz (C library)
+#               Missing file -> the daemon logs an error and skips selection;
+#               the previous patch stays loaded.
+#   pad_color — Components palette index (0..127) for the pad's lit state.
+#               See internal/launchkey/components for the named colors:
+#                 3  bright white   5  vibrant red    9  vibrant orange
+#                 13 vibrant yellow 25 vibrant green  33 vibrant cyan
+#                 41 vibrant blue   49 vibrant purple 57 vibrant pink
+#   gain_db   — per-patch dB trim applied at select time. Dial in by ear
+#               to level-match patches against each other (a soft EP and
+#               a loud grand can easily differ by 6–12 dB). Range roughly
+#               -24..+24; 0 = unity. Clamped to [0, 8] linear in Rust.
+# ---------------------------------------------------------------------------
+
+[[patches]]
+name      = "ydp-grand"
+display   = "YDP Grand"
+soundfont = "~/.local/share/polyclav/soundfonts/YDP-GrandPiano-SF2-20160804/YDP-GrandPiano-20160804.sf2"
+pad_color = 3            # bright white
+gain_db   = 0.0          # dial by ear to level-match against other patches
+
+[[patches]]
+name      = "salamander"
+display   = "Salamander"
+soundfont = "~/.local/share/polyclav/soundfonts/SalamanderGrandPianoV3_44.1khz16bit/SalamanderGrandPianoV3.sfz"
+pad_color = 41           # vibrant blue
+gain_db   = 0.0
+
+[[patches]]
+name      = "wurlitzer"
+display   = "Wurlitzer EP200"
+soundfont = "~/.local/share/polyclav/soundfonts/GregSullivan.E-Pianos-master/Wurlitzer EP200/Wurlitzer EP200.sfz"
+pad_color = 9            # vibrant orange
+gain_db   = 0.0
+
+[[patches]]
+name      = "rhodes"
+display   = "Rhodes Mk I"
+soundfont = "~/.local/share/polyclav/soundfonts/jlearman.jRhodes3d-master/jRhodes3d-mono/_jRhodes3d-mono-flac.sfz"
+pad_color = 13           # vibrant yellow
+gain_db   = 0.0
+
+[[patches]]
+name      = "splendid"
+display   = "Splendid Grand"
+soundfont = "~/.local/share/polyclav/soundfonts/SplendidGrandPiano-master/Splendid Grand Piano.sfz"
+pad_color = 25           # vibrant green
+gain_db   = 0.0
+
+# Synth voices — Yamaha DX7 (FM) and analog-style basses. Free/CC0 packs.
+# See docs/USER_GUIDE.md for the lv2/clap plugin-hosting patch types
+# (Dexed, Surge, ZynAddSubFX) — out of scope for v0.
+
+[[patches]]
+name      = "dx7-rom1a"
+display   = "DX7 ROM 1A"
+soundfont = "~/.local/share/polyclav/soundfonts/dx7-caskexe/Yamaha-DX7-ROM-1A.sf2"
+pad_color = 49           # vibrant purple
+gain_db   = 0.0
+
+[[patches]]
+name      = "dx7-epiano"
+display   = "DX7 E.Piano"
+soundfont = "~/.local/share/polyclav/soundfonts/freepats-fm-piano1/FM-Piano1 SFZ+FLAC-20190916/FM-Piano1 20190916.sfz"
+pad_color = 57           # vibrant pink
+gain_db   = 0.0
+
+[[patches]]
+name      = "moog-bass"
+display   = "Analog Bass"
+soundfont = "~/.local/share/polyclav/soundfonts/freepats-synth-bass-1/SynthBass1 SFZ+FLAC-20190723/SynthBass1 20190723.sfz"
+pad_color = 33           # vibrant cyan
+gain_db   = 0.0
+
+# 9th entry — stays in the patches registry but no pad slot (top row only
+# has 8 pads). Switch via config edit / future CLI.
+[[patches]]
+name      = "taurus-bass"
+display   = "Taurus Bass"
+soundfont = "~/.local/share/polyclav/soundfonts/freepats-lately-bass/LatelyBass SFZ+FLAC-20240409/LatelyBass 20240409.sfz"
+pad_color = 5            # vibrant red
+gain_db   = 0.0
+
+# Native pure-Rust analog-style synth (Phase 1; see docs/ROADMAP.md).
+# type = "native" + engine = "<name>"
+# selects one of the factory voices baked into audio-core. Phase 1 only
+# ships the "minimoog" engine — a single PolyBLEP saw → Moog ladder →
+# ADSR with sensible defaults. Knob 4 sweeps the filter cutoff when a
+# native patch is the current selection; knobs 1/2/3 keep their global
+# volume/reverb/comp role.
+#
+# Like the taurus-bass entry above, this 10th item is past the 8-pad
+# top row — keep it in the registry for now; later phases (multi-page
+# pad mode) will surface more patches.
+[[patches]]
+name      = "moog-bass-native"
+display   = "Moog (native)"
+type      = "native"
+engine    = "minimoog"
+pad_color = 33           # vibrant cyan
+gain_db   = 0.0
+
+# ---------------------------------------------------------------------------
+# Plugin patches (Phase 1) — LV2 + CLAP support.
+#
+# A [[patches]] entry can be a soundfont (default, fields above) OR a plugin.
+# Two plugin backends are supported:
+#
+#   type = "lv2"   requires:  plugin_uri  (e.g. "https://github.com/asb2m10/dexed")
+#   type = "clap"  requires:  plugin_path (filesystem path to the .clap bundle)
+#                             plugin_id   (the plugin's CLAP ID string)
+#
+# Per-patch `gain_db` and the runtime knob state (volume / reverb / comp)
+# still apply to plugin patches — they're persisted in state.toml keyed by
+# `name` like any other patch.
+#
+# Example: Dexed (DX7 emulator, GPLv3) as a CLAP plugin. Uncomment and edit
+# the paths/IDs to match your system; the values below are PLACEHOLDERS — the
+# nix-store path varies per install and the CLAP ID should be verified from
+# the .clap bundle's metadata (e.g. with `clap-info` or by inspecting the
+# bundle). Phase 1 boots the plugin to its default patch (no preset load yet).
+#
+# [[patches]]
+# name        = "dexed-clap"
+# display     = "Dexed (DX7)"
+# type        = "clap"
+# plugin_path = "/nix/store/PLACEHOLDER-dexed-1.0.1/lib/clap/Dexed.clap"
+# plugin_id   = "com.digital-suburban.dexed"  # verified from the .clap bundle
+# pad_color   = 49           # vibrant purple
+# gain_db     = -3.0

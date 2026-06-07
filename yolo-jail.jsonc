@@ -1,0 +1,64 @@
+// yolo-jail config for the music_learning workspace.
+//
+// polyclav (a sub-project here) needs PipeWire + pkg-config + libclang
+// to build its Rust audio-core (pipewire-rs 0.10 → uses bindgen).
+//
+// After editing this file:
+//   1. Run `yolo check` (or `yolo check --no-build` from inside the jail).
+//   2. Restart the jail so packages become available.
+
+{
+  "packages": [
+    "pkg-config",
+    {"name": "pipewire", "outputs": ["out", "dev"]},
+    "clang",
+    "libclang",
+    // for gomidi/rtmididrv (Launchkey MIDI input on the Go side, post-M2)
+    {"name": "alsa-lib", "outputs": ["out", "dev"]},
+    // SFZ player (Salamander Grand Piano, etc.) — alternative to oxisynth's SF2/SF3
+    // (single output; headers + .pc live in `out`)
+    "sfizz",
+    // for unpacking .7z archives (e.g. FreePats UprightPianoKW SF2)
+    "p7zip",
+    // userland ALSA tools for Launchkey MK4 wire-capture protocol verification
+    // (amidi, aseqdump, aconnect, aplaymidi)
+    "alsa-utils",
+    // OSC tools (oscdump, oscsend) for XR18 OSC verification — nixpkgs ships
+    // the binaries inside the `liblo` package (no separate `liblo-tools` attr)
+    "liblo",
+    // LV2 plugin hosting (livi-rs Rust crate): lilv = host C library,
+    // lv2 = spec headers, serd/sord/sratom = RDF/Turtle deps lilv pulls in.
+    // `.dev` outputs carry the .pc files; add to mise.toml PKG_CONFIG_PATH.
+    {"name": "lilv", "outputs": ["out", "dev"]},
+    {"name": "lv2", "outputs": ["out", "dev"]},
+    {"name": "serd", "outputs": ["out", "dev"]},
+    {"name": "sord", "outputs": ["out", "dev"]},
+    {"name": "sratom", "outputs": ["out", "dev"]},
+    // Dexed — open-source Yamaha DX7 emulator. NOTE: nixpkgs `dexed-1.0.1`
+    // ships ONLY CLAP + VST3 (lib/clap/Dexed.clap, lib/vst3/Dexed.vst3) and
+    // a standalone `bin/Dexed` — NO LV2 bundle. livi-rs is LV2-only, so we
+    // host Dexed via CLAP (clack-rs) — see clap-headers below.
+    "dexed",
+    // CLAP plugin API headers (Clever Audio Plugin spec). Required at build
+    // time by clack-rs (CLAP host crate); plugins themselves are .clap files
+    // loaded at runtime via dlopen — no separate runtime CLAP lib needed.
+    // nixpkgs attribute is `clap` (not `clap-headers`); description:
+    // "Clever Audio Plugin API interface headers".
+    "clap",
+    // -- Target synth plugins (Phase 1 hosting targets) --------------------
+    // Surge XT — hybrid synth + effects. Ships LV2 + CLAP + VST3 + standalone
+    // (lib/clap/Surge XT.clap, lib/lv2/Surge XT.lv2, bin/surge-xt-cli).
+    "surge-XT",
+    // Helm — polyphonic subtractive synth. LV2 + LinuxVST + standalone only
+    // (lib/lv2/helm.lv2, lib/lxvst/helm.so). No CLAP — host via livi-rs.
+    "helm",
+    // OB-Xf — Oberheim OB-X-inspired virtual analog (Surge Synth Team's
+    // open-source successor to the freeware OB-Xd). LV2 + CLAP + VST3.
+    // Added to nixpkgs after the flake's pinned nixpkgs (d6c71932), so pin it
+    // to a commit that ships ob-xf-1.0.3.
+    {"name": "ob-xf", "nixpkgs": "4100e830e085863741bc69b156ec4ccd53ab5be0"},
+    // ZynAddSubFX — additive/subtractive/PADsynth engine. LV2 + VST + standalone
+    // (lib/lv2/ZynAddSubFX.lv2 plus 8 effect LV2s). No CLAP — host via livi-rs.
+    "zynaddsubfx"
+  ]
+}

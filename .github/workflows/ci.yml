@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Nix provides every dep declaratively (toolchains + system libs)
+      # from the pinned flake. Same env on every contributor host.
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Speed up subsequent runs by caching the nixpkgs binary cache hits.
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+
+      - name: just check-ci (inside nix dev shell)
+        run: nix develop --command just check-ci

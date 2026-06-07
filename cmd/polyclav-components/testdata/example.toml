@@ -1,0 +1,58 @@
+# Example custom mode for the Launchkey MK4 Components encoder.
+#
+# A Pots mode named "MyPots" in slot 0 with two example controls.
+# Run:
+#   go run ./cmd/polyclav-components encode cmd/polyclav-components/testdata/example.toml
+#
+# Schema:
+#   surface              = "pots" | "pads" | "faders" | "pedal" | "modwheel"
+#   slot                 = 0..7 (user-visible mode slot)
+#   name                 = up to 16 printable ASCII bytes
+#   on_color             = palette index 0..127
+#   external_color       = palette index 0..127 (optional; 0 falls back to on_color)
+#   enable_transposition = bool (optional)
+#   default_octave       = 0..127 (optional; 0 omits the TLV)
+#
+# Each [[controls]] entry maps to one Control:
+#   kind        = "off" | "note" | "cc" | "cc14" | "pc"
+#   index       = firmware controlIndex (e.g. 56 for Pot 0, 0 for Pad 0)
+#   channel     = 1..16, or -1 for "all"  (encoded as 0-based on the wire)
+#   behaviour   = "momentary" | "toggle" | "momentary_aftertouch" | "toggle_aftertouch"
+#   off_color, on_color = palette indices
+#
+#   (kind-specific fields)
+#   cc:    cc, top, bottom, sensitivity
+#   cc14:  cc, top, bottom, sensitivity
+#   note:  note, velocity
+#   pc:    top  (Program Change number; trigger mode only for now)
+#
+# Optional control names: [control_names] table maps "index" → "name".
+
+surface = "pots"
+slot = 0
+name = "MyPots"
+on_color = 26               # palette index 0x1A
+enable_transposition = false
+
+[[controls]]
+kind = "cc"
+index = 56                  # Pot 0 — equivalent to PotsIndex(0) in Go
+channel = 1
+cc = 1
+top = 127
+bottom = 0
+behaviour = "momentary"
+on_color = 26
+
+[[controls]]
+kind = "note"
+index = 0                   # Pad 0 — only meaningful when surface = "pads"
+channel = 1
+note = 60
+velocity = 127
+behaviour = "toggle"
+on_color = 26
+
+[control_names]
+56 = "Vol"
+0  = "C4"

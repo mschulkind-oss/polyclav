@@ -1,0 +1,34 @@
+bin/
+target/
+soundfonts/
+scratch/
+.gocache/
+.cargo/
+.rustup/
+.claude/
+*.swp
+/swarf/
+/.mise.local.toml
+.yolo/
+# nix build artifacts
+result
+result-*
+
+# Binary assets — these belong in ~/.local/share/polyclav/soundfonts/
+# (managed by `polyclav bootstrap`), never in the repo. Defense-in-depth:
+# if anything lands in the working tree by accident, keep it out of git.
+*.sf2
+*.sf3
+*.sfz
+*.wav
+*.flac
+*.ogg
+*.aif
+*.aiff
+*.7z
+*.tar.bz2
+*.tar.xz
+*.tar.gz
+*.tgz
+*.tbz2
+*.zip

@@ -1,0 +1,3 @@
+[workspace]
+members = ["audio-core"]
+resolver = "2"
