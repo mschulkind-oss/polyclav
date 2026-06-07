@@ -19,7 +19,7 @@ jobs:
             experimental-features = nix-command flakes
 
       # Speed up subsequent runs by caching the nixpkgs binary cache hits.
-      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: just check-ci (inside nix dev shell)
         run: nix develop --command just check-ci
