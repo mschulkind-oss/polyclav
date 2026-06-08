@@ -32,3 +32,5 @@ result-*
 *.tgz
 *.tbz2
 *.zip
+/dist/
+/wheelhouse/

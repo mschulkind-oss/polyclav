@@ -5,11 +5,12 @@ package audio
 // // sfizz (SFZ player) is OPTIONAL and dlopen'd at runtime by the Rust
 // // audio-core — deliberately NOT linked here, so the build needs no sfizz
 // // and `.sfz` patches degrade gracefully when libsfizz is absent.
-// // Phase 1 LV2 plugin host: livi -> lilv -> serd/sord/sratom/zix. The
-// // Rust staticlib swallows their `cargo:rustc-link-lib` directives, so we
+// // Phase 1 LV2 plugin host: livi -> lilv -> serd/sord/sratom. The Rust
+// // staticlib swallows their `cargo:rustc-link-lib` directives, so we
 // // re-state them at the cgo link step. The matching -L / -Wl,-rpath
-// // entries come from CGO_LDFLAGS in mise.toml.
-// #cgo LDFLAGS: -llilv-0 -lserd-0 -lsord-0 -lsratom-0 -lzix-0
+// // entries come from CGO_LDFLAGS in mise.toml. (zix is linked separately
+// // for nixpkgs lilv 0.26+ in zix_link.go; distro lilv 0.24 vendors it.)
+// #cgo LDFLAGS: -llilv-0 -lserd-0 -lsord-0 -lsratom-0
 // // CLAP plugin host (clack-host) uses libloading -> libdl; -ldl already
 // // present above. No extra system library is needed at link time.
 // #cgo pkg-config: libpipewire-0.3 libspa-0.2

@@ -1,0 +1,116 @@
+name: Publish to PyPI
+
+# Builds a portable, dynamically-linked Linux wheel and publishes it to PyPI
+# so `uvx polyclav` / `pipx install polyclav` work.
+#
+# WHY NOT the nix flake (used by ci.yml): a nix build bakes /nix/store RUNPATHs
+# into the binary, so it only runs on a nix machine. The wheel must resolve its
+# libs the normal way — by SONAME via the user's ldconfig (FHS locations) — so
+# this job builds on a stock Ubuntu runner with apt-provided -dev libs and no
+# rpath. The resulting binary runs on any glibc distro (Fedora/Arch/Debian/...)
+# where the user has PipeWire/ALSA/lilv installed.
+#
+# The wheel is tagged manylinux_2_35 (the runner's glibc baseline) but depends
+# on the user's system audio libs — it is intentionally NOT auditwheel-bundled
+# (no bundling, no static linking). sfizz is optional (dlopen'd at runtime), so
+# it is not needed to build and not required to run.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (no leading v); dry-run, does not publish"
+        required: false
+        default: "0.0.0.dev0"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04 # glibc 2.35 -> manylinux_2_35
+    env:
+      # Stock pipewire-0.3.pc emits -fno-strict-aliasing / -fno-strict-overflow;
+      # Go's cgo rejects unknown pkg-config flags unless allowlisted.
+      CGO_CFLAGS_ALLOW: "-fno-strict-aliasing|-fno-strict-overflow"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system libraries (apt, FHS-standard locations)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config clang libclang-dev \
+            libpipewire-0.3-dev libasound2-dev \
+            liblilv-dev lv2-dev libserd-dev libsord-dev libsratom-dev
+          # NOT installed on purpose:
+          #  - sfizz: optional, dlopen'd at runtime; not needed to build.
+          #  - libzix: Ubuntu's lilv 0.24 vendors zix, so `-tags portable`
+          #    omits -lzix-0 (see internal/audio/zix_link.go).
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Rust audio-core
+        run: cargo build --release --manifest-path audio-core/Cargo.toml
+
+      - name: Build binaries (native cgo, system SONAMEs, no rpath, portable)
+        run: |
+          mkdir -p dist
+          for cmd in polyclav polyclav-components; do
+            go build -tags portable -trimpath -ldflags "-s -w" \
+              -o "dist/$cmd" "./cmd/$cmd"
+          done
+
+      - name: Verify portability (no /nix/store, report dynamic deps)
+        run: |
+          if readelf -d dist/polyclav | grep -qi 'nix/store'; then
+            echo "::error::binary has a /nix/store RUNPATH — not portable"; exit 1
+          fi
+          echo "dynamic dependencies:"; ldd dist/polyclav || true
+
+      - name: Build wheel
+        run: |
+          python3 scripts/build_wheel.py \
+            --version "${{ steps.ver.outputs.version }}" \
+            --platform-tag manylinux_2_35_x86_64 \
+            --binary dist/polyclav --binary dist/polyclav-components \
+            --readme README.md --output-dir wheelhouse
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: polyclav-wheel
+          path: wheelhouse/*.whl
+
+  publish:
+    # Only publish on a real release. Uses PyPI Trusted Publishing (OIDC) — no
+    # API token. One-time setup: on PyPI, add a "pending publisher" for project
+    # `polyclav` pointing at mschulkind-oss/polyclav, workflow `publish.yml`.
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: polyclav-wheel
+          path: wheelhouse
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheelhouse

@@ -48,11 +48,63 @@ For the developer-facing rundown of every component, see `AGENTS.md`.
 
 ---
 
-## Quick start
+## Install
+
+**Linux only** (PipeWire). polyclav is a dynamically-linked binary that uses
+your system's audio libraries — install those from your distro, then install
+polyclav however you like.
+
+### 1. System libraries
+
+PipeWire, ALSA, and the LV2 host library (lilv):
+
+```sh
+# Debian / Ubuntu
+sudo apt install pipewire libasound2 liblilv-0-0
+# Fedora
+sudo dnf install pipewire alsa-lib lilv
+# Arch
+sudo pacman -S pipewire alsa-lib lilv
+```
+
+**Optional — sfizz**, for `.sfz` sample libraries (Salamander Grand, etc.). It's
+a runtime-loaded *optional* backend: without it, `.sfz` patches are silent but
+SF2/SF3 soundfonts, the native synth, and LV2/CLAP plugins all work. sfizz isn't
+in every distro's main repos (it's in the AUR, Fedora, the KXStudio PPA, or
+builds from source). Run `polyclav doctor` to see exactly what's available.
+
+### 2. polyclav
+
+```sh
+uvx polyclav            # run without installing
+pipx install polyclav   # or install it persistently
+```
+
+Both fetch a prebuilt Linux wheel from PyPI; the `polyclav-components` Launchkey
+SysEx CLI ships in the same wheel. For Go developers:
+
+```sh
+go install github.com/mschulkind-oss/polyclav/cmd/polyclav@latest
+```
+
+(or build from source — see [Build from source](#build-from-source) below.)
+
+### 3. First run
+
+```sh
+polyclav doctor         # report backends + analyse your config
+polyclav bootstrap      # download free starter soundfonts (~500 MB; prompts for licenses)
+polyclav                # start playing
+```
+
+---
+
+## Build from source
 
 ```sh
 mise install                                     # Go + Rust toolchains
 just build                                       # Rust audio-core + Go binary
+just install                                     # or: install both binaries to ~/.local/bin
 mkdir -p ~/.config/polyclav
 cp polyclav.example.toml ~/.config/polyclav/polyclav.toml
 $EDITOR ~/.config/polyclav/polyclav.toml             # edit soundfont paths
