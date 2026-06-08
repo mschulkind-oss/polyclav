@@ -102,11 +102,13 @@ jobs:
 
   publish:
     # Only publish on a real release. Uses PyPI Trusted Publishing (OIDC) — no
-    # API token. One-time setup: on PyPI, add a "pending publisher" for project
-    # `polyclav` pointing at mschulkind-oss/polyclav, workflow `publish.yml`.
+    # API token. The PyPI publisher for `polyclav` is scoped to the `pypi`
+    # GitHub environment, so this job must declare it — the OIDC claim must
+    # match (repo mschulkind-oss/polyclav, workflow publish.yml, environment pypi).
     needs: build
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    environment: pypi
     permissions:
       id-token: write # PyPI Trusted Publishing (OIDC)
     steps:
