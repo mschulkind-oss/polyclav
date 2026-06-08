@@ -1,10 +1,10 @@
 [tools]
-# Pinned to the exact patch the flake (flake.lock nixpkgs) ships, so local
-# `just check-ci` and CI's `nix develop` run the same gofmt/vet. Bump in
-# lockstep when the flake's Go moves.
+# Pinned to the exact versions the flake (flake.lock nixpkgs) ships, so local
+# `just check-ci` and CI's `nix develop` run the same gofmt/vet/clippy/rustfmt.
+# Bump in lockstep when the flake's toolchains move.
 go = "1.26.3"
 just = "1.51.0"
-rust = "stable"
+rust = "1.95.0"
 
 [env]
 GOCACHE = "{{ config_root }}/.gocache"
