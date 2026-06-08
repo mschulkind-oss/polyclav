@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -40,6 +41,9 @@ func main() {
 	// to the daemon path (preserving --config / --version semantics).
 	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
 		os.Exit(runBootstrap(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		os.Exit(runDoctor(os.Args[2:]))
 	}
 	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
 		printVersion()
@@ -101,6 +105,14 @@ func main() {
 	logger.Info("config loaded", "path", path,
 		"xr18_host", xr18Host, "xr18_port", cfg.OSC.XR18.Port,
 		"soundfont", cfg.Soundfont.Path)
+
+	// Graceful sfizz degradation: if libsfizz isn't available, .sfz patches
+	// can't play. Warn by name so it's obvious why those pads are silent —
+	// SF2/SF3, native, and plugin patches are unaffected. See `polyclav doctor`.
+	if sfz := sfzPatchNames(cfg); len(sfz) > 0 && !audio.SfizzAvailable() {
+		logger.Warn("libsfizz not found — SFZ patches will be silent (install sfizz to enable)",
+			"sfz_patches", strings.Join(sfz, ", "))
+	}
 
 	statePath := filepath.Join(filepath.Dir(path), "state.toml")
 	initialState, err := state.Load(statePath)

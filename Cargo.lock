@@ -831,11 +831,11 @@ dependencies = [
  "clack-host",
  "crossbeam-queue",
  "fundsp",
+ "libloading",
  "livi",
  "lv2_raw",
  "oxisynth",
  "pipewire",
- "pkg-config",
 ]
 
 [[package]]

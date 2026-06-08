@@ -10,6 +10,10 @@ extern "C" {
 int32_t polyclav_audio_start(void);
 void polyclav_audio_stop(void);
 
+/* Returns 1 if libsfizz is available (SFZ playback possible), else 0. sfizz
+ * is dlopen'd lazily and is optional; safe to call before start. */
+int32_t polyclav_audio_sfizz_available(void);
+
 /* Soundfont path: NULL or empty -> sine fallback. Must be set BEFORE start. */
 int32_t polyclav_audio_set_soundfont(const char *path);
 

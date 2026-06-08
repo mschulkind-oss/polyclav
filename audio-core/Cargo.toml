@@ -12,6 +12,12 @@ crossbeam-queue = "0.3"
 # oxisynth: pure-Rust FluidSynth port. Reads SF2 and SF3 (rustysynth is SF2 only).
 oxisynth = "0.1"
 
+# sfizz (SFZ player) is an OPTIONAL backend, dlopen'd at runtime via
+# libloading — the binary does NOT link it, so the build needs no sfizz and
+# `.sfz` patches degrade gracefully when libsfizz is absent. clack-host also
+# uses libloading (to load .clap bundles).
+libloading = "0.8"
+
 # Plugin hosts (LV2 + CLAP).
 # livi is the LV2 host (wraps the lilv C library; pkg-config'd at build time).
 # clack-host is the CLAP host (pure-Rust, loads .clap shared libs via libloading).
@@ -28,7 +34,3 @@ clack-host = "0.1"
 # saturation. MIT OR Apache-2.0, clean for static linking into our
 # Apache 2.0 binary.
 fundsp = "0.23"
-
-[build-dependencies]
-# sfizz is a system lib (C++ with a C API). Linked via pkg-config.
-pkg-config = "0.3"

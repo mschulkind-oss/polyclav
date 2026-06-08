@@ -2,7 +2,9 @@ package audio
 
 // #cgo CFLAGS: -I${SRCDIR}/../../audio-core/include
 // #cgo LDFLAGS: -L${SRCDIR}/../../target/release -lpolyclav_audio_core -lpthread -ldl -lm
-// #cgo LDFLAGS: -lsfizz
+// // sfizz (SFZ player) is OPTIONAL and dlopen'd at runtime by the Rust
+// // audio-core — deliberately NOT linked here, so the build needs no sfizz
+// // and `.sfz` patches degrade gracefully when libsfizz is absent.
 // // Phase 1 LV2 plugin host: livi -> lilv -> serd/sord/sratom/zix. The
 // // Rust staticlib swallows their `cargo:rustc-link-lib` directives, so we
 // // re-state them at the cgo link step. The matching -L / -Wl,-rpath
@@ -40,6 +42,14 @@ func Start() error {
 
 func Stop() {
 	C.polyclav_audio_stop()
+}
+
+// SfizzAvailable reports whether libsfizz could be loaded (dlopen), i.e.
+// whether SFZ (.sfz) patches can play. Safe to call without Start; it only
+// triggers the lazy dlopen probe. When false, .sfz patches are silent but
+// SF2/SF3 (oxisynth), the native synth, and LV2/CLAP plugins are unaffected.
+func SfizzAvailable() bool {
+	return C.polyclav_audio_sfizz_available() == 1
 }
 
 // SetSoundfont points the audio engine at an SF2 file. Empty path clears it

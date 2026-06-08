@@ -487,6 +487,19 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     0
 }
 
+/// Returns 1 if libsfizz is available (SFZ playback possible), else 0.
+/// sfizz is dlopen'd lazily; this call triggers the load attempt. Used by
+/// `polyclav doctor` and by startup to warn about SFZ patches that would be
+/// silent. Safe to call before `polyclav_audio_start`.
+#[no_mangle]
+pub extern "C" fn polyclav_audio_sfizz_available() -> i32 {
+    if sfizz::available() {
+        1
+    } else {
+        0
+    }
+}
+
 /// Load and switch to a native pure-Rust synth patch. `engine` is a
 /// factory-preset name baked into the Rust source — Phase 1 only ships
 /// `"minimoog"`. The load runs on a background worker thread; the audio
