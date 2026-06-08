@@ -25,7 +25,7 @@ livi = "0.7"
 # livi exposes `lv2_raw::LV2Urid` in its `Features` API but does not
 # re-export the type, so we depend on `lv2_raw` directly. Pinned to the
 # same version livi uses to avoid two copies in the build.
-lv2_raw = "0.2"
+lv2_raw = "0.3"
 clack-host = "0.1"
 
 # Pure-Rust DSP backbone for the native synth backend (Phase 1; see
