@@ -9,6 +9,10 @@ rust = "stable"
 [env]
 GOCACHE = "{{ config_root }}/.gocache"
 GOFLAGS = "-mod=mod"
+# pipewire-0.3.pc emits -fno-strict-aliasing / -fno-strict-overflow; cgo rejects
+# unknown pkg-config flags unless allowlisted. Safe hardening flags. Kept in
+# lockstep with flake.nix (CI). Without it, `go vet`/`go build` fail.
+CGO_CFLAGS_ALLOW = "-fno-strict-aliasing|-fno-strict-overflow"
 RUSTUP_HOME = "{{ config_root }}/.rustup"
 CARGO_HOME = "{{ config_root }}/.cargo"
 _.path = ["{{ config_root }}/.cargo/bin"]

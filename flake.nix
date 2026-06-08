@@ -35,6 +35,12 @@
           # yolo-jail-pinned store path with this shell's actual libclang so
           # the same flake works on any host (CI, dev machine, etc.).
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+
+          # nixpkgs' pipewire-0.3.pc emits -fno-strict-aliasing / -fno-strict-overflow
+          # in its Cflags; Go's cgo rejects unknown flags from pkg-config unless
+          # allowlisted. These are standard, safe hardening flags. Without this,
+          # `go vet` / `go build` fail with "invalid flag in pkg-config --cflags".
+          CGO_CFLAGS_ALLOW = "-fno-strict-aliasing|-fno-strict-overflow";
         };
       });
 }
