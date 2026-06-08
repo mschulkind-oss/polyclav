@@ -30,7 +30,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04 # glibc 2.35 -> manylinux_2_35
+    # Ubuntu 24.04: glibc 2.39 -> manylinux_2_39. 22.04 is too old — its
+    # PipeWire (0.3.48) predates the spa_video_info_raw layout the pipewire-rs
+    # 0.10 crate expects, so libspa fails to compile. Verified in a container.
+    runs-on: ubuntu-24.04
     env:
       # Stock pipewire-0.3.pc emits -fno-strict-aliasing / -fno-strict-overflow;
       # Go's cgo rejects unknown pkg-config flags unless allowlisted.
@@ -87,7 +90,7 @@ jobs:
         run: |
           python3 scripts/build_wheel.py \
             --version "${{ steps.ver.outputs.version }}" \
-            --platform-tag manylinux_2_35_x86_64 \
+            --platform-tag manylinux_2_39_x86_64 \
             --binary dist/polyclav --binary dist/polyclav-components \
             --readme README.md --output-dir wheelhouse
 

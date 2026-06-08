@@ -70,8 +70,8 @@ sudo pacman -S pipewire alsa-lib lilv
 **Optional — sfizz**, for `.sfz` sample libraries (Salamander Grand, etc.). It's
 a runtime-loaded *optional* backend: without it, `.sfz` patches are silent but
 SF2/SF3 soundfonts, the native synth, and LV2/CLAP plugins all work. sfizz isn't
-in every distro's main repos (it's in the AUR, Fedora, the KXStudio PPA, or
-builds from source). Run `polyclav doctor` to see exactly what's available.
+always in a distro's default repos — check your package manager (e.g. the AUR on
+Arch) or build it from source. Run `polyclav doctor` to see what's available.
 
 ### 2. polyclav
 
