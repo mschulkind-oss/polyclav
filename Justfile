@@ -50,6 +50,19 @@ done: check-ci
 run *args: build
     ./bin/polyclav {{args}}
 
+# Build and install both binaries to PREFIX/bin (default ~/.local/bin).
+# Override the location with `PREFIX=/usr/local just install`.
+PREFIX := env_var_or_default("PREFIX", env_var("HOME") / ".local")
+
+install: build
+    mkdir -p {{PREFIX}}/bin
+    install -m 0755 bin/polyclav {{PREFIX}}/bin/polyclav
+    # polyclav-components isn't part of `build`, so build it here too.
+    go build -o bin/polyclav-components ./cmd/polyclav-components
+    install -m 0755 bin/polyclav-components {{PREFIX}}/bin/polyclav-components
+    @echo "installed polyclav + polyclav-components → {{PREFIX}}/bin"
+    @echo "(make sure {{PREFIX}}/bin is on your PATH)"
+
 # Download all soundfont packs into ~/.local/share/polyclav/soundfonts/.
 bootstrap *args: build
     # Idempotent — re-running skips packs already on disk. Pass `-y` to
