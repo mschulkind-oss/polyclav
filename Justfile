@@ -26,7 +26,8 @@ lint-ci: build-rust
     # gofmt is a filesystem walker (ignores .gitignore), so scope it to the
     # project's Go source dirs — avoids descending into .yolo/, .gocache/,
     # vendored module caches with intentionally-malformed testdata, etc.
-    test -z "$(gofmt -l cmd internal)"
+    # Print the offending files on failure (don't swallow them in $()).
+    @bad="$(gofmt -l cmd internal)"; if [ -n "$bad" ]; then echo "gofmt needs formatting:"; echo "$bad"; exit 1; fi
     go vet ./...
 
 test *args: build-rust

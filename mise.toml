@@ -1,5 +1,8 @@
 [tools]
-go = "1.26"
+# Pinned to the exact patch the flake (flake.lock nixpkgs) ships, so local
+# `just check-ci` and CI's `nix develop` run the same gofmt/vet. Bump in
+# lockstep when the flake's Go moves.
+go = "1.26.3"
 just = "1.51.0"
 rust = "stable"
 
