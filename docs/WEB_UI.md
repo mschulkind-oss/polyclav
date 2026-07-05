@@ -149,11 +149,12 @@ should be built once.
 
 - `[web]` config block: `enabled = false` **by default** (same opt-in
   philosophy as `osc.xr18.host`), `listen = "127.0.0.1:8666"`.
-- Setting `listen = "0.0.0.0:8666"` is the documented LAN opt-in; the doc
-  states plainly this is trusted-network only — no auth in v1.
-- No TLS, no accounts. polyclav sits on a music-room LAN next to a mixer
-  that accepts unauthenticated UDP; matching that threat model is honest.
-  A bearer token is an open question below.
+- **No auth, ever-for-now (decided):** localhost binding is the security
+  boundary. Setting `listen = "0.0.0.0:8666"` is the documented LAN
+  opt-in — the user is explicitly allowed to make that call for their own
+  network, and the docs say what it means. No tokens, no TLS, no accounts.
+- polyclav sits on a music-room LAN next to a mixer that accepts
+  unauthenticated UDP; matching that threat model is honest.
 
 ## Phasing
 
@@ -166,17 +167,24 @@ should be built once.
 Phase A alone is already worth shipping: it's the first way to see
 polyclav's state without a Launchkey attached.
 
-## Open Questions
+## Decisions (resolved 2026-07-04)
 
-1. **Auth:** is an optional `token = "..."` config field (checked as a
-   bearer header / query param) worth it for v1 LAN exposure, or does it
-   just add friction on a trusted network?
-2. **Port default:** `8666` is arbitrary. Any collision concerns with
-   other tools in the studio setup?
-3. **Config redaction:** should `GET /api/config` expose the XR18 host IP
-   verbatim? (Probably yes on a LAN-only server; revisit if auth lands.)
-4. **Phone-first or laptop-first layout?** A phone on the piano's music
-   stand is the most likely real-world use; that argues for a
-   single-column, large-touch-target design from day one.
-5. **Does `just check` gate the web build** (biome/tsc/vitest) on every
-   commit, or only when `web/` files changed? CI time vs. drift risk.
+1. **Auth: none.** Bind `127.0.0.1` by default; opening the listen
+   address to the LAN is the user's informed decision. No token layer.
+2. **Port: `8666` stands** as the default.
+3. **Config redaction: none.** `GET /api/config` returns the config
+   verbatim, XR18 host IP included.
+4. **Layout: laptop-first.** Design for a laptop screen; keep it
+   responsive enough that a phone works, but the phone is not the
+   design target.
+5. **Check gating: run web checks (biome/tsc/vitest) only when `web/`
+   changed** — with the expectation that integration tests will
+   eventually exercise daemon + UI together and force full runs anyway.
+   Structure the Justfile so both modes are easy.
+
+<!-- changelog -->
+- [051c3f37] Dropped the auth question: decided no auth — localhost bind is the boundary, LAN exposure is the user's call; security section updated to match.
+- [78592d7d] Locked port 8666 as the default.
+- [054af7c7] Decided: `GET /api/config` returns config verbatim, no redaction.
+- [63e17f52] Decided laptop-first layout; phone stays workable but is not the design target.
+- [c268d4b0] Decided change-gated web checks, noting integration tests will later force full runs; converted Open Questions to a resolved-decisions section.
