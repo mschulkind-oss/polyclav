@@ -69,6 +69,17 @@ impl Adsr {
         }
     }
 
+    /// Update the ADSR times/levels in place without disturbing the
+    /// current stage or value — safe to call every block from the audio
+    /// thread while a note is sounding (live knob tweaks). Same clamping
+    /// as `new`: times floored at 0.1 ms, sustain clamped to 0..=1.
+    pub fn set_params(&mut self, attack_s: f32, decay_s: f32, sustain: f32, release_s: f32) {
+        self.attack_s = attack_s.max(1.0e-4);
+        self.decay_s = decay_s.max(1.0e-4);
+        self.sustain = sustain.clamp(0.0, 1.0);
+        self.release_s = release_s.max(1.0e-4);
+    }
+
     /// Begin (or retrigger) the envelope. Phase 1 always restarts from
     /// the current value — the next sample begins ramping toward 1.0 over
     /// `attack_s`. Mono-legato voice allocation suppresses the retrigger

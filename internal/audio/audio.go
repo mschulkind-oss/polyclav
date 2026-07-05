@@ -26,6 +26,11 @@ package audio
 // // Native synth backend (Phase 1; see docs/ROADMAP.md).
 // int32_t polyclav_audio_set_native_patch(const char *engine);
 // void    polyclav_dsp_set_native_cutoff_hz(float hz);
+// void    polyclav_dsp_set_native_resonance(float v);
+// void    polyclav_dsp_set_native_filter_env(float attack_s, float decay_s, float sustain, float release_s, float amount);
+// void    polyclav_dsp_set_native_osc(int32_t idx, int32_t wave, int32_t octave, float detune_cents, float level);
+// void    polyclav_dsp_set_native_noise(float level);
+// void    polyclav_dsp_set_native_glide(float seconds);
 import "C"
 
 import (
@@ -175,6 +180,79 @@ func SetLimiterCeilingDB(db float32) {
 // [20, 20000] in Rust. Phase 1 hardcoded knob-4 mapping.
 func SetNativeCutoffHz(hz float32) {
 	C.polyclav_dsp_set_native_cutoff_hz(C.float(hz))
+}
+
+// SetNativeResonance pushes the active native synth's filter resonance
+// (Q). Same lifecycle as SetNativeCutoffHz: the audio thread reads the
+// atomic per block and applies it to the active SynthBackend::Native
+// (no-op for other backends). Default 0.3; clamped to [0.0, 0.95] in
+// Rust to keep headroom below the Stilson/Smith ladder's
+// self-oscillation instability.
+func SetNativeResonance(v float32) {
+	C.polyclav_dsp_set_native_resonance(C.float(v))
+}
+
+// SetNativeFilterEnv pushes the active native synth's filter-envelope
+// (env 2) ADSR plus the env->cutoff amount. Same lifecycle as
+// SetNativeCutoffHz: the audio thread reads the atomics per block and
+// applies them to the active SynthBackend::Native (no-op for other
+// backends). The modulation model is
+// effective_cutoff = base_cutoff * 2^(amount*env*4), so amount in [0,1]
+// sweeps up to +4 octaves above the knob cutoff (clamped to
+// [20, 20000] Hz). Times are clamped to [0.0001, 10] s, sustain and
+// amount to [0, 1] in Rust. Defaults: 5 ms / 600 ms / 0.4 / 600 ms with
+// amount 0 (modulation off).
+func SetNativeFilterEnv(a, d, s, r, amount float32) {
+	C.polyclav_dsp_set_native_filter_env(C.float(a), C.float(d), C.float(s), C.float(r), C.float(amount))
+}
+
+// SetNativeOsc pushes one of the active native synth's three oscillators
+// (idx 0..2). wave is "saw", "square", or "pulse" (pulse runs a fixed 25%
+// duty for this stage); octave is clamped to [-2, 2] in Rust, detuneCents
+// to [-100, 100], level to [0, 1]. Same lifecycle as SetNativeCutoffHz:
+// the audio thread reads the atomics per block and applies them to the
+// active SynthBackend::Native (no-op for other backends). Defaults keep
+// osc 2/3 silent (level 0) with Moog-ish offsets pre-dialed: osc 1
+// saw/0/0c/1.0, osc 2 saw/0/-7c/0.0, osc 3 saw/-1oct/+5c/0.0 — so the
+// default render is unchanged and turning a level up immediately sounds
+// right. Returns an error for an unknown wave name or idx outside 0..2.
+func SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error {
+	var w int32
+	switch wave {
+	case "saw":
+		w = 0
+	case "square":
+		w = 1
+	case "pulse":
+		w = 2
+	default:
+		return fmt.Errorf("audio-core set native osc: unknown wave %q (valid: saw, square, pulse)", wave)
+	}
+	if idx < 0 || idx > 2 {
+		return fmt.Errorf("audio-core set native osc: idx %d out of range 0..2", idx)
+	}
+	C.polyclav_dsp_set_native_osc(C.int32_t(idx), C.int32_t(w), C.int32_t(octave), C.float(detuneCents), C.float(level))
+	return nil
+}
+
+// SetNativeNoise pushes the active native synth's white-noise mixer level.
+// Clamped to [0, 1] in Rust; default 0 = silent. Same lifecycle as
+// SetNativeCutoffHz (no-op for other backends).
+func SetNativeNoise(level float32) {
+	C.polyclav_dsp_set_native_noise(C.float(level))
+}
+
+// SetNativeGlide pushes the active native synth's glide (portamento) time
+// constant in seconds. Clamped to [0, 5] in Rust; default 0 = no slew
+// (pitch jumps instantly — the render is identical to the glide-free
+// engine). When enabled, the voice's base frequency slews exponentially
+// toward the note pitch with this time constant; glide applies to legato
+// hand-offs AND retriggered notes of a still-sounding voice (Minimoog
+// behavior), while a voice starting from silence begins directly at its
+// target pitch. Same lifecycle as SetNativeCutoffHz (no-op for other
+// backends).
+func SetNativeGlide(s float32) {
+	C.polyclav_dsp_set_native_glide(C.float(s))
 }
 
 // MIDIEvent is what Go pushes into the realtime audio thread's MIDI queue.

@@ -79,6 +79,51 @@ void polyclav_dsp_set_limiter_ceiling_db(float db);
  * for other backends). Clamped to [20, 20000] in Rust. */
 void polyclav_dsp_set_native_cutoff_hz(float hz);
 
+/* Native synth filter resonance (Q). Same lifecycle as the cutoff
+ * setter: the audio thread reads the atomic per block and applies it
+ * to the active native synth (no-op for other backends). Default 0.3;
+ * clamped to [0.0, 0.95] in Rust — headroom below the Stilson/Smith
+ * ladder's self-oscillation instability. */
+void polyclav_dsp_set_native_resonance(float v);
+
+/* Native synth filter-envelope (env 2): ADSR + env->cutoff amount.
+ * Same lifecycle as the cutoff setter: the audio thread reads the
+ * atomics per block and applies them to the active native synth (no-op
+ * for other backends). effective_cutoff = base_cutoff * 2^(amount *
+ * env * 4.0), i.e. amount in [0,1] sweeps up to +4 octaves above the
+ * knob cutoff, clamped to [20, 20000] Hz. Times clamped to [0.0001,
+ * 10] s, sustain and amount to [0, 1] in Rust. Defaults 5 ms / 600 ms
+ * / 0.4 / 600 ms with amount 0.0 (modulation OFF). */
+void polyclav_dsp_set_native_filter_env(float attack_s, float decay_s, float sustain,
+                                        float release_s, float amount);
+
+/* Native synth oscillator bank (stage 3). idx is 0..2; wave is 0=saw,
+ * 1=square, 2=pulse (pulse runs a fixed 25% duty for this stage);
+ * octave clamps to [-2, 2]; detune_cents to [-100, 100]; level to
+ * [0, 1]. Out-of-range idx or wave is ignored (with an eprintln on the
+ * Rust side). Same lifecycle as the cutoff setter: the audio thread
+ * reads the atomics per block and applies them to the active native
+ * synth (no-op for other backends). Defaults keep osc 2/3 silent
+ * (level 0) with Moog-ish offsets pre-dialed: osc 1 saw/0 oct/0
+ * cents/1.0, osc 2 saw/0 oct/-7 cents/0.0, osc 3 saw/-1 oct/+5
+ * cents/0.0 — so the default render is unchanged and turning a level
+ * up immediately sounds right. */
+void polyclav_dsp_set_native_osc(int32_t idx, int32_t wave, int32_t octave,
+                                 float detune_cents, float level);
+
+/* Native synth white-noise mixer level in [0, 1] (clamped in Rust).
+ * Default 0.0 = silent. Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_noise(float level);
+
+/* Native synth glide (portamento) time constant in seconds, clamped to
+ * [0, 5] in Rust. Default 0.0 = no slew (pitch jumps instantly; render
+ * identical to the pre-glide engine). When enabled, the voice's base
+ * frequency slews exponentially toward the note pitch; glide applies
+ * to legato hand-offs AND retriggered notes of a still-sounding voice
+ * (Minimoog behavior), while a voice starting from silence begins at
+ * its target pitch. Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_glide(float seconds);
+
 #ifdef __cplusplus
 }
 #endif

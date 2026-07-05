@@ -168,6 +168,51 @@ pub(crate) struct DspParams {
     /// `SynthBackend::Native` if loaded; harmless when other backends
     /// are active. Default 2 kHz matches the Minimoog factory patch.
     native_cutoff_hz: AtomicU32,
+    /// Native synth filter resonance (Q), same read/push lifecycle as
+    /// `native_cutoff_hz`. Default 0.3 matches the Minimoog factory
+    /// patch; clamped to [0.0, 0.95] to keep headroom below the
+    /// self-oscillation instability of the Stilson/Smith ladder.
+    native_resonance: AtomicU32,
+    /// Native synth filter-envelope (env 2) ADSR + amount, same
+    /// read/push lifecycle as `native_cutoff_hz`. Times in seconds
+    /// clamped to [0.0001, 10]; sustain and amount in [0, 1]. Defaults
+    /// are the ROADMAP §1.4 filter ADSR (5 ms / 600 ms / 0.4 / 600 ms)
+    /// with amount 0.0 — OFF — so the default render is bit-identical
+    /// to the pre-env-2 engine (§1.4's factory "+30%" amount is a patch
+    /// value, applied when the patch loader lands).
+    native_filter_env_attack_s: AtomicU32,
+    native_filter_env_decay_s: AtomicU32,
+    native_filter_env_sustain: AtomicU32,
+    native_filter_env_release_s: AtomicU32,
+    native_filter_env_amount: AtomicU32,
+    /// Native synth oscillator bank (stage 3), same read/push lifecycle
+    /// as `native_cutoff_hz`. Per oscillator: waveform as its 0/1/2
+    /// wire code (saw/square/pulse), octave shift as i32 bits (via `as
+    /// u32` cast, clamped [-2, 2]), detune in cents as f32 bits
+    /// (clamped [-100, 100]), and mixer level as f32 bits (clamped
+    /// [0, 1]). Defaults keep osc 2/3 silent (level 0) but pre-dial the
+    /// Moog-ish offsets: osc 1 saw/0/0/1.0, osc 2 saw/0/-7¢/0.0, osc 3
+    /// saw/-1 oct/+5¢/0.0 — so the default render stays bit-identical
+    /// to the single-osc engine (regression guarantee) while turning a
+    /// level up immediately sounds right.
+    native_osc_wave: [AtomicU32; 3],
+    native_osc_octave: [AtomicU32; 3],
+    native_osc_detune_cents: [AtomicU32; 3],
+    native_osc_level: [AtomicU32; 3],
+    /// Native synth white-noise mixer level, f32 bits in [0, 1].
+    /// Default 0.0 — silent (regression-safe).
+    native_noise_level: AtomicU32,
+    /// Native synth glide (portamento) time constant in seconds, f32
+    /// bits, clamped [0, 5]. Same read/push lifecycle as
+    /// `native_cutoff_hz`. Default 0.0 — no slew, pitch jumps
+    /// instantly, so the default render stays bit-identical to the
+    /// pre-glide engine (regression guarantee). When enabled, the
+    /// voice's base frequency slews toward the note pitch with this
+    /// exponential time constant on every transition of a
+    /// continuously-sounding voice (legato AND retrigger — Minimoog
+    /// behavior); a voice starting from silence begins at its target
+    /// pitch.
+    native_glide_s: AtomicU32,
 }
 
 impl DspParams {
@@ -180,6 +225,30 @@ impl DspParams {
             mastering_amount: AtomicU32::new(0.0_f32.to_bits()),
             limiter_ceiling_db: AtomicU32::new((-0.3_f32).to_bits()),
             native_cutoff_hz: AtomicU32::new(2_000.0_f32.to_bits()),
+            native_resonance: AtomicU32::new(0.3_f32.to_bits()),
+            native_filter_env_attack_s: AtomicU32::new(0.005_f32.to_bits()),
+            native_filter_env_decay_s: AtomicU32::new(0.6_f32.to_bits()),
+            native_filter_env_sustain: AtomicU32::new(0.4_f32.to_bits()),
+            native_filter_env_release_s: AtomicU32::new(0.6_f32.to_bits()),
+            native_filter_env_amount: AtomicU32::new(0.0_f32.to_bits()),
+            native_osc_wave: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
+            native_osc_octave: [
+                AtomicU32::new(0i32 as u32),
+                AtomicU32::new(0i32 as u32),
+                AtomicU32::new((-1i32) as u32),
+            ],
+            native_osc_detune_cents: [
+                AtomicU32::new(0.0_f32.to_bits()),
+                AtomicU32::new((-7.0_f32).to_bits()),
+                AtomicU32::new(5.0_f32.to_bits()),
+            ],
+            native_osc_level: [
+                AtomicU32::new(1.0_f32.to_bits()),
+                AtomicU32::new(0.0_f32.to_bits()),
+                AtomicU32::new(0.0_f32.to_bits()),
+            ],
+            native_noise_level: AtomicU32::new(0.0_f32.to_bits()),
+            native_glide_s: AtomicU32::new(0.0_f32.to_bits()),
         }
     }
 
@@ -217,6 +286,43 @@ impl DspParams {
     pub fn native_cutoff_hz(&self) -> f32 {
         Self::load(&self.native_cutoff_hz)
     }
+    pub fn native_resonance(&self) -> f32 {
+        Self::load(&self.native_resonance)
+    }
+    /// Filter-envelope params as (attack_s, decay_s, sustain, release_s,
+    /// amount). Read once per audio block. The five atomics are stored
+    /// individually, so a concurrent setter can tear across fields for
+    /// one block — harmless for advisory knob values.
+    pub fn native_filter_env(&self) -> (f32, f32, f32, f32, f32) {
+        (
+            Self::load(&self.native_filter_env_attack_s),
+            Self::load(&self.native_filter_env_decay_s),
+            Self::load(&self.native_filter_env_sustain),
+            Self::load(&self.native_filter_env_release_s),
+            Self::load(&self.native_filter_env_amount),
+        )
+    }
+
+    /// One oscillator's params as (wave, octave, detune_cents, level).
+    /// Read once per audio block. The four atomics are stored
+    /// individually, so a concurrent setter can tear across fields for
+    /// one block — harmless for advisory knob values. `idx` must be
+    /// 0..=2 (validated at the FFI boundary; the audio thread iterates
+    /// a constant range).
+    pub fn native_osc(&self, idx: usize) -> (u32, i32, f32, f32) {
+        (
+            self.native_osc_wave[idx].load(Ordering::Relaxed),
+            self.native_osc_octave[idx].load(Ordering::Relaxed) as i32,
+            Self::load(&self.native_osc_detune_cents[idx]),
+            Self::load(&self.native_osc_level[idx]),
+        )
+    }
+    pub fn native_noise_level(&self) -> f32 {
+        Self::load(&self.native_noise_level)
+    }
+    pub fn native_glide_s(&self) -> f32 {
+        Self::load(&self.native_glide_s)
+    }
 
     pub fn set_master_volume(&self, v: f32) {
         Self::store(&self.master_volume, v);
@@ -238,6 +344,50 @@ impl DspParams {
     }
     pub fn set_native_cutoff_hz(&self, hz: f32) {
         Self::store_clamped(&self.native_cutoff_hz, hz, 20.0, 20_000.0);
+    }
+    pub fn set_native_resonance(&self, v: f32) {
+        Self::store_clamped(&self.native_resonance, v, 0.0, 0.95);
+    }
+    pub fn set_native_filter_env(
+        &self,
+        attack_s: f32,
+        decay_s: f32,
+        sustain: f32,
+        release_s: f32,
+        amount: f32,
+    ) {
+        Self::store_clamped(&self.native_filter_env_attack_s, attack_s, 1.0e-4, 10.0);
+        Self::store_clamped(&self.native_filter_env_decay_s, decay_s, 1.0e-4, 10.0);
+        Self::store_clamped(&self.native_filter_env_sustain, sustain, 0.0, 1.0);
+        Self::store_clamped(&self.native_filter_env_release_s, release_s, 1.0e-4, 10.0);
+        Self::store_clamped(&self.native_filter_env_amount, amount, 0.0, 1.0);
+    }
+    /// Store one oscillator's params. `idx` must be 0..=2 and `wave`
+    /// a valid 0/1/2 code (both validated at the FFI boundary); octave
+    /// clamps to [-2, 2], detune to [-100, 100] cents, level to [0, 1].
+    pub fn set_native_osc(
+        &self,
+        idx: usize,
+        wave: u32,
+        octave: i32,
+        detune_cents: f32,
+        level: f32,
+    ) {
+        self.native_osc_wave[idx].store(wave.min(2), Ordering::Relaxed);
+        self.native_osc_octave[idx].store(octave.clamp(-2, 2) as u32, Ordering::Relaxed);
+        Self::store_clamped(
+            &self.native_osc_detune_cents[idx],
+            detune_cents,
+            -100.0,
+            100.0,
+        );
+        Self::store_clamped(&self.native_osc_level[idx], level, 0.0, 1.0);
+    }
+    pub fn set_native_noise_level(&self, level: f32) {
+        Self::store_clamped(&self.native_noise_level, level, 0.0, 1.0);
+    }
+    pub fn set_native_glide_s(&self, seconds: f32) {
+        Self::store_clamped(&self.native_glide_s, seconds, 0.0, 5.0);
     }
 }
 
@@ -619,6 +769,91 @@ pub extern "C" fn polyclav_dsp_set_native_cutoff_hz(hz: f32) {
     dsp_params().set_native_cutoff_hz(hz);
 }
 
+/// Set the native synth's filter resonance (Q). Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomic each block and applies it to the active `SynthBackend::Native`;
+/// harmless when other backends are active. Clamped to [0.0, 0.95] in
+/// Rust — headroom below the self-oscillation instability of the
+/// Stilson/Smith ladder.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_resonance(v: f32) {
+    dsp_params().set_native_resonance(v);
+}
+
+/// Set the native synth's filter-envelope (env 2) ADSR + env→cutoff
+/// amount. Same lifecycle as `polyclav_dsp_set_native_cutoff_hz`: the
+/// audio thread reads the atomics each block and applies them to the
+/// active `SynthBackend::Native`; harmless when other backends are
+/// active. Times clamped to [0.0001, 10] s, sustain and amount to
+/// [0, 1] in Rust. Amount 0 (the default) disables the modulation —
+/// the render is then identical to the pre-env-2 engine.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_filter_env(
+    attack_s: f32,
+    decay_s: f32,
+    sustain: f32,
+    release_s: f32,
+    amount: f32,
+) {
+    dsp_params().set_native_filter_env(attack_s, decay_s, sustain, release_s, amount);
+}
+
+/// Set one native-synth oscillator's parameters (stage 3). `idx` is
+/// 0..=2; `wave` is 0 = saw, 1 = square, 2 = pulse (pulse runs a fixed
+/// 25% duty for this stage); `octave` clamps to [-2, 2]; `detune_cents`
+/// to [-100, 100]; `level` to [0, 1]. Out-of-range `idx` or `wave` is
+/// ignored with an eprintln. Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomics each block and applies them to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+/// Defaults (osc 2/3 + noise levels 0) keep the render bit-identical
+/// to the single-osc engine.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_osc(
+    idx: i32,
+    wave: i32,
+    octave: i32,
+    detune_cents: f32,
+    level: f32,
+) {
+    if !(0..=2).contains(&idx) {
+        eprintln!("audio-core: set_native_osc: idx {idx} out of range 0..=2; ignored");
+        return;
+    }
+    if !(0..=2).contains(&wave) {
+        eprintln!(
+            "audio-core: set_native_osc: wave {wave} out of range 0..=2 \
+             (0=saw 1=square 2=pulse); ignored"
+        );
+        return;
+    }
+    dsp_params().set_native_osc(idx as usize, wave as u32, octave, detune_cents, level);
+}
+
+/// Set the native synth's white-noise mixer level in [0, 1] (clamped
+/// in Rust; default 0.0 = silent). Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_noise(level: f32) {
+    dsp_params().set_native_noise_level(level);
+}
+
+/// Set the native synth's glide (portamento) time constant in seconds,
+/// clamped to [0, 5] in Rust. 0 (the default) disables the pitch slew —
+/// the render is then identical to the pre-glide engine. When enabled,
+/// the voice's base frequency slews exponentially toward the note pitch
+/// (per-osc octave/detune multipliers apply after the slew); glide
+/// applies to legato hand-offs AND retriggered notes of a
+/// still-sounding voice (Minimoog behavior), while a voice starting
+/// from silence begins at its target pitch. Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_glide(seconds: f32) {
+    dsp_params().set_native_glide_s(seconds);
+}
+
 fn run_audio(
     quit_flag: Arc<AtomicBool>,
     ready_tx: &mpsc::SyncSender<Result<(), String>>,
@@ -833,11 +1068,21 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
         let samples =
             unsafe { std::slice::from_raw_parts_mut(data.data.cast::<f32>(), n_frames * 2) };
 
-        // Phase 1 native-synth knob-4 override: push the latest cutoff
-        // atomic into the active native synth before rendering. This is
-        // a no-op for other backends (the match arm doesn't fire).
+        // Phase 1 native-synth knob override: push the latest cutoff +
+        // resonance atomics into the active native synth before
+        // rendering. This is a no-op for other backends (the match arm
+        // doesn't fire).
         if let Some(SynthBackend::Native(ref mut s)) = user_data.synth {
             s.set_cutoff_hz(user_data.dsp_params.native_cutoff_hz());
+            s.set_resonance(user_data.dsp_params.native_resonance());
+            let (fa, fd, fs, fr, famt) = user_data.dsp_params.native_filter_env();
+            s.set_filter_env(fa, fd, fs, fr, famt);
+            for idx in 0..3 {
+                let (wave, octave, detune_cents, level) = user_data.dsp_params.native_osc(idx);
+                s.set_osc(idx, wave, octave, detune_cents, level);
+            }
+            s.set_noise_level(user_data.dsp_params.native_noise_level());
+            s.set_glide(user_data.dsp_params.native_glide_s());
         }
 
         match user_data.synth {
@@ -933,4 +1178,159 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
     user_data.last_frames = n_frames;
 
     unsafe { stream.queue_raw_buffer(raw) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `native_resonance` defaults to the Minimoog factory 0.3 and
+    /// clamps to [0.0, 0.95] (headroom below the Stilson/Smith ladder's
+    /// self-oscillation instability).
+    #[test]
+    fn native_resonance_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_resonance(), 0.3);
+
+        p.set_native_resonance(2.0);
+        assert_eq!(p.native_resonance(), 0.95);
+
+        p.set_native_resonance(-1.0);
+        assert_eq!(p.native_resonance(), 0.0);
+
+        p.set_native_resonance(0.5);
+        assert_eq!(p.native_resonance(), 0.5);
+    }
+
+    /// The C-ABI setter routes through the same clamp into the global
+    /// params the audio thread reads.
+    #[test]
+    fn native_resonance_ffi_setter_clamps() {
+        polyclav_dsp_set_native_resonance(7.0);
+        assert_eq!(dsp_params().native_resonance(), 0.95);
+        polyclav_dsp_set_native_resonance(-0.25);
+        assert_eq!(dsp_params().native_resonance(), 0.0);
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_resonance(0.3);
+        assert_eq!(dsp_params().native_resonance(), 0.3);
+    }
+
+    /// Filter-env atomics boot at the §1.4 filter ADSR (5/600/0.4/600)
+    /// with amount 0 (OFF — regression-safe), and clamp: times to
+    /// [0.0001, 10] s, sustain and amount to [0, 1].
+    #[test]
+    fn native_filter_env_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_filter_env(), (0.005, 0.6, 0.4, 0.6, 0.0));
+
+        p.set_native_filter_env(-1.0, 20.0, 1.5, 0.0, 2.0);
+        assert_eq!(p.native_filter_env(), (1.0e-4, 10.0, 1.0, 1.0e-4, 1.0));
+
+        p.set_native_filter_env(0.01, 0.2, 0.5, 0.3, 0.25);
+        assert_eq!(p.native_filter_env(), (0.01, 0.2, 0.5, 0.3, 0.25));
+    }
+
+    /// The C ABI filter-env setter reaches the same global params (and
+    /// clamps identically).
+    #[test]
+    fn native_filter_env_ffi_setter_clamps() {
+        polyclav_dsp_set_native_filter_env(100.0, -5.0, -1.0, 100.0, -3.0);
+        assert_eq!(
+            dsp_params().native_filter_env(),
+            (10.0, 1.0e-4, 0.0, 10.0, 0.0)
+        );
+        // Restore the defaults so other tests / later asserts see the
+        // documented boot values.
+        polyclav_dsp_set_native_filter_env(0.005, 0.6, 0.4, 0.6, 0.0);
+        assert_eq!(
+            dsp_params().native_filter_env(),
+            (0.005, 0.6, 0.4, 0.6, 0.0)
+        );
+    }
+
+    /// Oscillator-bank atomics boot at the stage-3 defaults (osc 1
+    /// saw/0/0¢/1.0, osc 2 saw/0/-7¢/0.0, osc 3 saw/-1/+5¢/0.0, noise
+    /// 0.0) and clamp octave to [-2, 2], detune to [-100, 100], level
+    /// and noise to [0, 1].
+    #[test]
+    fn native_osc_defaults_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_osc(0), (0, 0, 0.0, 1.0));
+        assert_eq!(p.native_osc(1), (0, 0, -7.0, 0.0));
+        assert_eq!(p.native_osc(2), (0, -1, 5.0, 0.0));
+        assert_eq!(p.native_noise_level(), 0.0);
+
+        p.set_native_osc(1, 2, -5, -500.0, 3.0);
+        assert_eq!(p.native_osc(1), (2, -2, -100.0, 1.0));
+
+        p.set_native_osc(1, 1, 1, 12.5, 0.25);
+        assert_eq!(p.native_osc(1), (1, 1, 12.5, 0.25));
+
+        p.set_native_noise_level(2.0);
+        assert_eq!(p.native_noise_level(), 1.0);
+        p.set_native_noise_level(-1.0);
+        assert_eq!(p.native_noise_level(), 0.0);
+    }
+
+    /// The C-ABI osc setter routes through the same clamps into the
+    /// global params, and ignores out-of-range idx / wave codes.
+    #[test]
+    fn native_osc_ffi_setter_clamps_and_ignores_bad_input() {
+        polyclav_dsp_set_native_osc(2, 1, 5, 250.0, -1.0);
+        assert_eq!(dsp_params().native_osc(2), (1, 2, 100.0, 0.0));
+
+        // Out-of-range idx and wave are ignored (values unchanged).
+        polyclav_dsp_set_native_osc(3, 0, 0, 0.0, 1.0);
+        polyclav_dsp_set_native_osc(-1, 0, 0, 0.0, 1.0);
+        polyclav_dsp_set_native_osc(2, 7, 0, 0.0, 1.0);
+        polyclav_dsp_set_native_osc(2, -1, 0, 0.0, 1.0);
+        assert_eq!(dsp_params().native_osc(2), (1, 2, 100.0, 0.0));
+
+        // Restore the defaults so other tests / later asserts see the
+        // documented boot values.
+        polyclav_dsp_set_native_osc(2, 0, -1, 5.0, 0.0);
+        assert_eq!(dsp_params().native_osc(2), (0, -1, 5.0, 0.0));
+    }
+
+    /// The C-ABI noise setter clamps into the global params.
+    #[test]
+    fn native_noise_ffi_setter_clamps() {
+        polyclav_dsp_set_native_noise(9.0);
+        assert_eq!(dsp_params().native_noise_level(), 1.0);
+        // Restore the default.
+        polyclav_dsp_set_native_noise(0.0);
+        assert_eq!(dsp_params().native_noise_level(), 0.0);
+    }
+
+    /// Glide atomic boots at 0.0 s (no slew — regression-safe) and
+    /// clamps to [0, 5] seconds.
+    #[test]
+    fn native_glide_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_glide_s(), 0.0);
+
+        p.set_native_glide_s(9.0);
+        assert_eq!(p.native_glide_s(), 5.0);
+
+        p.set_native_glide_s(-1.0);
+        assert_eq!(p.native_glide_s(), 0.0);
+
+        p.set_native_glide_s(0.25);
+        assert_eq!(p.native_glide_s(), 0.25);
+    }
+
+    /// The C-ABI glide setter routes through the same clamp into the
+    /// global params the audio thread reads.
+    #[test]
+    fn native_glide_ffi_setter_clamps() {
+        polyclav_dsp_set_native_glide(100.0);
+        assert_eq!(dsp_params().native_glide_s(), 5.0);
+        polyclav_dsp_set_native_glide(-3.0);
+        assert_eq!(dsp_params().native_glide_s(), 0.0);
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_glide(0.0);
+        assert_eq!(dsp_params().native_glide_s(), 0.0);
+    }
 }
