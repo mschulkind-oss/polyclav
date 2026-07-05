@@ -709,3 +709,96 @@ filter. Full UX feedback (record-save button, panic, octave shift).
    indices need to be picked from the 128-entry Components palette to
    ensure they read clearly on the device. Defer to Phase 2
    implementation — prototype the colors on real hardware and tune.
+
+---
+
+## Appendix A — Rust DSP crate survey (2026-07-04)
+
+> **Decision: stay on fundsp for Phases 2–4.** Nothing in the mid-2026
+> landscape justifies replacing it; the pivot triggers at the end of
+> this appendix are the conditions that would reopen the question.
+> Versions/dates verified against crates.io and GitHub on 2026-07-04.
+> License key: GPL/AGPL = hard blocker (Apache-2.0 statically-linked
+> binary); MIT / Apache-2.0 / BSD = compatible.
+
+### A.1 fundsp — the backbone (keep)
+
+- **0.23.0** (crates.io 2026-01-07) is the latest release — polyclav is
+  current. MIT OR Apache-2.0. Very active (commits through 2026-03).
+- **Pinning:** every 0.x bump is semver-breaking and upstream ships **no
+  changelog and no GitHub releases** — upgrades mean reading commits.
+  Master already has sequencer looping, an RT-queue swap
+  (`thingbuf`→`lfqueue`), and node-tree introspection brewing toward an
+  0.24; treat that as a planned migration, not a routine bump.
+- **Ladder reality check (verified in `fundsp-0.23.0/src/moog.rs`):**
+  `moog`/`moog_hz`/`moog_q` is the **Stilson/Smith musicdsp variant**
+  (`p = c(1.8−0.8c)`, `k = 2sin(πc/2)−1`, the `1.386249` resonance
+  polynomial) with a **single tanh on stage 4** — *not* Huovilainen
+  (per-stage tanh, thermal-voltage scaling, assumes ~2× oversampling).
+  Consequences: drive behavior and self-oscillation character at high Q
+  won't match a real Model D. Mitigations: wrap in `oversample()` when
+  driven hard (§1.6 already plans this); pivot ladder below if listening
+  tests fail. (Background: D'Angelo & Välimäki, "An improved virtual
+  analog model of the Moog ladder filter.")
+- **PolyBLEP tier:** fundsp's own README rates its PolyBLEP oscillators
+  "fast approximation, fair quality" vs. wavetable = "pristine." Fine at
+  48 kHz for v1; **the in-crate upgrade path is fundsp's wavetable
+  oscillators**, before any external crate.
+- All Phase 2–4 primitives confirmed present in 0.23: `adsr_live`,
+  `afollow`/`follow`, `oversample`, `poly_saw`/`poly_square`/
+  `poly_pulse`. RT-safe: graph build allocates, `tick`/`process` don't.
+
+### A.2 mi-plaits-dsp-rs — FM/wavetable phase (keep penciled in)
+
+MIT, very active (commits 2026-06), full port of Plaits firmware 1.2
+(all 24 engines), `no_std`, caller-provided buffers, explicitly designed
+for 48 kHz (our rate). **Caveat: never published to crates.io** — git
+dependency only; pin a commit SHA, and note crates.io forbids git deps
+if polyclav ever publishes library crates (then: extract needed engines
+under MIT, or evaluate `dx7` below).
+
+### A.3 Rejected / watch list
+
+| Crate | Status (2026-07) | License | Verdict |
+|---|---|---|---|
+| `dasp` 0.11 | release-frozen since 2020; plumbing (samples/frames), no synthesis | MIT/Apache ✅ | ❌ nothing over fundsp |
+| `synfx-dsp` 0.5.6 / `hexodsp` | **GPL-3.0**; author deleted the repos, publishing stopped | 🚫 | 🚫 license + dead upstream (shipped exactly our shopping list — was never usable) |
+| `va-filter` (Fredemus) | plugin not crate; inactive since 2023; **the** DK-method ladder/SVF reference (Newton-solved nonlinearities) | **GPL-3.0** 🚫 | 🚫 as dependency; ✅ as *algorithm reference* — reimplementing from the cited papers is clean, copying code is not |
+| `surge-rs` (~100 micro-crates incl. `surgefilter-huovilainen`) | perpetual 0.2-alpha since 2023 | **GPL-3.0** 🚫 | 🚫 license + alpha quality |
+| `valib` (SolarLiner, git-only) | dormant since 2024-12; SVF, **ladder**, saturators, oversampling; `src/` is **MIT** (only example plugins GPL) | core ✅ | 👀 **best MIT porting reference** if fundsp's ladder proves insufficient. (NB: the crates.io `valib` is an unrelated name-collision crate.) |
+| `oscen` (rewrite) | unpublished rewrite, commits 2026-07: graph compiler, TPT filter, PolyBLEP, ADSR | MIT/Apache ✅ | 👀 only credible permissive challenger; re-evaluate if it ships ≥0.2 with RT guarantees |
+| `simper-filter` 0.1.1, `dirtydata-dsp-svf` 0.1.0 | small permissive ZDF/TPT SVFs (2025/2026) | ✅ | 👀 relevant only if a non-ladder filter mode appears |
+| `dx7` (spacejam) 0.0.4 | Plaits DX7 engine port driven by real SYSEX patches; early but credible author | MIT ✅ | 👀 alternative for the FM slot |
+| `twang`, `glicol_synth`, `sirena`, misc 2026 shovelware (`naad`, `audio_core_dsp`, …) | dormant / wrong scope / unvetted | mixed | ❌ |
+
+Notable gap: **no permissively-licensed, solved DK-method/ZDF ladder
+exists in Rust** as of mid-2026. The options remain fundsp's
+Stilson-variant, valib's dormant MIT ladder, or DIY from the literature.
+
+### A.4 Pivot triggers (re-run this survey if any fires)
+
+1. **fundsp goes quiet ≥ 9–12 months** (healthy as of 2026-03). Fallback:
+   vendor the ~6 fundsp modules we use (MIT permits), or thin in-house
+   DSP layer.
+2. **Ladder fails listening tests** — self-oscillation onset/stability at
+   max Q, filter-FM growl, aliasing under drive. Escalation ladder:
+   (a) 2× `oversample()`; (b) port valib's MIT ladder; (c) implement
+   Huovilainen/DK-method from the papers (va-filter as conceptual
+   reference only — no GPL code).
+3. **PolyBLEP saw too dull/aliased vs. Model D references** — switch to
+   fundsp wavetable oscillators (in-crate) first.
+4. **fundsp 0.24 breaks the graph API badly** — migrate vs. vendor 0.23
+   decision point.
+5. **oscen publishes a stable compiled-graph release with RT
+   guarantees** — re-evaluate as the voice-graph engine.
+6. **mi-plaits-dsp still unpublished when we want to ship library
+   crates** — extract engines or adopt `dx7` for FM.
+
+### A.5 Sources
+
+crates.io + GitHub for each crate named above; fundsp source readings:
+`src/moog.rs`, `src/prelude.rs` @ 0.23.0/master;
+github.com/sourcebox/mi-plaits-dsp-rs; github.com/SolarLiner/valib;
+github.com/Fredemus/va-filter; github.com/klebs6/surge-rs;
+github.com/reedrosenbluth/oscen; D'Angelo & Välimäki (2013), "An
+improved virtual analog model of the Moog ladder filter."
