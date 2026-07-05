@@ -775,6 +775,81 @@ func TestSynthPatchEnvTimeZeroFloorsNotRejects(t *testing.T) {
 	}
 }
 
+// doRaw is do without any t.Fatalf path, so it is safe to call from
+// non-test goroutines (concurrency tests report via t.Errorf).
+func (f *fixture) doRaw(method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	f.srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestSynthPatchConcurrentPartialUpdates is the lost-update regression:
+// PATCH /api/synth's partial-body merge happens inside the controls
+// layer under its writer lock, so two concurrent PATCHes to different
+// fields must BOTH survive. Pre-fix, the handler merged over a Synth()
+// snapshot read once, and the second writer resurrected the first's old
+// values. Run with -race.
+func TestSynthPatchConcurrentPartialUpdates(t *testing.T) {
+	const rounds = 50
+
+	patchPair := func(t *testing.T, f *fixture, bodyA, bodyB string) {
+		t.Helper()
+		var wg sync.WaitGroup
+		for _, body := range []string{bodyA, bodyB} {
+			wg.Add(1)
+			go func(body string) {
+				defer wg.Done()
+				if rec := f.doRaw("PATCH", "/api/synth", body); rec.Code != http.StatusOK {
+					t.Errorf("PATCH %s: status %d (body: %s)", body, rec.Code, rec.Body.String())
+				}
+			}(body)
+		}
+		wg.Wait()
+	}
+
+	t.Run("filter_env fields", func(t *testing.T) {
+		f := newFixture(t, nil)
+		if err := f.ctrl.SelectPatch("moog"); err != nil {
+			t.Fatalf("SelectPatch: %v", err)
+		}
+		for r := 0; r < rounds; r++ {
+			attack := 0.01 + float64(r)*0.01
+			decay := 0.5 + float64(r)*0.01
+			patchPair(t, f,
+				fmt.Sprintf(`{"filter_env":{"attack":%g}}`, attack),
+				fmt.Sprintf(`{"filter_env":{"decay":%g}}`, decay))
+			syn := f.ctrl.Synth()
+			if !approxEq(float64(syn.FilterEnv.Attack), attack) || !approxEq(float64(syn.FilterEnv.Decay), decay) {
+				t.Fatalf("round %d: lost update: attack=%v (want %v) decay=%v (want %v)",
+					r, syn.FilterEnv.Attack, attack, syn.FilterEnv.Decay, decay)
+			}
+		}
+	})
+
+	t.Run("osc fields", func(t *testing.T) {
+		f := newFixture(t, nil)
+		if err := f.ctrl.SelectPatch("moog"); err != nil {
+			t.Fatalf("SelectPatch: %v", err)
+		}
+		for r := 0; r < rounds; r++ {
+			level := 0.1 + float64(r)*0.01
+			detune := float64(1 + r)
+			patchPair(t, f,
+				fmt.Sprintf(`{"osc":[{"index":1,"level":%g}]}`, level),
+				fmt.Sprintf(`{"osc":[{"index":1,"detune_cents":%g}]}`, detune))
+			o := f.ctrl.Synth().Oscs[1]
+			if !approxEq(float64(o.Level), level) || !approxEq(float64(o.DetuneCents), detune) {
+				t.Fatalf("round %d: lost update: level=%v (want %v) detune=%v (want %v)",
+					r, o.Level, level, o.DetuneCents, detune)
+			}
+			if o.Wave != "saw" {
+				t.Fatalf("round %d: osc wave clobbered: %q", r, o.Wave)
+			}
+		}
+	})
+}
+
 func TestStatusIncludesSynth(t *testing.T) {
 	f := newFixture(t, nil)
 	if err := f.ctrl.SelectPatch("moog"); err != nil {
@@ -842,6 +917,45 @@ func TestMasteringPatch(t *testing.T) {
 
 	rec = f.do(t, "PATCH", "/api/mastering", `{"comp_amount": bad}`)
 	wantStatus(t, rec, http.StatusBadRequest)
+}
+
+// TestMasteringPatchClamps: out-of-range values clamp to the engine's
+// ranges (comp [0,1], ceiling [-12,0] dB) in the controls layer, so the
+// response and the cache report what the engine actually applied.
+func TestMasteringPatchClamps(t *testing.T) {
+	f := newFixture(t, nil)
+
+	rec := f.do(t, "PATCH", "/api/mastering", map[string]any{
+		"comp_amount":        2.5,
+		"limiter_ceiling_db": -30.0,
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	if v := m["comp_amount"].(float64); !approxEq(v, 1.0) {
+		t.Errorf("comp_amount: expected clamp to 1.0, got %v", v)
+	}
+	if v := m["limiter_ceiling_db"].(float64); !approxEq(v, -12.0) {
+		t.Errorf("limiter_ceiling_db: expected clamp to -12.0, got %v", v)
+	}
+	if v := f.audio.get("masteringComp"); !approxEq(float64(v), 1.0) {
+		t.Errorf("audio mastering comp: expected 1.0, got %v", v)
+	}
+	if v := f.audio.get("limiterCeilingDB"); !approxEq(float64(v), -12.0) {
+		t.Errorf("audio limiter ceiling: expected -12.0, got %v", v)
+	}
+
+	rec = f.do(t, "PATCH", "/api/mastering", map[string]any{
+		"comp_amount":        -0.4,
+		"limiter_ceiling_db": 3.0,
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m = decodeBody(t, rec)
+	if v := m["comp_amount"].(float64); v != 0 {
+		t.Errorf("comp_amount: expected clamp to 0, got %v", v)
+	}
+	if v := m["limiter_ceiling_db"].(float64); v != 0 {
+		t.Errorf("limiter_ceiling_db: expected clamp to 0, got %v", v)
+	}
 }
 
 // ---- config ----------------------------------------------------------------

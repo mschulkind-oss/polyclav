@@ -141,6 +141,21 @@ type Controls struct {
 	st     StateStore
 	hub    *Hub
 
+	// applyMu is the single writer lock: every mutating method (the
+	// knob setters/adjusters, cutoff, the SetSynth* family, MergeSynth,
+	// patch selection, mastering, the velocity-remap swap) holds it
+	// across its ENTIRE clamp → audio apply → state persist → hub
+	// publish sequence. Without it, concurrent writers interleave those
+	// steps and leave the engine, state.toml, and SSE subscribers
+	// disagreeing about the last write. Every applied operation is
+	// cheap (audio atomics, a map update, a non-blocking publish), so
+	// one coarse writer lock is fine.
+	//
+	// Two-lock discipline: applyMu is always acquired strictly OUTSIDE
+	// (before) mu, and mu is never held across a call out to audio, the
+	// state store, or the hub. Read-only methods take only mu.
+	applyMu sync.Mutex
+
 	// mu guards the position/cache fields below. Knob values themselves
 	// are NOT cached here — the state store stays the single source of
 	// truth so a restart and a live read agree.
@@ -216,6 +231,8 @@ func (c *Controls) AdjustCompressor(delta float32) (float32, bool) {
 
 // setKnob is the absolute-setter path shared by SetVolume/Reverb/Compressor.
 func (c *Controls) setKnob(field string, v float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur := c.reg.Current()
 	if cur == nil {
 		return 0, errNoPatch
@@ -231,6 +248,8 @@ func (c *Controls) setKnob(field string, v float32) (float32, error) {
 // The current value is read from the state store (not cached locally) so
 // deltas compose correctly with absolute sets from other surfaces.
 func (c *Controls) adjustKnob(field string, delta float32) (float32, bool) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur := c.reg.Current()
 	if cur == nil {
 		return 0, false
@@ -283,6 +302,8 @@ func knobField(k state.Knob, field string) float32 {
 // position lives here, not in the state store: cutoff persistence is
 // deliberately Phase-2 work (docs/ROADMAP.md).
 func (c *Controls) AdjustCutoff(delta float32) (float32, bool) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur := c.reg.Current()
 	if cur == nil || cur.Type != "native" {
 		return 0, false
@@ -300,6 +321,8 @@ func (c *Controls) AdjustCutoff(delta float32) (float32, bool) {
 // SetCutoffPos sets the cutoff knob to an absolute 0..1 position (web
 // slider path). Errors unless a native patch is selected.
 func (c *Controls) SetCutoffPos(pos float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur := c.reg.Current()
 	if cur == nil || cur.Type != "native" {
 		return 0, ErrNoNativePatch
@@ -354,39 +377,55 @@ func (c *Controls) publishSynth(patch string, data map[string]any) {
 // [0, 0.95]), applies it to the engine, caches it, and publishes a
 // "synth" change. Errors unless a native patch is selected.
 func (c *Controls) SetSynthResonance(v float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur, err := c.nativeCurrent()
 	if err != nil {
 		return 0, err
 	}
+	return c.applyResonance(cur.Name, v), nil
+}
+
+// applyResonance is SetSynthResonance's clamp/apply/cache/publish body.
+// Callers hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyResonance(patch string, v float32) float32 {
 	v = clampRange(v, 0, maxResonance)
 	c.mu.Lock()
 	c.synth.Resonance = v
 	c.mu.Unlock()
 	c.audio.SetNativeResonance(v)
-	c.publishSynth(cur.Name, map[string]any{"field": "resonance", "resonance": v})
-	return v, nil
+	c.publishSynth(patch, map[string]any{"field": "resonance", "resonance": v})
+	return v
 }
 
 // SetSynthFilterEnv sets the filter-envelope ADSR + env→cutoff amount.
 // Times clamp to [0.0001, 10] s; sustain and amount to [0, 1]. Returns
 // the clamped values; errors unless a native patch is selected.
 func (c *Controls) SetSynthFilterEnv(a, d, s, r, amount float32) (FilterEnv, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur, err := c.nativeCurrent()
 	if err != nil {
 		return FilterEnv{}, err
 	}
+	return c.applyFilterEnv(cur.Name, FilterEnv{Attack: a, Decay: d, Sustain: s, Release: r, Amount: amount}), nil
+}
+
+// applyFilterEnv is SetSynthFilterEnv's clamp/apply/cache/publish body.
+// Callers hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyFilterEnv(patch string, in FilterEnv) FilterEnv {
 	fe := FilterEnv{
-		Attack:  clampRange(a, minEnvTime, maxEnvTime),
-		Decay:   clampRange(d, minEnvTime, maxEnvTime),
-		Sustain: clamp01(s),
-		Release: clampRange(r, minEnvTime, maxEnvTime),
-		Amount:  clamp01(amount),
+		Attack:  clampRange(in.Attack, minEnvTime, maxEnvTime),
+		Decay:   clampRange(in.Decay, minEnvTime, maxEnvTime),
+		Sustain: clamp01(in.Sustain),
+		Release: clampRange(in.Release, minEnvTime, maxEnvTime),
+		Amount:  clamp01(in.Amount),
 	}
 	c.mu.Lock()
 	c.synth.FilterEnv = fe
 	c.mu.Unlock()
 	c.audio.SetNativeFilterEnv(fe.Attack, fe.Decay, fe.Sustain, fe.Release, fe.Amount)
-	c.publishSynth(cur.Name, map[string]any{
+	c.publishSynth(patch, map[string]any{
 		"field": "filter_env",
 		"filter_env": map[string]any{
 			"attack":  fe.Attack,
@@ -396,7 +435,20 @@ func (c *Controls) SetSynthFilterEnv(a, d, s, r, amount float32) (FilterEnv, err
 			"amount":  fe.Amount,
 		},
 	})
-	return fe, nil
+	return fe
+}
+
+// validateOsc is the shared idx/wave gate for SetSynthOsc and MergeSynth.
+func validateOsc(idx int, wave string) error {
+	if idx < 0 || idx > 2 {
+		return fmt.Errorf("osc index %d out of range 0..2", idx)
+	}
+	switch wave {
+	case "saw", "square", "pulse":
+		return nil
+	default:
+		return fmt.Errorf("unknown osc wave %q (valid: saw, square, pulse)", wave)
+	}
 }
 
 // SetSynthOsc sets one oscillator (idx 0..2). wave must be saw, square,
@@ -404,28 +456,33 @@ func (c *Controls) SetSynthFilterEnv(a, d, s, r, amount float32) (FilterEnv, err
 // level to [0, 1]. Returns the applied params; errors on a bad idx or
 // wave, or unless a native patch is selected.
 func (c *Controls) SetSynthOsc(idx int, wave string, octave int, detuneCents, level float32) (OscParams, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur, err := c.nativeCurrent()
 	if err != nil {
 		return OscParams{}, err
 	}
-	if idx < 0 || idx > 2 {
-		return OscParams{}, fmt.Errorf("osc index %d out of range 0..2", idx)
+	if err := validateOsc(idx, wave); err != nil {
+		return OscParams{}, err
 	}
-	switch wave {
-	case "saw", "square", "pulse":
-	default:
-		return OscParams{}, fmt.Errorf("unknown osc wave %q (valid: saw, square, pulse)", wave)
-	}
+	return c.applyOsc(cur.Name, idx, OscParams{Wave: wave, Octave: octave, DetuneCents: detuneCents, Level: level})
+}
+
+// applyOsc is SetSynthOsc's clamp/apply/cache/publish body. Callers hold
+// applyMu, have passed the native-patch gate, and have validated
+// idx/in.Wave.
+func (c *Controls) applyOsc(patch string, idx int, in OscParams) (OscParams, error) {
+	octave := in.Octave
 	if octave < -2 {
 		octave = -2
 	} else if octave > 2 {
 		octave = 2
 	}
 	op := OscParams{
-		Wave:        wave,
+		Wave:        in.Wave,
 		Octave:      octave,
-		DetuneCents: clampRange(detuneCents, -maxDetune, maxDetune),
-		Level:       clamp01(level),
+		DetuneCents: clampRange(in.DetuneCents, -maxDetune, maxDetune),
+		Level:       clamp01(in.Level),
 	}
 	// Audio first: idx/wave are pre-validated, but if the engine still
 	// rejects, the cache must not drift from what actually applied.
@@ -435,7 +492,7 @@ func (c *Controls) SetSynthOsc(idx int, wave string, octave int, detuneCents, le
 	c.mu.Lock()
 	c.synth.Oscs[idx] = op
 	c.mu.Unlock()
-	c.publishSynth(cur.Name, map[string]any{
+	c.publishSynth(patch, map[string]any{
 		"field":        "osc",
 		"index":        idx,
 		"wave":         op.Wave,
@@ -449,33 +506,158 @@ func (c *Controls) SetSynthOsc(idx int, wave string, octave int, detuneCents, le
 // SetSynthNoise sets the white-noise mixer level (clamped to [0, 1]).
 // Errors unless a native patch is selected.
 func (c *Controls) SetSynthNoise(level float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur, err := c.nativeCurrent()
 	if err != nil {
 		return 0, err
 	}
+	return c.applyNoise(cur.Name, level), nil
+}
+
+// applyNoise is SetSynthNoise's clamp/apply/cache/publish body. Callers
+// hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyNoise(patch string, level float32) float32 {
 	level = clamp01(level)
 	c.mu.Lock()
 	c.synth.Noise = level
 	c.mu.Unlock()
 	c.audio.SetNativeNoise(level)
-	c.publishSynth(cur.Name, map[string]any{"field": "noise", "noise": level})
-	return level, nil
+	c.publishSynth(patch, map[string]any{"field": "noise", "noise": level})
+	return level
 }
 
 // SetSynthGlide sets the glide (portamento) time constant in seconds
 // (clamped to [0, 5]). Errors unless a native patch is selected.
 func (c *Controls) SetSynthGlide(seconds float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	cur, err := c.nativeCurrent()
 	if err != nil {
 		return 0, err
 	}
+	return c.applyGlide(cur.Name, seconds), nil
+}
+
+// applyGlide is SetSynthGlide's clamp/apply/cache/publish body. Callers
+// hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyGlide(patch string, seconds float32) float32 {
 	seconds = clampRange(seconds, 0, maxGlide)
 	c.mu.Lock()
 	c.synth.Glide = seconds
 	c.mu.Unlock()
 	c.audio.SetNativeGlide(seconds)
-	c.publishSynth(cur.Name, map[string]any{"field": "glide", "glide": seconds})
-	return seconds, nil
+	c.publishSynth(patch, map[string]any{"field": "glide", "glide": seconds})
+	return seconds
+}
+
+// SynthPartial is a partial native-synth update: nil fields (and nil
+// sub-fields) keep their current values. It exists so partial PATCH
+// bodies merge over the live snapshot INSIDE the applyMu critical
+// section — a caller doing its own read-modify-write over Synth() would
+// race concurrent writers and silently lose their updates.
+type SynthPartial struct {
+	Resonance *float32
+	FilterEnv *FilterEnvPartial
+	Oscs      []OscPartial
+	Noise     *float32
+	Glide     *float32
+}
+
+// FilterEnvPartial is SynthPartial's filter-envelope section; nil
+// fields keep the current envelope values.
+type FilterEnvPartial struct {
+	Attack, Decay, Sustain, Release, Amount *float32
+}
+
+// OscPartial is one oscillator's partial update. Index says which osc
+// to touch (0..2, required); every other field is optional.
+type OscPartial struct {
+	Index       int
+	Wave        *string
+	Octave      *int
+	DetuneCents *float32
+	Level       *float32
+}
+
+// MergeSynth merges p over the current synth params and applies the
+// result, all under the writer lock, so two concurrent partial updates
+// to different fields both survive. Each touched section runs the same
+// clamp/apply/cache/publish sequence (and emits the same "synth"
+// change) as its SetSynth* counterpart, in a fixed order: resonance,
+// filter_env, noise, glide, then oscs. Osc index/wave are validated up
+// front so an invalid entry applies nothing. Returns the resulting
+// snapshot; errors unless a native patch is selected.
+func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return SynthSnapshot{}, err
+	}
+	base := c.Synth() // stable while applyMu is held
+	for _, o := range p.Oscs {
+		if o.Index < 0 || o.Index > 2 {
+			return SynthSnapshot{}, fmt.Errorf("osc index %d out of range 0..2", o.Index)
+		}
+		// A nil Wave keeps the current one, which is always valid.
+		if o.Wave != nil {
+			if err := validateOsc(o.Index, *o.Wave); err != nil {
+				return SynthSnapshot{}, err
+			}
+		}
+	}
+
+	if p.Resonance != nil {
+		c.applyResonance(cur.Name, *p.Resonance)
+	}
+	if p.FilterEnv != nil {
+		fe := base.FilterEnv
+		if p.FilterEnv.Attack != nil {
+			fe.Attack = *p.FilterEnv.Attack
+		}
+		if p.FilterEnv.Decay != nil {
+			fe.Decay = *p.FilterEnv.Decay
+		}
+		if p.FilterEnv.Sustain != nil {
+			fe.Sustain = *p.FilterEnv.Sustain
+		}
+		if p.FilterEnv.Release != nil {
+			fe.Release = *p.FilterEnv.Release
+		}
+		if p.FilterEnv.Amount != nil {
+			fe.Amount = *p.FilterEnv.Amount
+		}
+		c.applyFilterEnv(cur.Name, fe)
+	}
+	if p.Noise != nil {
+		c.applyNoise(cur.Name, *p.Noise)
+	}
+	if p.Glide != nil {
+		c.applyGlide(cur.Name, *p.Glide)
+	}
+	for _, o := range p.Oscs {
+		m := base.Oscs[o.Index]
+		if o.Wave != nil {
+			m.Wave = *o.Wave
+		}
+		if o.Octave != nil {
+			m.Octave = *o.Octave
+		}
+		if o.DetuneCents != nil {
+			m.DetuneCents = *o.DetuneCents
+		}
+		if o.Level != nil {
+			m.Level = *o.Level
+		}
+		if _, err := c.applyOsc(cur.Name, o.Index, m); err != nil {
+			// Engine rejection mid-sequence: earlier sections stay
+			// applied (cache/engine/publishes agree on them); this osc's
+			// cache is untouched.
+			return SynthSnapshot{}, err
+		}
+	}
+	return c.Synth(), nil
 }
 
 // Synth returns the cached native-synth params (the defaults until a
@@ -490,7 +672,12 @@ func (c *Controls) Synth() SynthSnapshot {
 // SelectPatch switches to the named patch: registry select, restore that
 // patch's saved knob values into the audio engine, record it as current
 // in the state store, publish a "patch" change. Identical to a pad press.
+// The whole sequence runs under the writer lock, so a concurrent select
+// (web vs pad) can never leave the engine on one patch while the
+// registry/state/SSE say another.
 func (c *Controls) SelectPatch(name string) error {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	if err := c.reg.Select(name); err != nil {
 		return err
 	}
@@ -500,6 +687,8 @@ func (c *Controls) SelectPatch(name string) error {
 
 // SelectPatchIndex is SelectPatch by 0-based slot index (pad column).
 func (c *Controls) SelectPatchIndex(i int) error {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	if err := c.reg.SelectIndex(i); err != nil {
 		return err
 	}
@@ -507,9 +696,10 @@ func (c *Controls) SelectPatchIndex(i int) error {
 	return nil
 }
 
-// afterSelect is the shared post-selection sequence. It re-reads
-// Current() from the registry rather than trusting its own arguments so
-// the restored knobs always match what the registry actually loaded.
+// afterSelect is the shared post-selection sequence; callers hold
+// applyMu. It re-reads Current() from the registry rather than trusting
+// its own arguments so the restored knobs always match what the
+// registry actually loaded.
 func (c *Controls) afterSelect() {
 	cur := c.reg.Current()
 	if cur == nil {
@@ -520,39 +710,61 @@ func (c *Controls) afterSelect() {
 	c.audio.SetReverb(k.Reverb)
 	c.audio.SetCompressor(k.Compressor)
 	c.st.SetCurrentPatch(cur.Name)
+	data := map[string]any{
+		"name":       cur.Name,
+		"display":    cur.Display,
+		"volume":     k.Volume,
+		"reverb":     k.Reverb,
+		"compressor": k.Compressor,
+	}
 	if cur.Type == "native" {
 		// Cutoff position is per-session, not persisted (Phase 2): every
 		// entry into a native patch starts from the known-good default.
 		c.mu.Lock()
 		c.cutoffPos = defaultCutoffPos
 		c.mu.Unlock()
-		c.audio.SetNativeCutoffHz(cutoffHzFromPos(defaultCutoffPos))
+		hz := cutoffHzFromPos(defaultCutoffPos)
+		c.audio.SetNativeCutoffHz(hz)
+		// The reset changed the cutoff, so the publish must carry it or
+		// SSE clients keep showing the pre-select position. Non-native
+		// patches have no cutoff and omit both keys.
+		data["cutoff_pos"] = float32(defaultCutoffPos)
+		data["cutoff_hz"] = hz
 	}
 	c.logger.Debug("patch selected via controls", "name", cur.Name)
-	c.hub.Publish(Change{Type: "patch", Data: map[string]any{
-		"name":       cur.Name,
-		"display":    cur.Display,
-		"volume":     k.Volume,
-		"reverb":     k.Reverb,
-		"compressor": k.Compressor,
-	}})
+	c.hub.Publish(Change{Type: "patch", Data: data})
 }
 
+// Mastering clamp ranges, mirroring the Rust-side clamps in audio-core
+// (dsp/compressor.rs: amount.clamp(0.0, 1.0); lib.rs: limiter ceiling
+// store_clamped(v, -12.0, 0.0)). Clamping here keeps the cache and the
+// published changes telling the truth about what the engine applied.
+const (
+	minLimiterCeilingDB = -12
+	maxLimiterCeilingDB = 0
+)
+
 // SetMastering applies mastering params to the engine and caches them
-// for status reads. Either pointer may be nil, meaning "leave that param
-// unchanged" — the web PATCH body sends only what the user moved.
-// Publishes a "mastering" change carrying only the keys that changed;
-// nothing is published when both are nil. Returns the resulting values.
+// for status reads. Values clamp to the engine's ranges (comp amount to
+// [0, 1], limiter ceiling to [-12, 0] dB). Either pointer may be nil,
+// meaning "leave that param unchanged" — the web PATCH body sends only
+// what the user moved. Publishes a "mastering" change carrying only the
+// keys that changed; nothing is published when both are nil. Returns
+// the resulting (clamped) values.
 func (c *Controls) SetMastering(compAmount, ceilingDB *float32) (comp, ceiling float32) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	data := make(map[string]any, 2)
 	c.mu.Lock()
 	if compAmount != nil {
-		c.masteringComp = *compAmount
-		data["comp_amount"] = *compAmount
+		v := clamp01(*compAmount)
+		c.masteringComp = v
+		data["comp_amount"] = v
 	}
 	if ceilingDB != nil {
-		c.limiterCeilingDB = *ceilingDB
-		data["limiter_ceiling_db"] = *ceilingDB
+		v := clampRange(*ceilingDB, minLimiterCeilingDB, maxLimiterCeilingDB)
+		c.limiterCeilingDB = v
+		data["limiter_ceiling_db"] = v
 	}
 	comp, ceiling = c.masteringComp, c.limiterCeilingDB
 	c.mu.Unlock()
@@ -579,8 +791,14 @@ func (c *Controls) Mastering() (comp, ceiling float32) {
 
 // InitMastering is the startup seed: apply the config-file values and
 // cache them WITHOUT publishing — nothing has "changed" at boot, and
-// early subscribers should not see a phantom edit.
+// early subscribers should not see a phantom edit. Values clamp to the
+// same engine ranges as SetMastering so an out-of-range config value
+// cannot make the cache disagree with the engine.
 func (c *Controls) InitMastering(comp, ceiling float32) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	comp = clamp01(comp)
+	ceiling = clampRange(ceiling, minLimiterCeilingDB, maxLimiterCeilingDB)
 	c.mu.Lock()
 	c.masteringComp = comp
 	c.limiterCeilingDB = ceiling
@@ -595,6 +813,8 @@ func (c *Controls) InitMastering(comp, ceiling float32) {
 // dependency arrow points from the curve implementation to here, never
 // back.
 func (c *Controls) SetVelocityRemap(fn func(uint8) uint8, label string) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
 	c.vel.Store(&velocityRemap{fn: fn, label: label})
 	c.hub.Publish(Change{Type: "velocity", Data: map[string]any{
 		"curve": label,

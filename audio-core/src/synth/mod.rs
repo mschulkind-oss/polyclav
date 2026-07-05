@@ -647,6 +647,66 @@ mod tests {
         );
     }
 
+    /// REGRESSION (env-2 stale-state): with the amp release shorter
+    /// than the filter release (the defaults: 0.4 s < 0.6 s; here the
+    /// gap is widened to 2 s), the voice goes idle mid-filter-release
+    /// and env2 used to freeze at a nonzero value. That stale value —
+    /// plus the stale applied-cutoff cache behind the >0.5 Hz retune
+    /// hysteresis — then colored the next note's attack. After the fix
+    /// (hard reset of env2 + applied-cutoff at the idle transition),
+    /// the second note's applied-cutoff contour must match a fresh
+    /// voice's bit for bit, starting from the unmodulated base.
+    #[test]
+    fn filter_env_resets_when_voice_goes_idle() {
+        let mut used = NativeSynth::new("minimoog", 48_000.0).unwrap();
+        used.set_filter_env(0.005, 0.600, 0.4, 2.0, 1.0);
+
+        // First note: sound it, release it, render past the 400 ms amp
+        // release (well inside the 2 s filter release) to full idle.
+        press(&mut used, 60);
+        render_ms(&mut used, 300);
+        release(&mut used, 60);
+        let tail = render_ms(&mut used, 600);
+        assert!(
+            tail[500 * 96..].iter().all(|&s| s == 0.0),
+            "voice should be fully silent before the second note"
+        );
+        assert!(!used.voices[0].is_active(), "voice should be idle");
+        let idle_cutoff = used.voices[0].applied_cutoff_hz();
+        assert_eq!(
+            idle_cutoff.to_bits(),
+            2_000.0f32.to_bits(),
+            "idle transition must drop the applied cutoff back to the \
+             unmodulated base, got {idle_cutoff}"
+        );
+
+        // Second note vs a fresh voice with identical params: the
+        // applied-cutoff attack contour must be bit-identical. Before
+        // the fix the reused voice's env2 restarted from the frozen
+        // mid-release value (≈0.32 ⇒ cutoff ≈4.9 kHz instead of 2 kHz)
+        // and diverged from the first block on.
+        let mut fresh = NativeSynth::new("minimoog", 48_000.0).unwrap();
+        fresh.set_filter_env(0.005, 0.600, 0.4, 2.0, 1.0);
+        press(&mut used, 60);
+        press(&mut fresh, 60);
+        let mut buf_used = [0.0f32; 256];
+        let mut buf_fresh = [0.0f32; 256];
+        for block in 0..80 {
+            used.render(&mut buf_used);
+            fresh.render(&mut buf_fresh);
+            let (cu, cf) = (
+                used.voices[0].applied_cutoff_hz(),
+                fresh.voices[0].applied_cutoff_hz(),
+            );
+            assert_eq!(
+                cu.to_bits(),
+                cf.to_bits(),
+                "block {block}: reused voice's applied cutoff diverged from a \
+                 fresh voice's contour ({cu} vs {cf})"
+            );
+        }
+    }
+
     /// Peak absolute sample value.
     fn peak(samples: &[f32]) -> f32 {
         samples.iter().fold(0.0f32, |m, s| m.max(s.abs()))

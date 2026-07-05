@@ -53,11 +53,13 @@ type MIDIConfig struct {
 
 // VelocityConfig is the [midi.velocity] block: the global default velocity
 // curve. Curve is "", "linear", "soft", "hard", or "custom" ("" behaves as
-// linear); curve = "custom" requires Gamma > 0. OutMin/OutMax optionally
-// clamp the mapped output (0..127; the velocity package applies its own
-// 1/127 defaults when they are left at zero). Names and ranges are
-// validated in Load; internal/velocity revalidates at construction — this
-// package deliberately does not import it.
+// linear); curve = "custom" requires Gamma > 0. Gamma > 0 with Curve left
+// empty is the "custom" shorthand — the same rule as the per-patch
+// velocity_gamma field — normalized to Curve = "custom" at Load. OutMin/
+// OutMax optionally clamp the mapped output (0..127; the velocity package
+// applies its own 1/127 defaults when they are left at zero). Names and
+// ranges are validated in Load; internal/velocity revalidates at
+// construction — this package deliberately does not import it.
 type VelocityConfig struct {
 	Curve  string  `toml:"curve"`
 	Gamma  float32 `toml:"gamma"`
@@ -230,19 +232,24 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Velocity settings — collect EVERY offender before failing so the
-	// user fixes the config in one pass (the "errors not warnings" rule,
-	// same philosophy as MissingDepsError).
-	if errs := velocityConfigErrors(cfg); len(errs) > 0 {
-		return nil, fmt.Errorf("load config %q: invalid velocity settings:\n  - %s",
-			path, strings.Join(errs, "\n  - "))
+	// [midi.velocity]: Gamma > 0 with the curve name omitted is the
+	// "custom" shorthand, mirroring the per-patch velocity_gamma rule.
+	// Normalize before validation so the custom-curve checks apply and
+	// downstream consumers see one canonical spelling.
+	if cfg.MIDI.Velocity.Curve == "" && cfg.MIDI.Velocity.Gamma > 0 {
+		cfg.MIDI.Velocity.Curve = "custom"
 	}
 
 	// [osc.mixer] is the preferred name for the OSC mixer block;
 	// [osc.xr18] is the legacy name kept for back-compat (Tier 0 of
 	// docs/CONFIGURABILITY.md). If [osc.mixer] was set it wins wholesale —
 	// fold it into XR18 so all downstream code keeps reading cfg.OSC.XR18.
+	// Folded before validation so the heartbeat check below sees the
+	// winning value; oscBlock records which spelling supplied it so error
+	// messages point at the user's own block name.
+	oscBlock := "osc.xr18"
 	if cfg.OSC.Mixer != nil {
+		oscBlock = "osc.mixer"
 		cfg.OSC.XR18 = *cfg.OSC.Mixer
 		if cfg.OSC.XR18.Port == 0 {
 			// Mirror the [osc.xr18] default from Defaults() so the two
@@ -250,6 +257,16 @@ func Load(path string) (*Config, error) {
 			cfg.OSC.XR18.Port = 10024
 		}
 		cfg.OSC.Mixer = nil
+	}
+
+	// Setting validation — collect EVERY offender before failing so the
+	// user fixes the config in one pass (the "errors not warnings" rule,
+	// same philosophy as MissingDepsError).
+	errs := velocityConfigErrors(cfg)
+	errs = append(errs, heartbeatConfigErrors(cfg, oscBlock)...)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("load config %q: invalid settings:\n  - %s",
+			path, strings.Join(errs, "\n  - "))
 	}
 
 	// Web: enabling the UI with an empty listen address falls back to the
@@ -316,6 +333,30 @@ func velocityConfigErrors(cfg *Config) []string {
 		}
 		// VelocityGamma > 0 with no VelocityCurve is valid shorthand: it
 		// implies curve = "custom" (resolved by the velocity package).
+		// The equivalent global shorthand was already normalized to
+		// Curve = "custom" by Load before this function runs.
+	}
+	return errs
+}
+
+// heartbeatConfigErrors validates the OSC mixer heartbeat's address
+// form. The pointer semantics stay untouched: nil (key absent) means
+// the "/xinfo" default and explicit "" means polling disabled — both
+// pass. Any other value must look like an OSC address: a leading "/"
+// and no spaces. block is the TOML block the value came from
+// ("osc.xr18" or "osc.mixer") so the message matches the user's own
+// spelling. Same all-offenders style as velocityConfigErrors.
+func heartbeatConfigErrors(cfg *Config, block string) []string {
+	hb := cfg.OSC.XR18.Heartbeat
+	if hb == nil || *hb == "" {
+		return nil
+	}
+	var errs []string
+	if !strings.HasPrefix(*hb, "/") {
+		errs = append(errs, fmt.Sprintf("%s: heartbeat %q must start with \"/\" (an OSC address, e.g. \"/xinfo\")", block, *hb))
+	}
+	if strings.Contains(*hb, " ") {
+		errs = append(errs, fmt.Sprintf("%s: heartbeat %q must not contain spaces", block, *hb))
 	}
 	return errs
 }

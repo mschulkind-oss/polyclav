@@ -140,6 +140,19 @@ impl Adsr {
         self.value
     }
 
+    /// Hard-reset to idle with zero output. Called by the voice when it
+    /// goes fully silent (amp envelope finished): a secondary envelope
+    /// whose release outlasts the amp release — the filter env with the
+    /// defaults, amp 0.4 s vs filter 0.6 s — would otherwise freeze
+    /// mid-release at a nonzero value once the voice stops ticking, and
+    /// that stale value would color the next note's attack.
+    pub fn reset(&mut self) {
+        self.stage = Stage::Idle;
+        self.value = 0.0;
+        self.release_from = 0.0;
+        self.release_t = 0.0;
+    }
+
     /// `true` while the envelope is producing non-zero output (or about
     /// to). The voice allocator uses this to detect a free voice slot.
     pub fn is_active(&self) -> bool {
@@ -231,6 +244,44 @@ mod tests {
             env.tick() <= 1.0e-6,
             "envelope should be silent after release"
         );
+    }
+
+    /// `reset` hard-stops a mid-release envelope: it goes idle with
+    /// zero output immediately, and a retrigger afterwards ramps from
+    /// zero exactly like a fresh envelope (no stale release value).
+    #[test]
+    fn reset_zeroes_a_mid_release_envelope() {
+        // Long release so the envelope is guaranteed nonzero mid-way.
+        let mut env = Adsr::new(48_000.0, 0.005, 0.200, 0.7, 2.0);
+        env.note_on();
+        for _ in 0..12_000 {
+            env.tick();
+        }
+        env.note_off();
+        // 100 ms into a 2 s release — value is still well above zero.
+        for _ in 0..4_800 {
+            env.tick();
+        }
+        assert!(env.is_active(), "should still be releasing");
+        assert!(env.tick() > 0.1, "mid-release value should be nonzero");
+
+        env.reset();
+        assert!(!env.is_active(), "reset must land in idle");
+        assert_eq!(env.tick(), 0.0, "reset must zero the output");
+
+        // Retrigger: the attack ramp must match a fresh envelope's
+        // bit for bit (no stale value contaminating the contour).
+        let mut fresh = Adsr::new(48_000.0, 0.005, 0.200, 0.7, 2.0);
+        env.note_on();
+        fresh.note_on();
+        for i in 0..1_000 {
+            let (a, b) = (env.tick(), fresh.tick());
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "sample {i}: retrigger-after-reset diverged from fresh ({a} vs {b})"
+            );
+        }
     }
 
     /// note_off during attack should release from the partial attack

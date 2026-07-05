@@ -25,6 +25,14 @@ type ReconcilerConfig struct {
 	PollInterval  time.Duration
 	Timeout       time.Duration
 	MissThreshold int
+	// OnStateChange, when non-nil, is invoked after every
+	// reachable/absent transition with the new State() string
+	// ("reachable" or "absent"). It is called OUTSIDE the reconciler's
+	// internal mutex — implementations may safely call back into the
+	// reconciler — but from the probe goroutine, so it must not block.
+	// Transitions are detected under the lock; with the single Run/probe
+	// loop, invocations are serial.
+	OnStateChange func(state string)
 }
 
 // Reconciler tracks OSC mixer reachability via periodic heartbeat pings
@@ -179,6 +187,9 @@ func (r *Reconciler) recordHit() {
 	r.missMu.Unlock()
 	if prev == 0 {
 		r.logger.Info("xr18 reachable", "host", r.cfg.Host, "port", r.cfg.Port)
+		if r.cfg.OnStateChange != nil {
+			r.cfg.OnStateChange("reachable")
+		}
 	}
 }
 
@@ -193,5 +204,8 @@ func (r *Reconciler) recordMiss() {
 	r.missMu.Unlock()
 	if flipped {
 		r.logger.Warn("xr18 absent", "host", r.cfg.Host, "port", r.cfg.Port, "misses", r.cfg.MissThreshold)
+		if r.cfg.OnStateChange != nil {
+			r.cfg.OnStateChange("absent")
+		}
 	}
 }

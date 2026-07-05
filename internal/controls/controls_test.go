@@ -576,6 +576,34 @@ func TestSelectPatchRestoresKnobsAndPublishes(t *testing.T) {
 	if ch.Data["volume"] != float32(0.7) {
 		t.Errorf("expected Data[volume]=0.7, got %v", ch.Data["volume"])
 	}
+	if _, present := ch.Data["cutoff_pos"]; present {
+		t.Error("cutoff_pos must not appear in a non-native patch change")
+	}
+	if _, present := ch.Data["cutoff_hz"]; present {
+		t.Error("cutoff_hz must not appear in a non-native patch change")
+	}
+}
+
+func TestSelectPatchNativePublishesCutoff(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	if err := f.c.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	ch := recvChange(t, f.ch)
+	if ch.Type != "patch" || ch.Data["name"] != "moog" {
+		t.Fatalf("expected patch/moog change, got %q/%v", ch.Type, ch.Data["name"])
+	}
+	// The select reset the cutoff to the default, so the change must
+	// carry the new position or SSE clients keep showing a stale one.
+	pos, ok := ch.Data["cutoff_pos"].(float32)
+	if !ok || pos != 0.5 {
+		t.Errorf("expected cutoff_pos=0.5 in native patch change, got %v", ch.Data["cutoff_pos"])
+	}
+	hz, ok := ch.Data["cutoff_hz"].(float32)
+	if !ok || !approxEq(hz, 632.456) {
+		t.Errorf("expected cutoff_hz~632.456 in native patch change, got %v", ch.Data["cutoff_hz"])
+	}
 }
 
 func TestSelectPatchNativeInitializesCutoff(t *testing.T) {
@@ -698,6 +726,58 @@ func TestSetMastering(t *testing.T) {
 	if c2, l2 := f.c.Mastering(); c2 != 0.6 || l2 != -0.3 {
 		t.Errorf("Mastering(): expected (0.6, -0.3), got (%v, %v)", c2, l2)
 	}
+}
+
+func TestSetMasteringClampsToEngineRanges(t *testing.T) {
+	f := newFixture(t)
+
+	// Above range: comp clamps to 1, ceiling to 0 dB. The cache, the
+	// engine, the return values, and the published change must all agree
+	// on the CLAMPED values — the engine clamps in Rust, so caching or
+	// publishing the raw input would lie to status reads and SSE clients.
+	comp := float32(1.5)
+	ceiling := float32(3)
+	gotComp, gotCeiling := f.c.SetMastering(&comp, &ceiling)
+	if gotComp != 1 || gotCeiling != 0 {
+		t.Errorf("returned: expected (1, 0), got (%v, %v)", gotComp, gotCeiling)
+	}
+	if f.audio.masteringComp != 1 || f.audio.limiterCeilingDB != 0 {
+		t.Errorf("audio: expected (1, 0), got (%v, %v)", f.audio.masteringComp, f.audio.limiterCeilingDB)
+	}
+	if c2, l2 := f.c.Mastering(); c2 != 1 || l2 != 0 {
+		t.Errorf("cache: expected (1, 0), got (%v, %v)", c2, l2)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Data["comp_amount"] != float32(1) || ch.Data["limiter_ceiling_db"] != float32(0) {
+		t.Errorf("published: expected clamped (1, 0), got %v", ch.Data)
+	}
+
+	// Below range: comp clamps to 0, ceiling to -12 dB.
+	comp = -0.5
+	ceiling = -30
+	gotComp, gotCeiling = f.c.SetMastering(&comp, &ceiling)
+	if gotComp != 0 || gotCeiling != -12 {
+		t.Errorf("returned: expected (0, -12), got (%v, %v)", gotComp, gotCeiling)
+	}
+	if f.audio.masteringComp != 0 || f.audio.limiterCeilingDB != -12 {
+		t.Errorf("audio: expected (0, -12), got (%v, %v)", f.audio.masteringComp, f.audio.limiterCeilingDB)
+	}
+	ch = recvChange(t, f.ch)
+	if ch.Data["comp_amount"] != float32(0) || ch.Data["limiter_ceiling_db"] != float32(-12) {
+		t.Errorf("published: expected clamped (0, -12), got %v", ch.Data)
+	}
+}
+
+func TestInitMasteringClamps(t *testing.T) {
+	f := newFixture(t)
+	f.c.InitMastering(2, 5)
+	if comp, ceiling := f.c.Mastering(); comp != 1 || ceiling != 0 {
+		t.Errorf("cache: expected (1, 0), got (%v, %v)", comp, ceiling)
+	}
+	if f.audio.masteringComp != 1 || f.audio.limiterCeilingDB != 0 {
+		t.Errorf("audio: expected (1, 0), got (%v, %v)", f.audio.masteringComp, f.audio.limiterCeilingDB)
+	}
+	assertNoChange(t, f.ch)
 }
 
 func TestInitMasteringAppliesWithoutPublish(t *testing.T) {
@@ -1126,5 +1206,347 @@ func TestSynthSurvivesPatchSelect(t *testing.T) {
 	}
 	if s.FilterEnv != defaultSynthWant.FilterEnv {
 		t.Errorf("filter env: expected untouched defaults, got %+v", s.FilterEnv)
+	}
+}
+
+// ---- MergeSynth -------------------------------------------------------------
+
+func fp(v float32) *float32 { return &v }
+func sp(s string) *string   { return &s }
+func ip(i int) *int         { return &i }
+
+func TestMergeSynthPartialFields(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	// filter_env: attack only — every other env field keeps its default.
+	syn, err := f.c.MergeSynth(SynthPartial{FilterEnv: &FilterEnvPartial{Attack: fp(0.05)}})
+	if err != nil {
+		t.Fatalf("MergeSynth(filter_env.attack): %v", err)
+	}
+	wantFE := defaultSynthWant.FilterEnv
+	wantFE.Attack = 0.05
+	if syn.FilterEnv != wantFE {
+		t.Errorf("filter env: want %+v, got %+v", wantFE, syn.FilterEnv)
+	}
+	if f.audio.feA != 0.05 || f.audio.feD != 0.6 {
+		t.Errorf("audio env: expected attack 0.05 with default decay 0.6, got %v/%v", f.audio.feA, f.audio.feD)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "filter_env" {
+		t.Errorf("expected synth/filter_env change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+
+	// osc: level only on osc 1 — wave/octave/detune keep their values.
+	syn, err = f.c.MergeSynth(SynthPartial{Oscs: []OscPartial{{Index: 1, Level: fp(0.6)}}})
+	if err != nil {
+		t.Fatalf("MergeSynth(osc.level): %v", err)
+	}
+	wantOsc := defaultSynthWant.Oscs[1]
+	wantOsc.Level = 0.6
+	if syn.Oscs[1] != wantOsc {
+		t.Errorf("osc 1: want %+v, got %+v", wantOsc, syn.Oscs[1])
+	}
+	if f.audio.lastOsc != (oscCall{idx: 1, wave: "saw", octave: 0, detune: -7, level: 0.6}) {
+		t.Errorf("audio osc: unexpected %+v", f.audio.lastOsc)
+	}
+	ch = recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "osc" {
+		t.Errorf("expected synth/osc change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+
+	// Multi-section body with clamping: each section publishes its own
+	// change, exactly like the individual setters.
+	syn, err = f.c.MergeSynth(SynthPartial{
+		Resonance: fp(2.0), // clamps to 0.95
+		Noise:     fp(0.1),
+		Glide:     fp(0.2),
+		Oscs:      []OscPartial{{Index: 0, Wave: sp("square")}, {Index: 2, Octave: ip(-2), Level: fp(0.4)}},
+	})
+	if err != nil {
+		t.Fatalf("MergeSynth(multi): %v", err)
+	}
+	if syn.Resonance != 0.95 || syn.Noise != 0.1 || syn.Glide != 0.2 {
+		t.Errorf("scalars: want (0.95, 0.1, 0.2), got (%v, %v, %v)", syn.Resonance, syn.Noise, syn.Glide)
+	}
+	if syn.Oscs[0].Wave != "square" || syn.Oscs[0].Level != 1.0 {
+		t.Errorf("osc 0: expected square with preserved level 1.0, got %+v", syn.Oscs[0])
+	}
+	if syn.Oscs[2].Octave != -2 || syn.Oscs[2].Level != 0.4 || syn.Oscs[2].DetuneCents != 5 {
+		t.Errorf("osc 2: expected -2oct/0.4 with preserved +5c, got %+v", syn.Oscs[2])
+	}
+	if f.c.Synth() != syn {
+		t.Errorf("returned snapshot must match the cache: %+v vs %+v", syn, f.c.Synth())
+	}
+	for i := 0; i < 5; i++ { // resonance, noise, glide, osc0, osc2
+		if ch := recvChange(t, f.ch); ch.Type != "synth" {
+			t.Errorf("change %d: expected type synth, got %q", i, ch.Type)
+		}
+	}
+	assertNoChange(t, f.ch)
+}
+
+func TestMergeSynthGatedOnPatchType(t *testing.T) {
+	t.Run("no patch", func(t *testing.T) {
+		f := newFixture(t, nativePatch) // nothing selected
+		if _, err := f.c.MergeSynth(SynthPartial{Resonance: fp(0.5)}); !errors.Is(err, ErrNoNativePatch) {
+			t.Errorf("expected ErrNoNativePatch, got %v", err)
+		}
+		if f.audio.synthCalls() != 0 {
+			t.Error("audio must not be touched when gated")
+		}
+		assertNoChange(t, f.ch)
+	})
+	t.Run("non-native patch", func(t *testing.T) {
+		f := newFixture(t, sfPatch)
+		if err := f.reg.Select("salamander"); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		if _, err := f.c.MergeSynth(SynthPartial{Noise: fp(0.5)}); !errors.Is(err, ErrNoNativePatch) {
+			t.Errorf("expected ErrNoNativePatch, got %v", err)
+		}
+		if got := f.c.Synth(); got != defaultSynthWant {
+			t.Errorf("cache must not change when gated, got %+v", got)
+		}
+		assertNoChange(t, f.ch)
+	})
+}
+
+func TestMergeSynthValidatesOscsBeforeApplyingAnything(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	for name, p := range map[string]SynthPartial{
+		"index high":   {Resonance: fp(0.5), Oscs: []OscPartial{{Index: 3, Level: fp(0.5)}}},
+		"index low":    {Resonance: fp(0.5), Oscs: []OscPartial{{Index: -1, Level: fp(0.5)}}},
+		"unknown wave": {Resonance: fp(0.5), Oscs: []OscPartial{{Index: 0, Wave: sp("sine")}}},
+		"bad late entry": {Resonance: fp(0.5), Oscs: []OscPartial{
+			{Index: 0, Level: fp(0.5)}, {Index: 0, Wave: sp("sine")},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := f.c.MergeSynth(p); err == nil {
+				t.Fatal("expected a validation error")
+			}
+			// Osc validation runs up front, so nothing — not even the
+			// valid resonance section — may have been applied.
+			if f.audio.synthCalls() != 0 {
+				t.Error("audio must not be touched on a validation error")
+			}
+			if got := f.c.Synth(); got != defaultSynthWant {
+				t.Errorf("cache must not change on a validation error, got %+v", got)
+			}
+			assertNoChange(t, f.ch)
+		})
+	}
+}
+
+func TestMergeSynthEngineErrorPropagates(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+	f.audio.oscErr = errors.New("boom")
+
+	before := f.c.Synth()
+	if _, err := f.c.MergeSynth(SynthPartial{Oscs: []OscPartial{{Index: 0, Level: fp(0.5)}}}); err == nil {
+		t.Fatal("expected engine error to propagate")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on engine error")
+	}
+	assertNoChange(t, f.ch)
+}
+
+// ---- writer-serialization probes (C2/C3) ------------------------------------
+
+// TestConcurrentWritersConverge hammers every mutating family from
+// concurrent goroutines and then asserts engine == cache/state ==
+// last-published for each param. Run under -race: pre-fix, the
+// clamp→audio→persist→publish sequences interleaved, so the three views
+// could diverge — and the unsynchronized test fakes double as race-
+// detector bait for any path that escapes the writer lock.
+func TestConcurrentWritersConverge(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	if err := f.c.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	const (
+		perKind = 3
+		iters   = 100
+	)
+	// Buffer sized for every publish so drop-oldest never fires and the
+	// drained tail is the true last publish per field.
+	ch, cancel := f.hub.Subscribe(4*perKind*iters + 16)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	writer := func(fn func(i int)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < iters; i++ {
+				fn(i)
+			}
+		}()
+	}
+	for g := 0; g < perKind; g++ {
+		n := g * iters
+		writer(func(i int) {
+			if _, err := f.c.SetVolume(float32((n+i)%101) / 100); err != nil {
+				t.Errorf("SetVolume: %v", err)
+			}
+		})
+		writer(func(i int) {
+			if _, err := f.c.SetSynthResonance(float32((n+i)%96) / 100); err != nil {
+				t.Errorf("SetSynthResonance: %v", err)
+			}
+		})
+		writer(func(i int) {
+			comp := float32((n+i)%101) / 100
+			f.c.SetMastering(&comp, nil)
+		})
+		writer(func(i int) {
+			if _, err := f.c.SetCutoffPos(float32((n+i)%101) / 100); err != nil {
+				t.Errorf("SetCutoffPos: %v", err)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	// Drain the full stream, keeping the last published value per field.
+	last := map[string]float32{}
+	for {
+		select {
+		case c := <-ch:
+			switch c.Type {
+			case "params":
+				switch c.Data["field"] {
+				case "volume":
+					last["volume"] = c.Data["value"].(float32)
+				case "cutoff":
+					last["cutoff_pos"] = c.Data["pos"].(float32)
+					last["cutoff_hz"] = c.Data["hz"].(float32)
+				}
+			case "synth":
+				if c.Data["field"] == "resonance" {
+					last["resonance"] = c.Data["resonance"].(float32)
+				}
+			case "mastering":
+				last["comp"] = c.Data["comp_amount"].(float32)
+			}
+			continue
+		default:
+		}
+		break
+	}
+
+	if f.audio.volume != last["volume"] || f.st.PatchKnob("moog").Volume != last["volume"] {
+		t.Errorf("volume diverged: audio=%v state=%v last-published=%v",
+			f.audio.volume, f.st.PatchKnob("moog").Volume, last["volume"])
+	}
+	if f.audio.resonance != last["resonance"] || f.c.Synth().Resonance != last["resonance"] {
+		t.Errorf("resonance diverged: audio=%v cache=%v last-published=%v",
+			f.audio.resonance, f.c.Synth().Resonance, last["resonance"])
+	}
+	comp, _ := f.c.Mastering()
+	if f.audio.masteringComp != last["comp"] || comp != last["comp"] {
+		t.Errorf("mastering comp diverged: audio=%v cache=%v last-published=%v",
+			f.audio.masteringComp, comp, last["comp"])
+	}
+	pos, hz := f.c.CutoffState()
+	if pos != last["cutoff_pos"] || !approxEq(hz, last["cutoff_hz"]) || !approxEq(f.audio.cutoffHz, last["cutoff_hz"]) {
+		t.Errorf("cutoff diverged: cache=(%v, %v) audio=%v last-published=(%v, %v)",
+			pos, hz, f.audio.cutoffHz, last["cutoff_pos"], last["cutoff_hz"])
+	}
+}
+
+// TestConcurrentSelectVsWritersConverge is the C3 probe: patch selects
+// (web SelectPatch vs pad SelectPatchIndex) racing knob writers must end
+// with the registry, state store, engine, and published stream all
+// agreeing on the same patch and volume. Run under -race.
+func TestConcurrentSelectVsWritersConverge(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	const iters = 150
+	ch, cancel := f.hub.Subscribe(3*iters + 16)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	run := func(fn func(i int)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < iters; i++ {
+				fn(i)
+			}
+		}()
+	}
+	run(func(i int) { // web select path
+		name := "salamander"
+		if i%2 == 0 {
+			name = "moog"
+		}
+		if err := f.c.SelectPatch(name); err != nil {
+			t.Errorf("SelectPatch: %v", err)
+		}
+	})
+	run(func(i int) { // pad select path
+		if err := f.c.SelectPatchIndex(i % 2); err != nil {
+			t.Errorf("SelectPatchIndex: %v", err)
+		}
+	})
+	run(func(i int) { // knob writer
+		if _, err := f.c.SetVolume(float32(i%101) / 100); err != nil {
+			t.Errorf("SetVolume: %v", err)
+		}
+	})
+	close(start)
+	wg.Wait()
+
+	// Publish order matches apply order (both happen under the writer
+	// lock), so the drained tail is the final state each surface saw.
+	var lastPatch, lastVolPatch string
+	var lastVol float32
+	for {
+		select {
+		case c := <-ch:
+			switch c.Type {
+			case "patch":
+				lastPatch = c.Data["name"].(string)
+				lastVol = c.Data["volume"].(float32)
+				lastVolPatch = lastPatch
+			case "params":
+				if c.Data["field"] == "volume" {
+					lastVol = c.Data["value"].(float32)
+					lastVolPatch = c.Data["patch"].(string)
+				}
+			}
+			continue
+		default:
+		}
+		break
+	}
+
+	cur := f.reg.Current()
+	if cur == nil {
+		t.Fatal("no current patch after selects")
+	}
+	if cur.Name != lastPatch || f.st.currentPatch != lastPatch {
+		t.Errorf("patch diverged: registry=%q state=%q last-published=%q",
+			cur.Name, f.st.currentPatch, lastPatch)
+	}
+	if f.audio.volume != lastVol {
+		t.Errorf("volume diverged: audio=%v last-published=%v", f.audio.volume, lastVol)
+	}
+	if got := f.st.PatchKnob(lastVolPatch).Volume; got != lastVol {
+		t.Errorf("state volume diverged for %q: state=%v last-published=%v", lastVolPatch, got, lastVol)
 	}
 }

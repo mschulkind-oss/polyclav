@@ -574,7 +574,12 @@ function connect() {
     }
   });
   es.addEventListener("player", (ev) => applyPlayer(JSON.parse(ev.data) || {}));
-  es.addEventListener("device", (ev) => setDevices(JSON.parse(ev.data) || {}));
+  es.addEventListener("device", (ev) => {
+    // Hub device events carry {device, state}; snapshots use the
+    // {launchkey, xr18} map that setDevices expects — adapt the former.
+    const d = JSON.parse(ev.data) || {};
+    setDevices(d.device ? { [d.device]: d.state } : d);
+  });
 }
 connect();
 </script>

@@ -230,29 +230,19 @@ func main() {
 	// override or global default) and installs it at the funnel point.
 	// Config was validated at Load, so an error here is unexpected: warn
 	// and keep the previous curve rather than silently going linear.
-	installVelocity := func(p *patches.Patch) {
+	// Returns whether a curve was installed (false = resolve failed, so
+	// the patch follower below retries on the next hub event).
+	installVelocity := func(p *patches.Patch) bool {
 		curve, err := resolveVelocity(cfg, p)
 		if err != nil {
 			logger.Warn("velocity curve resolve", "err", err)
-			return
+			return false
 		}
 		ctl.SetVelocityRemap(curve.Apply, curve.Describe())
+		return true
 	}
 	installVelocity(registry.Current())
 	logger.Info("velocity curve installed", "curve", ctl.VelocityLabel())
-
-	// Re-resolve on every patch change, whatever surface caused it (pads,
-	// web selects, future OSC). SetVelocityRemap publishes type "velocity",
-	// which this subscriber ignores — no feedback loop.
-	velCh, velCancel := hub.Subscribe(16)
-	defer velCancel()
-	go func() {
-		for ch := range velCh {
-			if ch.Type == "patch" {
-				installVelocity(registry.Current())
-			}
-		}
-	}()
 
 	// --play: start auditioning right after the initial patch is loaded.
 	// An unknown clip id refuses to boot (exit 1 with the library listed)
@@ -374,11 +364,11 @@ func main() {
 				logger.Warn("patch select", "col", e.Col, "err", err)
 				return
 			}
+			// The hub patch follower (below) owns the Launchkey screen
+			// repaint for EVERY patch-select surface — pads included — so
+			// the display is updated exactly once per change.
 			if cur := registry.Current(); cur != nil {
 				logger.Info("patch selected", "col", e.Col, "name", cur.Name, "soundfont", cur.Soundfont, "gain_db", cur.GainDB)
-				if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
-					logger.Warn("launchkey set display text", "err", err)
-				}
 			}
 		}
 	}
@@ -391,14 +381,36 @@ func main() {
 		heartbeat = *cfg.OSC.XR18.Heartbeat
 	}
 
+	// publishDeviceState mirrors a hardware reconciler transition onto the
+	// hub so the dashboard's device chips update live instead of freezing
+	// at their page-load snapshot. The payload shape ({device, state}) is
+	// what static/index.html's "device" SSE listener consumes; the state
+	// strings are each reconciler's own State() vocabulary, matching the
+	// snapshot's devices object.
+	publishDeviceState := func(device, state string) {
+		hub.Publish(controls.Change{Type: "device", Data: map[string]any{
+			"device": device,
+			"state":  state,
+		}})
+	}
+
 	supCfg := supervisor.Config{
 		Launchkey: launchkey.ReconcilerConfig{
 			PortMatch:    cfg.MIDI.PortMatch,
 			PollInterval: 1 * time.Second,
 			OnMIDIEvent:  onMIDIEvent,
 			OnDAWEvent:   onDAWEvent,
-			OnReconnect:  pushPadColors,
-			OnDisconnect: func() { logger.Info("launchkey gone") },
+			// The callbacks run inside the supervisor's reconciler
+			// goroutines, which start strictly after `sup` is assigned —
+			// reading it here is race-free.
+			OnReconnect: func() {
+				pushPadColors()
+				publishDeviceState("launchkey", sup.Launchkey().State())
+			},
+			OnDisconnect: func() {
+				logger.Info("launchkey gone")
+				publishDeviceState("launchkey", sup.Launchkey().State())
+			},
 		},
 		XR18: osc.ReconcilerConfig{
 			Host:          cfg.OSC.XR18.Host,
@@ -407,10 +419,47 @@ func main() {
 			PollInterval:  5 * time.Second,
 			Timeout:       3 * time.Second,
 			MissThreshold: 3,
+			OnStateChange: func(state string) { publishDeviceState("xr18", state) },
 		},
 	}
 	sup = supervisor.New(logger, supCfg)
 	mapper = osc.NewMapper(sup.XR18(), logger, cfg.OSC.XR18.Bindings)
+
+	// Follow patch changes from ANY surface (pads, web selects, future
+	// OSC): re-resolve the velocity curve and repaint the Launchkey
+	// display. Level-triggered on purpose — the subscription buffer is
+	// drop-oldest, so a burst that drops a "patch" event must not leave a
+	// stale curve installed or a stale name on the screen; every received
+	// event re-checks registry.Current() against the last patch each
+	// follower applied. Between the initial installVelocity above and this
+	// point no surface can select a patch (pads and the web UI both need
+	// the supervisor), so seeding the followers with the current name
+	// misses nothing. SetVelocityRemap publishes type "velocity", which
+	// the level check ignores as a no-change — no feedback loop.
+	currentPatchName := func() string {
+		if cur := registry.Current(); cur != nil {
+			return cur.Name
+		}
+		return ""
+	}
+	followVelocity := newPatchFollower(currentPatchName(), registry.Current, installVelocity)
+	followDisplay := newPatchFollower(currentPatchName(), registry.Current, func(cur *patches.Patch) bool {
+		if cur == nil {
+			return true
+		}
+		if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
+			logger.Warn("launchkey set display text", "err", err)
+		}
+		return true
+	})
+	patchCh, patchCancel := hub.Subscribe(64)
+	defer patchCancel()
+	go func() {
+		for range patchCh {
+			followVelocity()
+			followDisplay()
+		}
+	}()
 
 	// Web UI — started only after the supervisor exists, because the SSE
 	// snapshot reports device reconciler states through Deps.Devices. A
@@ -485,12 +534,40 @@ func (audioBackend) SetNativeOsc(idx int, wave string, octave int, detuneCents, 
 func (audioBackend) SetNativeNoise(level float32) { audio.SetNativeNoise(level) }
 func (audioBackend) SetNativeGlide(s float32)     { audio.SetNativeGlide(s) }
 
+// newPatchFollower returns a level-triggered change handler for hub
+// subscribers: each call compares the current patch's name against the
+// last name for which apply succeeded, and re-invokes apply when they
+// differ. Level-triggered (current state, not event payloads) because
+// hub subscriptions are drop-oldest under bursts: a dropped "patch"
+// event must not strand stale per-patch state — the next event of ANY
+// type re-syncs. apply returning false means "not applied": the same
+// change is retried on the next call. Not goroutine-safe; call from a
+// single subscriber goroutine.
+func newPatchFollower(last string, current func() *patches.Patch, apply func(*patches.Patch) bool) func() {
+	return func() {
+		cur := current()
+		name := ""
+		if cur != nil {
+			name = cur.Name
+		}
+		if name == last {
+			return
+		}
+		if apply(cur) {
+			last = name
+		}
+	}
+}
+
 // resolveVelocity picks the velocity curve for patch p: the per-patch
-// override fields win over the global [midi.velocity] block, and a patch
-// VelocityGamma > 0 with no VelocityCurve name is the "custom" shorthand
-// (docs/VELOCITY_CURVES.md). p == nil (no patch selected) resolves the
-// global curve. The global OutMin/OutMax were range-checked (0..127) at
-// config.Load, so the uint8 conversions are lossless.
+// override fields win over the global [midi.velocity] block, and — for
+// the patch fields and the global block alike — Gamma > 0 with no curve
+// name is the "custom" shorthand (docs/VELOCITY_CURVES.md). p == nil
+// (no patch selected) resolves the global curve. config.Load normalizes
+// the global shorthand too; it is re-applied here so configs built in
+// code (tests, Defaults()) behave identically. The global OutMin/OutMax
+// were range-checked (0..127) at config.Load, so the uint8 conversions
+// are lossless.
 func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, error) {
 	if p != nil && (p.VelocityCurve != "" || p.VelocityGamma > 0) {
 		name := p.VelocityCurve
@@ -500,7 +577,11 @@ func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, erro
 		return velocity.New(name, p.VelocityGamma, 0, 0)
 	}
 	v := cfg.MIDI.Velocity
-	return velocity.New(v.Curve, v.Gamma, uint8(v.OutMin), uint8(v.OutMax))
+	name := v.Curve
+	if name == "" && v.Gamma > 0 {
+		name = "custom"
+	}
+	return velocity.New(name, v.Gamma, uint8(v.OutMin), uint8(v.OutMax))
 }
 
 // buildVersion returns the main module's version from build info, or

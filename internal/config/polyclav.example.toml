@@ -83,13 +83,15 @@ port_match = "launchkey"
 #               "linear" untouched 1:1 mapping (the default)
 #               "hard"   more key force needed for loud layers (gamma 1.6)
 #               "custom" supply your own gamma below
-#   gamma   — required iff curve = "custom". <1.0 plays softer-touch/louder,
-#             >1.0 needs more force; the presets above are just named gammas.
+#   gamma   — required iff curve = "custom"; setting gamma alone (curve
+#             omitted) implies curve = "custom". <1.0 plays softer-touch/
+#             louder, >1.0 needs more force; the presets above are just
+#             named gammas.
 #   out_min — optional output clamps (0..127, out_min <= out_max).
 #   out_max   Defaults 1 / 127 when unset.
 #
 # curve   = "soft"
-# gamma   = 0.8            # only with curve = "custom"
+# gamma   = 0.8            # with curve = "custom", or alone (implies custom)
 # out_min = 1
 # out_max = 127
 #
@@ -129,7 +131,8 @@ port = 10024
 # mixer is reachable (sends are suppressed while it's absent). Default is
 # "/xinfo", the X-Air status query. For generic OSC targets that won't
 # answer X-Air pings (lighting desks, Reaper, TouchOSC, other DAWs), set ""
-# to disable polling entirely — sends then go out fire-and-forget.
+# to disable polling entirely — sends then go out fire-and-forget. Any
+# other value must be an OSC address: it starts with "/" and has no spaces.
 # heartbeat = "/xinfo"
 
 # Bindings map a single MIDI control event to an OSC dispatch. Lookup is

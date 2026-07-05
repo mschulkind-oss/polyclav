@@ -43,6 +43,13 @@ func newTestPlayer() (*Player, *recSink) {
 	return New(nil, s.push), s
 }
 
+// registerTestClip injects a synthetic clip into the library. Test-only;
+// must be called before playback starts (no locking).
+func registerTestClip(p *Player, info ClipInfo, evs []TimedEvent) {
+	p.byID[info.ID] = clipData{info: info, events: evs}
+	p.clips = append(p.clips, info)
+}
+
 // waitFor polls cond until true or the deadline passes.
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool, what string) {
 	t.Helper()
@@ -277,6 +284,164 @@ func TestOnChangeReplaces(t *testing.T) {
 	recvState(t, second, "stop via replacement callback")
 	if firstCalls != 0 {
 		t.Errorf("replaced callback was invoked %d times, want 0", firstCalls)
+	}
+}
+
+// TestNaturalEndVsPlayRace hammers the natural-end/Play() race: a clip a
+// few milliseconds long ends naturally while (or just as) Play switches
+// to a clip that holds notes indefinitely. The contract under test:
+//
+//   - the stale run's teardown must never emit NoteOffs for the new
+//     run's sounding notes (held notes are per-run);
+//   - no old-run event may reach the sink after the new run's first
+//     event (full serialization: the old run finishes before the new
+//     one is installed);
+//   - OnChange ordering ends at playing=true for the new clip — a stale
+//     playing=false must never land after the new playing=true;
+//   - after Stop() returns, the sink receives nothing further.
+//
+// Run with -race: the varying sleep phase sweeps Play() across the old
+// run's natural-end window.
+func TestNaturalEndVsPlayRace(t *testing.T) {
+	t.Parallel()
+
+	// The short clip ends naturally ~4 ms in while STILL holding note 10
+	// (no NoteOff in the clip), so its teardown owes a real NoteOff — the
+	// stale-scheduler bug then has observable work to misplace.
+	shortInfo := ClipInfo{ID: "race-short", Name: "race short", Beats: 0.04, RefBPM: 600}
+	shortEvs := []TimedEvent{
+		{Beat: 0, Ev: midi.Event{Kind: midi.NoteOn, Note: 10, Vel: 100}},
+	}
+	// Notes with no NoteOff in the clip and a far-off end: they stay held
+	// for the whole test, so any stale releaseHeld that could cut them
+	// has every opportunity to do so.
+	heldInfo := ClipInfo{ID: "race-held", Name: "race held", Beats: 1000, RefBPM: 600}
+	heldEvs := []TimedEvent{
+		{Beat: 0, Ev: midi.Event{Kind: midi.NoteOn, Note: 20, Vel: 100}},
+		{Beat: 0, Ev: midi.Event{Kind: midi.NoteOn, Note: 21, Vel: 100}},
+		{Beat: 0, Ev: midi.Event{Kind: midi.NoteOn, Note: 22, Vel: 100}},
+	}
+
+	for i := 0; i < 96; i++ {
+		s := &recSink{}
+		// The sink takes real time to deliver the old run's owed NoteOff
+		// (as any sink doing work might). Teardown must therefore be
+		// sequenced by the done channel, not by luck: a Play racing the
+		// natural end has a 500 µs window to sneak in if the player ever
+		// lets go of the run before its final events have been delivered.
+		sink := func(ev midi.Event) {
+			if ev.Kind == midi.NoteOff && ev.Note == 10 {
+				time.Sleep(500 * time.Microsecond)
+			}
+			s.push(ev)
+		}
+		p := New(nil, sink)
+		registerTestClip(p, shortInfo, shortEvs)
+		registerTestClip(p, heldInfo, heldEvs)
+		var stMu sync.Mutex
+		var states []State
+		p.OnChange(func(st State) {
+			stMu.Lock()
+			states = append(states, st)
+			stMu.Unlock()
+		})
+
+		if err := p.Play("race-short", false, 1.0); err != nil {
+			t.Fatal(err)
+		}
+		// race-short ends naturally ~4 ms in; sweep Play() across that
+		// moment in 100 µs steps (sleep jitter spreads each attempt) so
+		// many iterations land inside the teardown window.
+		time.Sleep(3*time.Millisecond + time.Duration(i%12)*100*time.Microsecond)
+		if err := p.Play("race-held", false, 1.0); err != nil {
+			t.Fatal(err)
+		}
+
+		countHeldOns := func() int {
+			n := 0
+			for _, ev := range s.events() {
+				if ev.Kind == midi.NoteOn && ev.Note >= 20 {
+					n++
+				}
+			}
+			return n
+		}
+		waitFor(t, 5*time.Second, func() bool { return countHeldOns() == 3 }, "held clip NoteOns")
+		// Give a stale scheduler (the bug) time to misbehave before we assert.
+		time.Sleep(5 * time.Millisecond)
+
+		seenNew := false
+		for _, ev := range s.events() {
+			if ev.Note >= 20 {
+				if ev.Kind == midi.NoteOff {
+					t.Fatalf("iter %d: stale run cut the new run's note: %+v", i, ev)
+				}
+				seenNew = true
+			} else if seenNew {
+				t.Fatalf("iter %d: old-run event %+v emitted after the new run started", i, ev)
+			}
+		}
+
+		stMu.Lock()
+		last := states[len(states)-1]
+		stMu.Unlock()
+		if !last.Playing || last.ClipID != "race-held" {
+			t.Fatalf("iter %d: last OnChange = %+v, want playing race-held (stale stop published after new play)", i, last)
+		}
+
+		p.Stop()
+		n := len(s.events())
+		time.Sleep(5 * time.Millisecond)
+		if got := len(s.events()); got != n {
+			t.Fatalf("iter %d: %d sink events arrived after Stop returned", i, got-n)
+		}
+		stMu.Lock()
+		last = states[len(states)-1]
+		stMu.Unlock()
+		if last.Playing {
+			t.Fatalf("iter %d: last OnChange after Stop = %+v, want stopped", i, last)
+		}
+	}
+}
+
+// TestOnChangeOrdering hammers SetTempo from several goroutines and
+// checks that callback delivery order matches state mutation order: the
+// last callback delivered must carry exactly the final State. (Run with
+// -race; before callback invocations were serialized, a snapshot taken
+// under the state lock could be delivered late and out of order.)
+func TestOnChangeOrdering(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestPlayer()
+	var mu sync.Mutex
+	var got []State
+	p.OnChange(func(st State) {
+		mu.Lock()
+		got = append(got, st)
+		mu.Unlock()
+	})
+
+	const goroutines, calls = 4, 100
+	tempos := []float64{0.25, 0.5, 1.0, 1.5, 2.0}
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for j := 0; j < calls; j++ {
+				p.SetTempo(tempos[(g+j)%len(tempos)])
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != goroutines*calls {
+		t.Fatalf("received %d OnChange callbacks, want %d (one per SetTempo)", len(got), goroutines*calls)
+	}
+	last := got[len(got)-1]
+	if fin := p.State(); last != fin {
+		t.Fatalf("last OnChange %+v != final State %+v (callbacks delivered out of mutation order)", last, fin)
 	}
 }
 

@@ -78,13 +78,20 @@ type clipData struct {
 // scheduler can read it without taking the Player mutex mid-sleep, and
 // tempoKick wakes a sleeping scheduler so live tempo changes take
 // effect immediately instead of after the current note gap.
+//
+// held is PER-RUN (not on Player) so a finishing run can only ever
+// release the notes it started itself — a stale scheduler racing a new
+// Play can never cut the new run's sounding notes. It is touched only
+// by this run's scheduler goroutine (emit, loop-seam releaseHeld, and
+// finish all execute there), so it needs no lock.
 type run struct {
 	cancel    chan struct{}
 	done      chan struct{}
 	stopOnce  sync.Once
 	silent    atomic.Bool // suppress the stop OnChange (clip-switch restarts)
 	tempoBits atomic.Uint64
-	tempoKick chan struct{} // buffered(1); coalesces rapid tempo changes
+	tempoKick chan struct{}        // buffered(1); coalesces rapid tempo changes
+	held      map[heldKey]struct{} // scheduler goroutine only
 }
 
 func newRun(tempo float64) *run {
@@ -92,6 +99,7 @@ func newRun(tempo float64) *run {
 		cancel:    make(chan struct{}),
 		done:      make(chan struct{}),
 		tempoKick: make(chan struct{}, 1),
+		held:      map[heldKey]struct{}{},
 	}
 	r.tempoBits.Store(math.Float64bits(tempo))
 	return r
@@ -123,13 +131,21 @@ type Player struct {
 
 	// transport serializes whole Play/Stop transitions so two concurrent
 	// callers cannot both adopt the "current run" slot. Never held while
-	// the scheduler needs it — the scheduler only touches mu.
+	// the scheduler needs it — the scheduler only touches mu and cbMu.
 	transport sync.Mutex
+
+	// cbMu serializes every state mutation that fires OnChange together
+	// with its callback invocation, so observers receive callbacks in
+	// exactly mutation order (a snapshot taken under mu but delivered
+	// after unlocking can otherwise arrive out of order). Lock order is
+	// cbMu → mu, never the reverse; mu is never held during a callback
+	// (State() re-entry from the callback stays legal), and neither
+	// lock is ever held while calling the sink.
+	cbMu sync.Mutex
 
 	mu       sync.Mutex
 	st       State
 	onChange func(State)
-	held     map[heldKey]struct{}
 	run      *run
 }
 
@@ -147,7 +163,6 @@ func New(logger *slog.Logger, sink Sink) *Player {
 		logger: logger,
 		sink:   sink,
 		byID:   map[string]clipData{},
-		held:   map[heldKey]struct{}{},
 		st:     State{Tempo: 1.0},
 	}
 	for _, build := range builders {
@@ -180,9 +195,13 @@ func (p *Player) Play(clipID string, loop bool, tempo float64) error {
 
 	// Silent stop: the intermediate "stopped" state during a clip switch
 	// is an implementation detail; observers only see the new Play state.
+	// stopCurrent returns only once the previous run has fully finished
+	// (its NoteOffs emitted and its stop callback delivered), so the new
+	// run is never installed while a stale scheduler can still act.
 	p.stopCurrent(true)
 
 	r := newRun(tempo)
+	p.cbMu.Lock()
 	p.mu.Lock()
 	p.run = r
 	p.st = State{Playing: true, ClipID: clipID, Loop: loop, Tempo: tempo}
@@ -195,6 +214,7 @@ func (p *Player) Play(clipID string, loop bool, tempo float64) error {
 	if cb != nil {
 		cb(st)
 	}
+	p.cbMu.Unlock()
 	return nil
 }
 
@@ -208,9 +228,12 @@ func (p *Player) Stop() {
 }
 
 // stopCurrent cancels the active run (if any) and waits for its
-// scheduler to exit. The scheduler's own finish() emits the NoteOffs and
-// state transition before done closes, so returning here means cleanup
-// is complete. Caller must hold p.transport.
+// scheduler to exit. The scheduler's finish() emits the NoteOffs, fires
+// the stop callback, and clears p.run — in that order — before done
+// closes, so BOTH exits here mean cleanup is complete: waiting on done
+// obviously, and seeing p.run == nil because a run only leaves p.run
+// after its last sink push and callback (all that remains then is
+// closing done). Caller must hold p.transport.
 func (p *Player) stopCurrent(silent bool) {
 	p.mu.Lock()
 	r := p.run
@@ -230,6 +253,8 @@ func (p *Player) stopCurrent(silent bool) {
 // UIs, though Play's explicit tempo argument wins on the next start.
 func (p *Player) SetTempo(t float64) {
 	t = clampTempo(t)
+	p.cbMu.Lock()
+	defer p.cbMu.Unlock()
 	p.mu.Lock()
 	p.st.Tempo = t
 	if p.run != nil {
@@ -282,7 +307,8 @@ func clampTempo(t float64) float64 {
 // schedule is the playback goroutine: walk the (beat-sorted) events,
 // sleeping to each one, looping seamlessly if asked. finish() runs
 // before done closes so anyone waiting on done observes a fully
-// cleaned-up player (NoteOffs emitted, state stopped).
+// cleaned-up player (NoteOffs emitted, stop callback delivered, state
+// stopped). Defer order matters: finish first, close(done) last.
 func (p *Player) schedule(r *run, events []TimedEvent, info ClipInfo, loop bool) {
 	defer close(r.done)
 	defer p.finish(r)
@@ -292,7 +318,7 @@ func (p *Player) schedule(r *run, events []TimedEvent, info ClipInfo, loop bool)
 			if !p.waitBeats(r, info.RefBPM, &beat, te.Beat) {
 				return
 			}
-			p.emit(te.Ev)
+			p.emit(r, te.Ev)
 		}
 		// Hold to the clip's declared length so loop wraps land on the
 		// musical grid and natural ends include trailing silence
@@ -307,7 +333,7 @@ func (p *Player) schedule(r *run, events []TimedEvent, info ClipInfo, loop bool)
 		// NoteOn has its NoteOff within the clip), so this is normally a
 		// no-op. It exists so a buggy future pattern can't stack notes
 		// forever.
-		p.releaseHeld()
+		p.releaseHeld(r)
 	}
 }
 
@@ -346,30 +372,29 @@ func (p *Player) waitBeats(r *run, refBPM float64, pos *float64, target float64)
 	}
 }
 
-// emit pushes one event to the sink, maintaining the held-note set so
-// stop paths know exactly which NoteOffs they owe.
-func (p *Player) emit(ev midi.Event) {
-	p.mu.Lock()
+// emit pushes one event to the sink, maintaining the run's held-note
+// set so stop paths know exactly which NoteOffs they owe. Runs only on
+// r's scheduler goroutine, so the map access needs no lock.
+func (p *Player) emit(r *run, ev midi.Event) {
 	switch ev.Kind {
 	case midi.NoteOn:
-		p.held[heldKey{ch: ev.Channel, note: ev.Note}] = struct{}{}
+		r.held[heldKey{ch: ev.Channel, note: ev.Note}] = struct{}{}
 	case midi.NoteOff:
-		delete(p.held, heldKey{ch: ev.Channel, note: ev.Note})
+		delete(r.held, heldKey{ch: ev.Channel, note: ev.Note})
 	}
-	p.mu.Unlock()
 	p.sink(ev)
 }
 
-// releaseHeld emits a NoteOff for every currently-held note (sorted for
-// deterministic output) and clears the set.
-func (p *Player) releaseHeld() {
-	p.mu.Lock()
-	keys := make([]heldKey, 0, len(p.held))
-	for k := range p.held {
+// releaseHeld emits a NoteOff for every note r currently holds (sorted
+// for deterministic output) and clears the set. Because the set is
+// per-run, this can only ever release r's own notes — never a newer
+// run's. Runs only on r's scheduler goroutine.
+func (p *Player) releaseHeld(r *run) {
+	keys := make([]heldKey, 0, len(r.held))
+	for k := range r.held {
 		keys = append(keys, k)
 	}
-	clear(p.held)
-	p.mu.Unlock()
+	clear(r.held)
 	slices.SortFunc(keys, func(a, b heldKey) int {
 		if a.ch != b.ch {
 			return int(a.ch) - int(b.ch)
@@ -381,25 +406,42 @@ func (p *Player) releaseHeld() {
 	}
 }
 
-// finish is the single teardown path for a run, called from the
-// scheduler goroutine on both cancellation and natural end (and again,
-// harmlessly, by Stop). The p.run identity check makes it idempotent per
-// run and keeps a stale scheduler from clobbering a newer Play's state.
+// finish is the single teardown path for a run, always executed on the
+// scheduler goroutine (deferred in schedule) for both cancellation and
+// natural end. The ordering is the concurrency contract:
+//
+//  1. emit this run's NoteOffs (per-run held set — only its own notes);
+//  2. flip Playing false and deliver the stop OnChange, both under
+//     cbMu so the callback lands in mutation order;
+//  3. only then clear p.run (guarded by an identity check);
+//  4. the caller closes r.done last.
+//
+// So a waiter on done — or a Play/Stop that observes p.run == nil —
+// knows the run can push nothing further to the sink or the callback,
+// and a stale playing=false can never be published after a newer Play's
+// playing=true.
 func (p *Player) finish(r *run) {
+	p.releaseHeld(r)
+
+	p.cbMu.Lock()
 	p.mu.Lock()
-	if p.run != r {
-		p.mu.Unlock()
-		return
+	current := p.run == r
+	if current {
+		p.st.Playing = false
 	}
-	p.run = nil
-	p.st.Playing = false
 	st := p.st
 	cb := p.onChange
 	p.mu.Unlock()
-
-	p.releaseHeld()
-	p.logger.Info("player stop", "clip", st.ClipID)
-	if cb != nil && !r.silent.Load() {
+	if current && cb != nil && !r.silent.Load() {
 		cb(st)
 	}
+	p.cbMu.Unlock()
+
+	p.logger.Info("player stop", "clip", st.ClipID)
+
+	p.mu.Lock()
+	if p.run == r {
+		p.run = nil
+	}
+	p.mu.Unlock()
 }

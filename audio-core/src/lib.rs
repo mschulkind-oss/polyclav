@@ -252,7 +252,19 @@ impl DspParams {
         }
     }
 
+    /// Store `v` clamped to `[lo, hi]`. Non-finite inputs (NaN, ±inf)
+    /// are rejected and the slot keeps its previous value. This is the
+    /// single ingestion choke point for every f32 crossing the
+    /// `polyclav_dsp_set_*` C ABI: `f32::clamp` propagates NaN, so one
+    /// NaN through any FFI setter would otherwise permanently poison
+    /// downstream DSP state (ladder/glide/mixer). ±inf is rejected
+    /// rather than clamped by the same rule — a non-finite knob value
+    /// is always a caller bug, and "ignore garbage, keep the last good
+    /// value" is the least surprising recovery at an FFI boundary.
     fn store_clamped(slot: &AtomicU32, v: f32, lo: f32, hi: f32) {
+        if !v.is_finite() {
+            return;
+        }
         let clamped = v.clamp(lo, hi);
         slot.store(clamped.to_bits(), Ordering::Relaxed);
     }
@@ -785,8 +797,11 @@ pub extern "C" fn polyclav_dsp_set_native_resonance(v: f32) {
 /// audio thread reads the atomics each block and applies them to the
 /// active `SynthBackend::Native`; harmless when other backends are
 /// active. Times clamped to [0.0001, 10] s, sustain and amount to
-/// [0, 1] in Rust. Amount 0 (the default) disables the modulation —
-/// the render is then identical to the pre-env-2 engine.
+/// [0, 1] in Rust. Non-finite values (NaN, ±inf) are rejected
+/// per-field — that field keeps its previous value while finite
+/// arguments still apply (see `DspParams::store_clamped`). Amount 0
+/// (the default) disables the modulation — the render is then
+/// identical to the pre-env-2 engine.
 #[no_mangle]
 pub extern "C" fn polyclav_dsp_set_native_filter_env(
     attack_s: f32,
@@ -802,7 +817,9 @@ pub extern "C" fn polyclav_dsp_set_native_filter_env(
 /// 0..=2; `wave` is 0 = saw, 1 = square, 2 = pulse (pulse runs a fixed
 /// 25% duty for this stage); `octave` clamps to [-2, 2]; `detune_cents`
 /// to [-100, 100]; `level` to [0, 1]. Out-of-range `idx` or `wave` is
-/// ignored with an eprintln. Same lifecycle as
+/// ignored with an eprintln; a non-finite `detune_cents` or `level`
+/// (NaN, ±inf) is rejected per-field — that field keeps its previous
+/// value (see `DspParams::store_clamped`). Same lifecycle as
 /// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
 /// atomics each block and applies them to the active
 /// `SynthBackend::Native`; harmless when other backends are active.
@@ -1332,5 +1349,211 @@ mod tests {
         // documented boot value.
         polyclav_dsp_set_native_glide(0.0);
         assert_eq!(dsp_params().native_glide_s(), 0.0);
+    }
+
+    /// The three non-finite f32 values every setter must reject.
+    const NON_FINITE: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+
+    /// Every f32-taking setter rejects NaN/±inf: the stored value is
+    /// unchanged (previous good value kept), never poisoned. This pins
+    /// the `store_clamped` non-finite guard — before it, one NaN
+    /// through any `polyclav_dsp_set_native_*` FFI setter permanently
+    /// poisoned DSP state (`f32::clamp` propagates NaN).
+    #[test]
+    fn setters_reject_non_finite_values() {
+        let p = DspParams::new();
+        // Move every field off its default so "unchanged" is a real
+        // assertion (not just "still the boot value").
+        p.set_master_volume(0.5);
+        p.set_comp_amount(0.25);
+        p.set_reverb_mix(0.75);
+        p.set_patch_gain(2.0);
+        p.set_mastering_amount(0.5);
+        p.set_limiter_ceiling_db(-6.0);
+        p.set_native_cutoff_hz(1_234.0);
+        p.set_native_resonance(0.5);
+        p.set_native_filter_env(0.01, 0.2, 0.5, 0.3, 0.25);
+        p.set_native_osc(1, 1, 1, 12.5, 0.25);
+        p.set_native_noise_level(0.5);
+        p.set_native_glide_s(0.25);
+
+        for bad in NON_FINITE {
+            p.set_master_volume(bad);
+            p.set_comp_amount(bad);
+            p.set_reverb_mix(bad);
+            p.set_patch_gain(bad);
+            p.set_mastering_amount(bad);
+            p.set_limiter_ceiling_db(bad);
+            p.set_native_cutoff_hz(bad);
+            p.set_native_resonance(bad);
+            p.set_native_filter_env(bad, bad, bad, bad, bad);
+            p.set_native_osc(1, 1, 1, bad, bad);
+            p.set_native_noise_level(bad);
+            p.set_native_glide_s(bad);
+
+            assert_eq!(p.master_volume(), 0.5, "master_volume poisoned by {bad}");
+            assert_eq!(p.comp_amount(), 0.25, "comp_amount poisoned by {bad}");
+            assert_eq!(p.reverb_mix(), 0.75, "reverb_mix poisoned by {bad}");
+            assert_eq!(p.patch_gain(), 2.0, "patch_gain poisoned by {bad}");
+            assert_eq!(
+                p.mastering_amount(),
+                0.5,
+                "mastering_amount poisoned by {bad}"
+            );
+            assert_eq!(
+                p.limiter_ceiling_db(),
+                -6.0,
+                "limiter_ceiling_db poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_cutoff_hz(),
+                1_234.0,
+                "native_cutoff_hz poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_resonance(),
+                0.5,
+                "native_resonance poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_filter_env(),
+                (0.01, 0.2, 0.5, 0.3, 0.25),
+                "native_filter_env poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_osc(1),
+                (1, 1, 12.5, 0.25),
+                "native_osc poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_noise_level(),
+                0.5,
+                "native_noise_level poisoned by {bad}"
+            );
+            assert_eq!(p.native_glide_s(), 0.25, "native_glide_s poisoned by {bad}");
+        }
+    }
+
+    /// Non-finite rejection is per-field on the multi-arg setters: a
+    /// NaN argument keeps that field's previous value while the finite
+    /// arguments in the same call still apply.
+    #[test]
+    fn multi_arg_setters_reject_non_finite_per_field() {
+        let p = DspParams::new();
+        p.set_native_filter_env(0.01, 0.2, 0.5, 0.3, 0.25);
+        p.set_native_filter_env(f32::NAN, 0.3, f32::INFINITY, 0.4, 0.5);
+        assert_eq!(p.native_filter_env(), (0.01, 0.3, 0.5, 0.4, 0.5));
+
+        p.set_native_osc(1, 1, 1, 12.5, 0.25);
+        p.set_native_osc(1, 2, -1, f32::NAN, 0.75);
+        assert_eq!(p.native_osc(1), (2, -1, 12.5, 0.75));
+        p.set_native_osc(1, 0, 0, -7.0, f32::NEG_INFINITY);
+        assert_eq!(p.native_osc(1), (0, 0, -7.0, 0.75));
+    }
+
+    /// The C ABI setters route through the same non-finite rejection.
+    /// This test only touches the six generic DSP globals (volume /
+    /// compressor / reverb / patch gain / mastering / limiter) — the
+    /// native_* globals are owned by the other FFI tests, and tests run
+    /// in parallel in one process.
+    #[test]
+    fn ffi_setters_reject_non_finite_values() {
+        polyclav_dsp_set_master_volume(0.5);
+        polyclav_dsp_set_compressor(0.25);
+        polyclav_dsp_set_reverb(0.75);
+        polyclav_dsp_set_patch_gain(2.0);
+        polyclav_dsp_set_mastering_compressor(0.5);
+        polyclav_dsp_set_limiter_ceiling_db(-6.0);
+
+        for bad in NON_FINITE {
+            polyclav_dsp_set_master_volume(bad);
+            polyclav_dsp_set_compressor(bad);
+            polyclav_dsp_set_reverb(bad);
+            polyclav_dsp_set_patch_gain(bad);
+            polyclav_dsp_set_mastering_compressor(bad);
+            polyclav_dsp_set_limiter_ceiling_db(bad);
+
+            let p = dsp_params();
+            assert_eq!(p.master_volume(), 0.5, "master_volume poisoned by {bad}");
+            assert_eq!(p.comp_amount(), 0.25, "comp_amount poisoned by {bad}");
+            assert_eq!(p.reverb_mix(), 0.75, "reverb_mix poisoned by {bad}");
+            assert_eq!(p.patch_gain(), 2.0, "patch_gain poisoned by {bad}");
+            assert_eq!(
+                p.mastering_amount(),
+                0.5,
+                "mastering_amount poisoned by {bad}"
+            );
+            assert_eq!(
+                p.limiter_ceiling_db(),
+                -6.0,
+                "limiter_ceiling_db poisoned by {bad}"
+            );
+        }
+
+        // Restore the documented boot values.
+        polyclav_dsp_set_master_volume(1.0);
+        polyclav_dsp_set_compressor(0.0);
+        polyclav_dsp_set_reverb(0.0);
+        polyclav_dsp_set_patch_gain(1.0);
+        polyclav_dsp_set_mastering_compressor(0.0);
+        polyclav_dsp_set_limiter_ceiling_db(-0.3);
+    }
+
+    /// End-to-end poisoning attempt: push NaN/±inf through every
+    /// native_* param, then mirror the audio thread's per-block push
+    /// (`process_audio`) into a real `NativeSynth` and render a note.
+    /// Every param the audio thread reads must still be finite, and the
+    /// rendered audio must be finite (and audible).
+    #[test]
+    fn non_finite_ffi_values_keep_render_finite() {
+        let p = DspParams::new();
+        p.set_native_cutoff_hz(f32::NAN);
+        p.set_native_resonance(f32::INFINITY);
+        p.set_native_filter_env(f32::NAN, f32::NAN, f32::NAN, f32::NAN, f32::NAN);
+        for idx in 0..3 {
+            p.set_native_osc(idx, 0, 0, f32::NAN, f32::NEG_INFINITY);
+        }
+        p.set_native_noise_level(f32::NAN);
+        p.set_native_glide_s(f32::NAN);
+
+        assert!(p.native_cutoff_hz().is_finite());
+        assert!(p.native_resonance().is_finite());
+        let (fa, fd, fs, fr, famt) = p.native_filter_env();
+        assert!(fa.is_finite() && fd.is_finite() && fs.is_finite());
+        assert!(fr.is_finite() && famt.is_finite());
+        for idx in 0..3 {
+            let (_, _, detune, level) = p.native_osc(idx);
+            assert!(detune.is_finite() && level.is_finite());
+        }
+        assert!(p.native_noise_level().is_finite());
+        assert!(p.native_glide_s().is_finite());
+
+        // Mirror process_audio's per-block param push, then render.
+        let mut synth = NativeSynth::new("minimoog", 48_000.0).unwrap();
+        synth.set_cutoff_hz(p.native_cutoff_hz());
+        synth.set_resonance(p.native_resonance());
+        synth.set_filter_env(fa, fd, fs, fr, famt);
+        for idx in 0..3 {
+            let (wave, octave, detune, level) = p.native_osc(idx);
+            synth.set_osc(idx, wave, octave, detune, level);
+        }
+        synth.set_noise_level(p.native_noise_level());
+        synth.set_glide(p.native_glide_s());
+
+        synth.handle_event(&MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        let mut samples = vec![0.0f32; 48 * 100 * 2]; // 100 ms stereo
+        for chunk in samples.chunks_mut(256) {
+            synth.render(chunk);
+        }
+        assert!(
+            samples.iter().all(|s| s.is_finite()),
+            "render must stay finite after a NaN poisoning attempt"
+        );
+        let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+        assert!(rms > 0.05, "render should still be audible, rms={rms}");
     }
 }

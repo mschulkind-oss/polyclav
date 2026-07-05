@@ -487,6 +487,45 @@ func validateSynthBody(b *synthPatchBody) string {
 	return ""
 }
 
+// f32p converts an optional wire float to controls' optional float32,
+// preserving nil-ness ("leave unchanged").
+func f32p(p *float64) *float32 {
+	if p == nil {
+		return nil
+	}
+	v := float32(*p)
+	return &v
+}
+
+// synthPartial translates a validated wire body into the controls-layer
+// partial. Osc entries rely on validateSynthBody having required Index.
+func synthPartial(b *synthPatchBody) controls.SynthPartial {
+	p := controls.SynthPartial{
+		Resonance: f32p(b.Resonance),
+		Noise:     f32p(b.Noise),
+		Glide:     f32p(b.Glide),
+	}
+	if fe := b.FilterEnv; fe != nil {
+		p.FilterEnv = &controls.FilterEnvPartial{
+			Attack:  f32p(fe.Attack),
+			Decay:   f32p(fe.Decay),
+			Sustain: f32p(fe.Sustain),
+			Release: f32p(fe.Release),
+			Amount:  f32p(fe.Amount),
+		}
+	}
+	for _, o := range b.Osc {
+		p.Oscs = append(p.Oscs, controls.OscPartial{
+			Index:       *o.Index,
+			Wave:        o.Wave,
+			Octave:      o.Octave,
+			DetuneCents: f32p(o.DetuneCents),
+			Level:       f32p(o.Level),
+		})
+	}
+	return p
+}
+
 func (s *Server) handleSynth(w http.ResponseWriter, r *http.Request) {
 	var body synthPatchBody
 	if err := decodeJSON(w, r, &body); err != nil {
@@ -498,81 +537,21 @@ func (s *Server) handleSynth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// fail maps the controls gating error to 409 (no native patch
-	// selected) and anything else — unreachable after validation — to 400.
-	fail := func(err error) {
+	// The merge over the current values happens inside the controls
+	// layer, under its writer lock — merging here over a Synth()
+	// snapshot would let two concurrent partial PATCHes lose updates.
+	syn, err := s.deps.Controls.MergeSynth(synthPartial(&body))
+	if err != nil {
+		// The gating error maps to 409 (no native patch selected);
+		// anything else — unreachable after validation — to 400.
 		if errors.Is(err, controls.ErrNoNativePatch) {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
 	}
-
-	// Merge base: the current cached values. Partial filter_env/osc
-	// bodies overwrite only the fields they carry.
-	syn := s.deps.Controls.Synth()
-
-	if body.Resonance != nil {
-		if _, err := s.deps.Controls.SetSynthResonance(float32(*body.Resonance)); err != nil {
-			fail(err)
-			return
-		}
-	}
-	if fe := body.FilterEnv; fe != nil {
-		m := syn.FilterEnv
-		if fe.Attack != nil {
-			m.Attack = float32(*fe.Attack)
-		}
-		if fe.Decay != nil {
-			m.Decay = float32(*fe.Decay)
-		}
-		if fe.Sustain != nil {
-			m.Sustain = float32(*fe.Sustain)
-		}
-		if fe.Release != nil {
-			m.Release = float32(*fe.Release)
-		}
-		if fe.Amount != nil {
-			m.Amount = float32(*fe.Amount)
-		}
-		if _, err := s.deps.Controls.SetSynthFilterEnv(m.Attack, m.Decay, m.Sustain, m.Release, m.Amount); err != nil {
-			fail(err)
-			return
-		}
-	}
-	if body.Noise != nil {
-		if _, err := s.deps.Controls.SetSynthNoise(float32(*body.Noise)); err != nil {
-			fail(err)
-			return
-		}
-	}
-	if body.Glide != nil {
-		if _, err := s.deps.Controls.SetSynthGlide(float32(*body.Glide)); err != nil {
-			fail(err)
-			return
-		}
-	}
-	for _, o := range body.Osc {
-		m := syn.Oscs[*o.Index]
-		if o.Wave != nil {
-			m.Wave = *o.Wave
-		}
-		if o.Octave != nil {
-			m.Octave = *o.Octave
-		}
-		if o.DetuneCents != nil {
-			m.DetuneCents = float32(*o.DetuneCents)
-		}
-		if o.Level != nil {
-			m.Level = float32(*o.Level)
-		}
-		if _, err := s.deps.Controls.SetSynthOsc(*o.Index, m.Wave, m.Octave, m.DetuneCents, m.Level); err != nil {
-			fail(err)
-			return
-		}
-	}
-
-	writeJSON(w, http.StatusOK, synthView(s.deps.Controls.Synth()))
+	writeJSON(w, http.StatusOK, synthView(syn))
 }
 
 type masteringPatchBody struct {

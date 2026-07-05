@@ -204,6 +204,8 @@ func TestLoadVelocityGoodConfigs(t *testing.T) {
 			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_curve = \"custom\"\nvelocity_gamma = 0.7\n"},
 		{"per-patch gamma alone implies custom",
 			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_gamma = 0.7\n"},
+		{"global gamma alone implies custom",
+			"[midi.velocity]\ngamma = 0.7\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -211,6 +213,30 @@ func TestLoadVelocityGoodConfigs(t *testing.T) {
 				t.Errorf("expected valid config, got error: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadVelocityGlobalGammaAloneNormalizedToCustom(t *testing.T) {
+	// Global shorthand parity with the per-patch fields: [midi.velocity]
+	// gamma > 0 with the curve omitted means "custom", not "silently
+	// ignored". Load normalizes the spelling so every consumer sees it.
+	cfg := mustLoadTOML(t, "[midi.velocity]\ngamma = 0.7\n")
+	v := cfg.MIDI.Velocity
+	if v.Curve != "custom" {
+		t.Errorf("gamma without curve: Curve=%q, want %q", v.Curve, "custom")
+	}
+	if v.Gamma != 0.7 {
+		t.Errorf("gamma without curve: Gamma=%g, want 0.7", v.Gamma)
+	}
+}
+
+func TestLoadVelocityGlobalExplicitCurveNotOverridden(t *testing.T) {
+	// The shorthand only fills an EMPTY curve name — an explicit preset
+	// with a stray gamma keeps the preset (the velocity package ignores
+	// gamma for named presets).
+	cfg := mustLoadTOML(t, "[midi.velocity]\ncurve = \"soft\"\ngamma = 0.7\n")
+	if got := cfg.MIDI.Velocity.Curve; got != "soft" {
+		t.Errorf("explicit curve rewritten: got %q, want %q", got, "soft")
 	}
 }
 
@@ -422,6 +448,70 @@ func TestHeartbeatCustomAddress(t *testing.T) {
 	}
 	if *h != "/status" {
 		t.Errorf("expected heartbeat %q, got %q", "/status", *h)
+	}
+}
+
+func TestHeartbeatFormatErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // substring the error must contain
+	}{
+		{"missing leading slash",
+			"[osc.xr18]\nhost = \"192.0.2.6\"\nheartbeat = \"xinfo\"\n",
+			`osc.xr18: heartbeat "xinfo" must start with "/"`},
+		{"contains space",
+			"[osc.xr18]\nhost = \"192.0.2.6\"\nheartbeat = \"/x info\"\n",
+			`osc.xr18: heartbeat "/x info" must not contain spaces`},
+		{"mixer alias reports its own block name",
+			"[osc.mixer]\nhost = \"192.0.2.6\"\nheartbeat = \"status\"\n",
+			`osc.mixer: heartbeat "status" must start with "/"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadTOML(t, tc.body)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q missing substring %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestHeartbeatFormatErrorsCollectBothOffenses(t *testing.T) {
+	// A value that is wrong in both ways reports both lines, and joins
+	// the same all-offenders error as the velocity checks — one pass to
+	// fix everything.
+	_, err := loadTOML(t, `
+[midi.velocity]
+curve = "banana"
+
+[osc.xr18]
+host = "192.0.2.6"
+heartbeat = "x info"
+`)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, want := range []string{
+		`unknown curve "banana"`,
+		`heartbeat "x info" must start with "/"`,
+		`heartbeat "x info" must not contain spaces`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing offender %q:\n%s", want, err.Error())
+		}
+	}
+}
+
+func TestHeartbeatValidFormsPass(t *testing.T) {
+	for _, hb := range []string{"/xinfo", "/status", "/very/nested/ping"} {
+		body := "[osc.xr18]\nhost = \"192.0.2.6\"\nheartbeat = \"" + hb + "\"\n"
+		if _, err := loadTOML(t, body); err != nil {
+			t.Errorf("heartbeat %q: expected valid, got %v", hb, err)
+		}
 	}
 }
 

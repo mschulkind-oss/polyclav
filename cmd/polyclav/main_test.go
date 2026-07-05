@@ -71,6 +71,34 @@ func TestResolveVelocity(t *testing.T) {
 			patch:      nil,
 			wantPrefix: "custom (γ=0.80, out 1..127)",
 		},
+		{
+			// The global shorthand mirrors the per-patch one: gamma > 0
+			// with no curve name means "custom", not "silently ignored".
+			name: "global gamma alone implies custom",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Gamma: 2.5,
+			}}},
+			patch:      nil,
+			wantPrefix: "custom (γ=2.50, out 1..127)",
+		},
+		{
+			name: "global gamma alone with clamp",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Gamma: 0.8, OutMin: 10, OutMax: 100,
+			}}},
+			patch:      nil,
+			wantPrefix: "custom (γ=0.80, out 10..100)",
+		},
+		{
+			// A named preset with a stray gamma keeps the preset — the
+			// shorthand only fills an EMPTY curve name.
+			name: "global preset ignores stray gamma",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Curve: "soft", Gamma: 2.5,
+			}}},
+			patch:      nil,
+			wantPrefix: "soft (γ=0.60, out 1..127)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -94,6 +122,89 @@ func TestResolveVelocity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPatchFollowerLevelTriggered pins the level-triggered contract:
+// apply fires only when the CURRENT patch differs from the last applied
+// name — regardless of how many (possibly dropped) events occurred in
+// between — and repeated events for the same patch are no-ops.
+func TestPatchFollowerLevelTriggered(t *testing.T) {
+	var cur *patches.Patch
+	var applied []string
+	follow := newPatchFollower("", func() *patches.Patch { return cur }, func(p *patches.Patch) bool {
+		if p == nil {
+			applied = append(applied, "<nil>")
+		} else {
+			applied = append(applied, p.Name)
+		}
+		return true
+	})
+
+	follow() // no patch selected, last == "" — level already satisfied
+	if len(applied) != 0 {
+		t.Fatalf("no-change event applied something: %v", applied)
+	}
+
+	cur = &patches.Patch{Name: "a"}
+	follow()
+	follow() // same patch again: no re-apply
+	if want := []string{"a"}; !equalStrings(applied, want) {
+		t.Fatalf("after selecting a: applied %v, want %v", applied, want)
+	}
+
+	// Simulate a dropped "patch" event: the patch changed a -> b -> c but
+	// the follower only sees one (unrelated) event afterwards. It must
+	// still converge on c.
+	cur = &patches.Patch{Name: "b"}
+	cur = &patches.Patch{Name: "c"}
+	follow()
+	if want := []string{"a", "c"}; !equalStrings(applied, want) {
+		t.Fatalf("after dropped events: applied %v, want %v", applied, want)
+	}
+
+	// Deselecting (current == nil) is a change back to "no patch".
+	cur = nil
+	follow()
+	if want := []string{"a", "c", "<nil>"}; !equalStrings(applied, want) {
+		t.Fatalf("after deselect: applied %v, want %v", applied, want)
+	}
+}
+
+// TestPatchFollowerRetriesFailedApply pins the "resolved for" tracking:
+// a failed apply must NOT record the new name, so the next event of any
+// type retries instead of leaving stale state installed.
+func TestPatchFollowerRetriesFailedApply(t *testing.T) {
+	cur := &patches.Patch{Name: "a"}
+	calls := 0
+	ok := false
+	follow := newPatchFollower("", func() *patches.Patch { return cur }, func(p *patches.Patch) bool {
+		calls++
+		return ok
+	})
+
+	follow()
+	follow() // apply failed: retried on the next event
+	if calls != 2 {
+		t.Fatalf("failed apply not retried: %d calls, want 2", calls)
+	}
+	ok = true
+	follow() // succeeds and records "a"
+	follow() // level satisfied: no further calls
+	if calls != 3 {
+		t.Fatalf("after success: %d calls, want 3 (no re-apply once recorded)", calls)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestResolveVelocityClamp checks the global OutMin/OutMax ints reach the

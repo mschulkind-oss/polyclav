@@ -5,7 +5,10 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -91,6 +94,103 @@ func TestReconcilerSendCallsClientWhenReachable(t *testing.T) {
 	// generally succeeds even with no listener; we just verify no panic
 	// and that the code path runs.
 	_ = r.Send("/foo", float32(0.1))
+}
+
+// --- OnStateChange -----------------------------------------------------------
+
+func TestReconcilerStateChangeCallbackFiresOnTransitionsOnly(t *testing.T) {
+	var got []string
+	r := NewReconciler(discardLogger(), ReconcilerConfig{
+		Host: "127.0.0.1", Port: 10024, Heartbeat: "/xinfo", MissThreshold: 3,
+		OnStateChange: func(s string) { got = append(got, s) },
+	})
+	r.recordHit()  // absent -> reachable
+	r.recordHit()  // still reachable: no callback
+	r.recordMiss() // 1/3
+	r.recordMiss() // 2/3
+	r.recordMiss() // 3/3 -> absent
+	r.recordMiss() // still absent: no repeat callback
+	r.recordHit()  // absent -> reachable again
+	want := []string{"reachable", "absent", "reachable"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("OnStateChange sequence: got %v, want %v", got, want)
+	}
+}
+
+func TestReconcilerStateChangeCallbackInvokedOutsideMutex(t *testing.T) {
+	// The callback contract says it runs OUTSIDE the reconciler's
+	// internal mutex: a callback that drives the reconciler again (here,
+	// an immediate recovery probe on "absent") must not deadlock. The
+	// depth guard stops the reentrant hit's own callback from recursing
+	// further.
+	var r *Reconciler
+	var depth int
+	r = NewReconciler(discardLogger(), ReconcilerConfig{
+		Host: "127.0.0.1", Port: 10024, Heartbeat: "/xinfo", MissThreshold: 1,
+		OnStateChange: func(s string) {
+			if depth > 0 {
+				return
+			}
+			depth++
+			defer func() { depth-- }()
+			if s == "absent" {
+				r.recordHit() // reenters recordHit; deadlocks if the callback held missMu
+			}
+		},
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.recordHit()
+		r.recordMiss() // -> absent; callback immediately records a recovery hit
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnStateChange appears to run under the reconciler mutex (reentrant call deadlocked)")
+	}
+	if got := r.State(); got != "reachable" {
+		t.Errorf("after reentrant recovery: State=%q, want reachable", got)
+	}
+}
+
+func TestReconcilerStateChangeCallbackConcurrentHitsAndMisses(t *testing.T) {
+	// Race-detector exercise for the transition detection + callback
+	// hand-off: hammer recordHit/recordMiss from many goroutines with a
+	// live callback. Run with -race; the assertions are deliberately
+	// weak (some transition fired, final state coherent) — the value is
+	// the concurrent interleaving itself.
+	var calls atomic.Int64
+	r := NewReconciler(discardLogger(), ReconcilerConfig{
+		Host: "127.0.0.1", Port: 10024, Heartbeat: "/xinfo", MissThreshold: 1,
+		OnStateChange: func(s string) {
+			if s != "reachable" && s != "absent" {
+				t.Errorf("OnStateChange got unexpected state %q", s)
+			}
+			calls.Add(1)
+		},
+	})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				if (i+j)%2 == 0 {
+					r.recordHit()
+				} else {
+					r.recordMiss()
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	if calls.Load() == 0 {
+		t.Error("expected at least one OnStateChange callback")
+	}
+	if s := r.State(); s != "reachable" && s != "absent" {
+		t.Errorf("final State=%q, want reachable or absent", s)
+	}
 }
 
 // --- heartbeat disabled (Heartbeat == "") ------------------------------------

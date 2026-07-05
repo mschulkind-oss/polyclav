@@ -361,6 +361,21 @@ impl Voice {
             // Envelope finished — release the note slot so the allocator
             // can reuse it.
             self.note = None;
+            // The filter envelope's release can outlast the amp release
+            // (the defaults guarantee it: amp 0.4 s < filter 0.6 s), and
+            // once the voice stops ticking env2 would freeze mid-release
+            // at a nonzero value. Hard-reset it and retune the ladder to
+            // the unmodulated base cutoff so the next note's attack
+            // starts from the same contour as a fresh voice instead of
+            // being colored by stale envelope state and a stale
+            // applied-cutoff cache (the >0.5 Hz retune hysteresis would
+            // otherwise keep the stale tuning live into the next note).
+            self.filter_env.reset();
+            if self.applied_cutoff_hz != self.last_cutoff_hz {
+                self.filter
+                    .set_cutoff_q(self.last_cutoff_hz, self.last_resonance);
+                self.applied_cutoff_hz = self.last_cutoff_hz;
+            }
         }
         out
     }
