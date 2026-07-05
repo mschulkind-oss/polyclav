@@ -49,6 +49,14 @@
             border-radius: 10px; padding: 14px 18px; }
   section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
                color: var(--muted); margin: 0 0 12px; font-weight: 650; }
+  section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+               color: var(--muted); margin: 14px 0 6px; font-weight: 650;
+               border-top: 1px solid var(--border); padding-top: 10px; }
+  .oscrow { display: grid; grid-template-columns: 44px 76px 76px 1fr 44px 1fr 40px;
+            gap: 6px; align-items: center; margin: 8px 0; }
+  .oscrow .osclabel { color: var(--muted); }
+  .oscrow .val { font-size: 12px; }
+  .oscrow select { padding: 4px 4px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
           gap: 8px; }
   button.patch { display: flex; align-items: center; gap: 8px;
@@ -111,6 +119,37 @@
       <input id="cutoff" type="range" min="0" max="1" step="0.005" disabled>
       <span class="val" id="cutoff-val">&ndash;</span></div>
     <p class="hint">Cutoff is live only on native-synth patches.</p>
+  </section>
+  <section id="synth" hidden>
+    <h2>Native synth</h2>
+    <div class="row"><label for="resonance">Resonance</label>
+      <input id="resonance" type="range" min="0" max="0.95" step="0.005">
+      <span class="val" id="resonance-val">&ndash;</span></div>
+    <div class="row"><label for="glide">Glide</label>
+      <input id="glide" type="range" min="0" max="5" step="0.01">
+      <span class="val" id="glide-val">&ndash;</span></div>
+    <div class="row"><label for="noise">Noise</label>
+      <input id="noise" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="noise-val">&ndash;</span></div>
+    <h3>Filter envelope</h3>
+    <div class="row"><label for="fe-attack">Attack</label>
+      <input id="fe-attack" type="range" min="0" max="2" step="0.001">
+      <span class="val" id="fe-attack-val">&ndash;</span></div>
+    <div class="row"><label for="fe-decay">Decay</label>
+      <input id="fe-decay" type="range" min="0" max="2" step="0.001">
+      <span class="val" id="fe-decay-val">&ndash;</span></div>
+    <div class="row"><label for="fe-sustain">Sustain</label>
+      <input id="fe-sustain" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="fe-sustain-val">&ndash;</span></div>
+    <div class="row"><label for="fe-release">Release</label>
+      <input id="fe-release" type="range" min="0" max="3" step="0.001">
+      <span class="val" id="fe-release-val">&ndash;</span></div>
+    <div class="row"><label for="fe-amount">Env amount</label>
+      <input id="fe-amount" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="fe-amount-val">&ndash;</span></div>
+    <h3>Oscillators</h3>
+    <div id="osc-rows"></div>
+    <p class="hint">Per-osc: wave &middot; octave &middot; detune (&cent;) &middot; level.</p>
   </section>
   <section>
     <h2>Mastering</h2>
@@ -186,6 +225,8 @@ const fmt2 = (v) => Number(v).toFixed(2);
 const fmtHz = (hz) => hz >= 1000 ? (hz / 1000).toFixed(2) + " kHz" : Math.round(hz) + " Hz";
 const fmtDb = (v) => Number(v).toFixed(1) + " dB";
 const fmtTempo = (t) => Number(t).toFixed(2) + "×";
+const fmtSec = (v) => v >= 1 ? Number(v).toFixed(2) + " s" : Math.round(v * 1000) + " ms";
+const fmtCents = (v) => (v > 0 ? "+" : "") + Math.round(v) + "¢";
 
 // --- debounced senders (100ms, one per field so they don't starve each other)
 const sendParam = {};
@@ -218,6 +259,7 @@ function setCurrentPatch(name) {
   const isNative = !!p && p.type === "native";
   $("cutoff").disabled = !isNative;
   $("cutoff-row").classList.toggle("disabled", !isNative);
+  $("synth").hidden = !isNative;
 }
 
 function renderPatches(list) {
@@ -257,7 +299,43 @@ function applyParams(p) {
     $("mceil").value = p.limiter_ceiling_db;
     $("mceil-val").textContent = fmtDb(p.limiter_ceiling_db);
   }
+  applySynth(p.synth);
   setCurrentPatch(p.patch);
+}
+
+// --- native synth section
+// setSynthVal is setSlider's twin for the synth controls: id and drag key
+// are the same string, and each control picks its own value formatter.
+function setSynthVal(id, v, fmt) {
+  if (dragging(id) || typeof v !== "number") return;
+  $(id).value = v;
+  $(id + "-val").textContent = fmt(v);
+}
+
+function applyFilterEnv(fe) {
+  if (!fe) return;
+  setSynthVal("fe-attack", fe.attack, fmtSec);
+  setSynthVal("fe-decay", fe.decay, fmtSec);
+  setSynthVal("fe-sustain", fe.sustain, fmt2);
+  setSynthVal("fe-release", fe.release, fmtSec);
+  setSynthVal("fe-amount", fe.amount, fmt2);
+}
+
+function applyOsc(i, o) {
+  if (!o || typeof i !== "number" || i < 0 || i > 2) return;
+  if (typeof o.wave === "string") $("osc" + i + "-wave").value = o.wave;
+  if (typeof o.octave === "number") $("osc" + i + "-oct").value = String(o.octave);
+  setSynthVal("osc" + i + "-detune", o.detune_cents, fmtCents);
+  setSynthVal("osc" + i + "-level", o.level, fmt2);
+}
+
+function applySynth(sy) {
+  if (!sy) return;
+  setSynthVal("resonance", sy.resonance, fmt2);
+  setSynthVal("glide", sy.glide, fmtSec);
+  setSynthVal("noise", sy.noise, fmt2);
+  applyFilterEnv(sy.filter_env);
+  if (Array.isArray(sy.osc)) sy.osc.forEach((o, i) => applyOsc(i, o));
 }
 
 function setDevices(d) {
@@ -327,6 +405,98 @@ wireParamSlider("reverb", "reverb", (v) => { $("reverb-val").textContent = fmt2(
 wireParamSlider("compressor", "compressor", (v) => { $("compressor-val").textContent = fmt2(v); });
 wireParamSlider("cutoff", "cutoff_pos", null); // Hz label comes back via SSE
 
+// --- native synth wiring. One debounced sender per control (same 100ms
+// policy as the param sliders); makeBody shapes the partial PATCH body.
+function wireSynthSlider(id, fmt, makeBody) {
+  const el = $(id);
+  const dsend = debounce((v) => send("PATCH", "/api/synth", makeBody(v)), 100);
+  el.addEventListener("input", () => {
+    markDrag(id);
+    const v = parseFloat(el.value);
+    $(id + "-val").textContent = fmt(v);
+    dsend(v);
+  });
+}
+wireSynthSlider("resonance", fmt2, (v) => ({ resonance: v }));
+wireSynthSlider("glide", fmtSec, (v) => ({ glide: v }));
+wireSynthSlider("noise", fmt2, (v) => ({ noise: v }));
+wireSynthSlider("fe-attack", fmtSec, (v) => ({ filter_env: { attack: v } }));
+wireSynthSlider("fe-decay", fmtSec, (v) => ({ filter_env: { decay: v } }));
+wireSynthSlider("fe-sustain", fmt2, (v) => ({ filter_env: { sustain: v } }));
+wireSynthSlider("fe-release", fmtSec, (v) => ({ filter_env: { release: v } }));
+wireSynthSlider("fe-amount", fmt2, (v) => ({ filter_env: { amount: v } }));
+
+// The three oscillator rows are built here (not static HTML) so the wave
+// list, octave range, and ids stay in one place.
+function buildOscRows() {
+  const wrap = $("osc-rows");
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement("div");
+    row.className = "oscrow";
+
+    const lbl = document.createElement("span");
+    lbl.className = "osclabel";
+    lbl.textContent = "OSC " + (i + 1);
+    row.appendChild(lbl);
+
+    const wave = document.createElement("select");
+    wave.id = "osc" + i + "-wave";
+    wave.title = "waveform";
+    for (const w of ["saw", "square", "pulse"]) {
+      const o = document.createElement("option");
+      o.value = w;
+      o.textContent = w;
+      wave.appendChild(o);
+    }
+    wave.addEventListener("change", () =>
+      send("PATCH", "/api/synth", { osc: [{ index: i, wave: wave.value }] }));
+    row.appendChild(wave);
+
+    const oct = document.createElement("select");
+    oct.id = "osc" + i + "-oct";
+    oct.title = "octave";
+    for (let v = 2; v >= -2; v--) {
+      const o = document.createElement("option");
+      o.value = String(v);
+      o.textContent = (v > 0 ? "+" : "") + v + " oct";
+      oct.appendChild(o);
+    }
+    oct.addEventListener("change", () =>
+      send("PATCH", "/api/synth", { osc: [{ index: i, octave: parseInt(oct.value, 10) }] }));
+    row.appendChild(oct);
+
+    // Slider + readout pairs share the wireSynthSlider policy but live on
+    // generated ids, so wire them inline.
+    const addSlider = (kind, min, max, step, fmt, field) => {
+      const id = "osc" + i + "-" + kind;
+      const el = document.createElement("input");
+      el.type = "range";
+      el.id = id;
+      el.min = min; el.max = max; el.step = step;
+      el.title = kind;
+      const val = document.createElement("span");
+      val.className = "val";
+      val.id = id + "-val";
+      val.textContent = "–";
+      const dsend = debounce((v) =>
+        send("PATCH", "/api/synth", { osc: [{ index: i, [field]: v }] }), 100);
+      el.addEventListener("input", () => {
+        markDrag(id);
+        const v = parseFloat(el.value);
+        val.textContent = fmt(v);
+        dsend(v);
+      });
+      row.appendChild(el);
+      row.appendChild(val);
+    };
+    addSlider("detune", -100, 100, 1, fmtCents, "detune_cents");
+    addSlider("level", 0, 1, 0.01, fmt2, "level");
+
+    wrap.appendChild(row);
+  }
+}
+buildOscRows();
+
 $("mcomp").addEventListener("input", () => {
   markDrag("comp_amount");
   const v = parseFloat($("mcomp").value);
@@ -381,6 +551,16 @@ function connect() {
     setSlider("volume", d.volume);
     setSlider("reverb", d.reverb);
     setSlider("compressor", d.compressor);
+  });
+  es.addEventListener("synth", (ev) => {
+    const d = JSON.parse(ev.data) || {};
+    switch (d.field) {
+      case "resonance": setSynthVal("resonance", d.resonance, fmt2); break;
+      case "glide": setSynthVal("glide", d.glide, fmtSec); break;
+      case "noise": setSynthVal("noise", d.noise, fmt2); break;
+      case "filter_env": applyFilterEnv(d.filter_env); break;
+      case "osc": applyOsc(d.index, d); break;
+    }
   });
   es.addEventListener("mastering", (ev) => {
     const d = JSON.parse(ev.data) || {};

@@ -11,17 +11,31 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/state"
 )
 
+// oscCall records one SetNativeOsc apply for assertion.
+type oscCall struct {
+	idx           int
+	wave          string
+	octave        int
+	detune, level float32
+}
+
 // fakeAudio records every apply so tests can assert the controls layer
 // actually drove the engine (mirrors internal/patches's fakeAudio style).
 type fakeAudio struct {
 	mu sync.Mutex
 
-	volume, reverb, compressor      float32
-	cutoffHz                        float32
-	masteringComp, limiterCeilingDB float32
-	volumeCalls, reverbCalls        int
-	compressorCalls, cutoffCalls    int
-	masteringCalls, limiterCalls    int
+	volume, reverb, compressor       float32
+	cutoffHz                         float32
+	masteringComp, limiterCeilingDB  float32
+	resonance, noise, glide          float32
+	feA, feD, feS, feR, feAmt        float32
+	lastOsc                          oscCall
+	oscErr                           error // forced SetNativeOsc failure
+	volumeCalls, reverbCalls         int
+	compressorCalls, cutoffCalls     int
+	masteringCalls, limiterCalls     int
+	resonanceCalls, filterEnvCalls   int
+	oscCalls, noiseCalls, glideCalls int
 }
 
 func (f *fakeAudio) SetMasterVolume(v float32) {
@@ -64,6 +78,52 @@ func (f *fakeAudio) SetLimiterCeilingDB(v float32) {
 	defer f.mu.Unlock()
 	f.limiterCeilingDB = v
 	f.limiterCalls++
+}
+
+func (f *fakeAudio) SetNativeResonance(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resonance = v
+	f.resonanceCalls++
+}
+
+func (f *fakeAudio) SetNativeFilterEnv(a, d, s, r, amount float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.feA, f.feD, f.feS, f.feR, f.feAmt = a, d, s, r, amount
+	f.filterEnvCalls++
+}
+
+func (f *fakeAudio) SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.oscErr != nil {
+		return f.oscErr
+	}
+	f.lastOsc = oscCall{idx: idx, wave: wave, octave: octave, detune: detuneCents, level: level}
+	f.oscCalls++
+	return nil
+}
+
+func (f *fakeAudio) SetNativeNoise(level float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noise = level
+	f.noiseCalls++
+}
+
+func (f *fakeAudio) SetNativeGlide(s float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.glide = s
+	f.glideCalls++
+}
+
+// synthCalls sums every native-synth apply, for "audio untouched" checks.
+func (f *fakeAudio) synthCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.resonanceCalls + f.filterEnvCalls + f.oscCalls + f.noiseCalls + f.glideCalls
 }
 
 // fakeRegistry implements Registry over an in-memory patch list with no
@@ -766,5 +826,305 @@ func TestSnapshotNoPatch(t *testing.T) {
 	}
 	if s.CutoffPos != 0.5 {
 		t.Errorf("expected default cutoff pos 0.5, got %v", s.CutoffPos)
+	}
+}
+
+// ---- native synth params ---------------------------------------------------
+
+// defaultSynthWant is the expected boot cache: audio-core's defaults.
+var defaultSynthWant = SynthSnapshot{
+	Resonance: 0.3,
+	FilterEnv: FilterEnv{Attack: 0.005, Decay: 0.6, Sustain: 0.4, Release: 0.6, Amount: 0},
+	Oscs: [3]OscParams{
+		{Wave: "saw", Octave: 0, DetuneCents: 0, Level: 1.0},
+		{Wave: "saw", Octave: 0, DetuneCents: -7, Level: 0.0},
+		{Wave: "saw", Octave: -1, DetuneCents: 5, Level: 0.0},
+	},
+	Noise: 0,
+	Glide: 0,
+}
+
+func TestSynthDefaults(t *testing.T) {
+	f := newFixture(t)
+	if got := f.c.Synth(); got != defaultSynthWant {
+		t.Errorf("Synth() defaults:\nwant %+v\ngot  %+v", defaultSynthWant, got)
+	}
+	if s := f.c.Snapshot(); s.Synth != defaultSynthWant {
+		t.Errorf("Snapshot().Synth defaults:\nwant %+v\ngot  %+v", defaultSynthWant, s.Synth)
+	}
+	if f.audio.synthCalls() != 0 {
+		t.Error("defaults must be cache-only — no audio applies at construction")
+	}
+}
+
+// synthSetters enumerates every SetSynth* under a uniform signature for
+// the gating test.
+func synthSetters(c *Controls) map[string]func() error {
+	return map[string]func() error{
+		"SetSynthResonance": func() error { _, err := c.SetSynthResonance(0.5); return err },
+		"SetSynthFilterEnv": func() error { _, err := c.SetSynthFilterEnv(0.01, 0.5, 0.5, 0.5, 0.3); return err },
+		"SetSynthOsc":       func() error { _, err := c.SetSynthOsc(0, "saw", 0, 0, 1); return err },
+		"SetSynthNoise":     func() error { _, err := c.SetSynthNoise(0.2); return err },
+		"SetSynthGlide":     func() error { _, err := c.SetSynthGlide(0.1); return err },
+	}
+}
+
+func TestSynthSettersGatedOnPatchType(t *testing.T) {
+	t.Run("no patch", func(t *testing.T) {
+		f := newFixture(t, nativePatch) // nothing selected
+		for name, set := range synthSetters(f.c) {
+			if err := set(); !errors.Is(err, ErrNoNativePatch) {
+				t.Errorf("%s: expected ErrNoNativePatch with no current patch, got %v", name, err)
+			}
+		}
+		if f.audio.synthCalls() != 0 {
+			t.Error("audio must not be touched when gated")
+		}
+		assertNoChange(t, f.ch)
+	})
+	t.Run("non-native patch", func(t *testing.T) {
+		f := newFixture(t, sfPatch)
+		if err := f.reg.Select("salamander"); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		for name, set := range synthSetters(f.c) {
+			if err := set(); !errors.Is(err, ErrNoNativePatch) {
+				t.Errorf("%s: expected ErrNoNativePatch for soundfont patch, got %v", name, err)
+			}
+		}
+		if f.audio.synthCalls() != 0 {
+			t.Error("audio must not be touched when gated")
+		}
+		if got := f.c.Synth(); got != defaultSynthWant {
+			t.Errorf("cache must not change when gated, got %+v", got)
+		}
+		assertNoChange(t, f.ch)
+	})
+}
+
+// selectNative is the shared setup for the synth setter tests.
+func selectNative(t *testing.T, f *fixture) {
+	t.Helper()
+	if err := f.reg.Select("moog"); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+}
+
+func TestSetSynthResonance(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	got, err := f.c.SetSynthResonance(0.8)
+	if err != nil {
+		t.Fatalf("SetSynthResonance: %v", err)
+	}
+	if got != 0.8 || f.audio.resonance != 0.8 {
+		t.Errorf("expected 0.8 returned and applied, got %v / %v", got, f.audio.resonance)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "resonance" {
+		t.Errorf("expected synth/resonance change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+	if ch.Data["resonance"] != float32(0.8) || ch.Data["patch"] != "moog" {
+		t.Errorf("unexpected change data: %v", ch.Data)
+	}
+
+	// Clamps both ways.
+	if got, _ := f.c.SetSynthResonance(1.7); got != 0.95 {
+		t.Errorf("expected clamp to 0.95, got %v", got)
+	}
+	if got, _ := f.c.SetSynthResonance(-0.2); got != 0 {
+		t.Errorf("expected clamp to 0, got %v", got)
+	}
+	if f.c.Synth().Resonance != 0 {
+		t.Errorf("cache: expected 0, got %v", f.c.Synth().Resonance)
+	}
+}
+
+func TestSetSynthFilterEnv(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	fe, err := f.c.SetSynthFilterEnv(0.01, 0.8, 0.5, 1.2, 0.3)
+	if err != nil {
+		t.Fatalf("SetSynthFilterEnv: %v", err)
+	}
+	want := FilterEnv{Attack: 0.01, Decay: 0.8, Sustain: 0.5, Release: 1.2, Amount: 0.3}
+	if fe != want {
+		t.Errorf("returned env: want %+v, got %+v", want, fe)
+	}
+	if f.audio.feA != 0.01 || f.audio.feD != 0.8 || f.audio.feS != 0.5 || f.audio.feR != 1.2 || f.audio.feAmt != 0.3 {
+		t.Errorf("audio env: unexpected (%v %v %v %v %v)", f.audio.feA, f.audio.feD, f.audio.feS, f.audio.feR, f.audio.feAmt)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "filter_env" {
+		t.Errorf("expected synth/filter_env change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+	feData, ok := ch.Data["filter_env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested filter_env map, got %T", ch.Data["filter_env"])
+	}
+	if feData["attack"] != float32(0.01) || feData["amount"] != float32(0.3) {
+		t.Errorf("unexpected filter_env data: %v", feData)
+	}
+
+	// Clamps: times to [0.0001, 10], sustain/amount to [0, 1].
+	fe, err = f.c.SetSynthFilterEnv(0, 99, 1.5, -3, -0.5)
+	if err != nil {
+		t.Fatalf("SetSynthFilterEnv (clamping): %v", err)
+	}
+	want = FilterEnv{Attack: 0.0001, Decay: 10, Sustain: 1, Release: 0.0001, Amount: 0}
+	if fe != want {
+		t.Errorf("clamped env: want %+v, got %+v", want, fe)
+	}
+	if f.c.Synth().FilterEnv != want {
+		t.Errorf("cache env: want %+v, got %+v", want, f.c.Synth().FilterEnv)
+	}
+}
+
+func TestSetSynthOsc(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	op, err := f.c.SetSynthOsc(1, "square", 1, -7, 0.6)
+	if err != nil {
+		t.Fatalf("SetSynthOsc: %v", err)
+	}
+	want := OscParams{Wave: "square", Octave: 1, DetuneCents: -7, Level: 0.6}
+	if op != want {
+		t.Errorf("returned osc: want %+v, got %+v", want, op)
+	}
+	if f.audio.lastOsc != (oscCall{idx: 1, wave: "square", octave: 1, detune: -7, level: 0.6}) {
+		t.Errorf("audio osc: unexpected %+v", f.audio.lastOsc)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "osc" {
+		t.Errorf("expected synth/osc change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+	if ch.Data["index"] != 1 || ch.Data["wave"] != "square" || ch.Data["octave"] != 1 ||
+		ch.Data["detune_cents"] != float32(-7) || ch.Data["level"] != float32(0.6) {
+		t.Errorf("unexpected osc change data: %v", ch.Data)
+	}
+	if f.c.Synth().Oscs[1] != want {
+		t.Errorf("cache osc 1: want %+v, got %+v", want, f.c.Synth().Oscs[1])
+	}
+	// Untouched oscillators keep their defaults.
+	if f.c.Synth().Oscs[0] != defaultSynthWant.Oscs[0] || f.c.Synth().Oscs[2] != defaultSynthWant.Oscs[2] {
+		t.Errorf("oscs 0/2 must keep defaults, got %+v", f.c.Synth().Oscs)
+	}
+
+	// Numeric ranges clamp.
+	op, err = f.c.SetSynthOsc(2, "pulse", 5, -500, 3)
+	if err != nil {
+		t.Fatalf("SetSynthOsc (clamping): %v", err)
+	}
+	want = OscParams{Wave: "pulse", Octave: 2, DetuneCents: -100, Level: 1}
+	if op != want {
+		t.Errorf("clamped osc: want %+v, got %+v", want, op)
+	}
+	recvChange(t, f.ch) // drain
+
+	// Validation errors: bad idx, bad wave. No apply, no publish, no cache change.
+	before := f.c.Synth()
+	calls := f.audio.synthCalls()
+	if _, err := f.c.SetSynthOsc(3, "saw", 0, 0, 1); err == nil {
+		t.Error("expected error for idx 3")
+	}
+	if _, err := f.c.SetSynthOsc(-1, "saw", 0, 0, 1); err == nil {
+		t.Error("expected error for idx -1")
+	}
+	if _, err := f.c.SetSynthOsc(0, "sine", 0, 0, 1); err == nil {
+		t.Error("expected error for unknown wave")
+	}
+	if f.audio.synthCalls() != calls {
+		t.Error("audio must not be touched on validation errors")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on validation errors")
+	}
+	assertNoChange(t, f.ch)
+
+	// An engine-side failure propagates and leaves the cache alone.
+	f.audio.oscErr = errors.New("boom")
+	if _, err := f.c.SetSynthOsc(0, "saw", 0, 0, 1); err == nil {
+		t.Error("expected engine error to propagate")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on engine error")
+	}
+	assertNoChange(t, f.ch)
+}
+
+func TestSetSynthNoiseAndGlide(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	if got, err := f.c.SetSynthNoise(0.4); err != nil || got != 0.4 || f.audio.noise != 0.4 {
+		t.Errorf("noise: expected 0.4 applied, got %v (err=%v, audio=%v)", got, err, f.audio.noise)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "noise" || ch.Data["noise"] != float32(0.4) {
+		t.Errorf("unexpected noise change: %q/%v", ch.Type, ch.Data)
+	}
+	if got, _ := f.c.SetSynthNoise(1.5); got != 1 {
+		t.Errorf("noise clamp high: expected 1, got %v", got)
+	}
+	if got, _ := f.c.SetSynthNoise(-1); got != 0 {
+		t.Errorf("noise clamp low: expected 0, got %v", got)
+	}
+
+	if got, err := f.c.SetSynthGlide(0.25); err != nil || got != 0.25 || f.audio.glide != 0.25 {
+		t.Errorf("glide: expected 0.25 applied, got %v (err=%v, audio=%v)", got, err, f.audio.glide)
+	}
+	for range 3 {
+		recvChange(t, f.ch) // drain the two noise clamps + first glide
+	}
+	if got, _ := f.c.SetSynthGlide(9); got != 5 {
+		t.Errorf("glide clamp high: expected 5, got %v", got)
+	}
+	if got, _ := f.c.SetSynthGlide(-1); got != 0 {
+		t.Errorf("glide clamp low: expected 0, got %v", got)
+	}
+	if s := f.c.Synth(); s.Noise != 0 || s.Glide != 0 {
+		t.Errorf("cache: expected noise 0 glide 0, got %v/%v", s.Noise, s.Glide)
+	}
+}
+
+func TestSynthSurvivesPatchSelect(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	if err := f.c.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch(moog): %v", err)
+	}
+	if _, err := f.c.SetSynthResonance(0.7); err != nil {
+		t.Fatalf("SetSynthResonance: %v", err)
+	}
+	if _, err := f.c.SetSynthOsc(2, "pulse", -2, 12, 0.9); err != nil {
+		t.Fatalf("SetSynthOsc: %v", err)
+	}
+	if _, err := f.c.SetSynthGlide(0.5); err != nil {
+		t.Fatalf("SetSynthGlide: %v", err)
+	}
+
+	// Leave for a soundfont patch and come back: the synth params are
+	// engine-global atomics for now, so nothing may reset (unlike cutoff).
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch(salamander): %v", err)
+	}
+	if err := f.c.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch(moog) again: %v", err)
+	}
+
+	s := f.c.Snapshot().Synth
+	if s.Resonance != 0.7 {
+		t.Errorf("resonance: expected 0.7 to survive selects, got %v", s.Resonance)
+	}
+	if want := (OscParams{Wave: "pulse", Octave: -2, DetuneCents: 12, Level: 0.9}); s.Oscs[2] != want {
+		t.Errorf("osc 2: expected %+v to survive selects, got %+v", want, s.Oscs[2])
+	}
+	if s.Glide != 0.5 {
+		t.Errorf("glide: expected 0.5 to survive selects, got %v", s.Glide)
+	}
+	if s.FilterEnv != defaultSynthWant.FilterEnv {
+		t.Errorf("filter env: expected untouched defaults, got %+v", s.FilterEnv)
 	}
 }

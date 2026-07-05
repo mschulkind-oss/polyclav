@@ -475,6 +475,15 @@ func (audioBackend) SetCompressor(v float32)          { audio.SetCompressor(v) }
 func (audioBackend) SetNativeCutoffHz(hz float32)     { audio.SetNativeCutoffHz(hz) }
 func (audioBackend) SetMasteringCompressor(v float32) { audio.SetMasteringCompressor(v) }
 func (audioBackend) SetLimiterCeilingDB(db float32)   { audio.SetLimiterCeilingDB(db) }
+func (audioBackend) SetNativeResonance(v float32)     { audio.SetNativeResonance(v) }
+func (audioBackend) SetNativeFilterEnv(a, d, s, r, amount float32) {
+	audio.SetNativeFilterEnv(a, d, s, r, amount)
+}
+func (audioBackend) SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error {
+	return audio.SetNativeOsc(idx, wave, octave, detuneCents, level)
+}
+func (audioBackend) SetNativeNoise(level float32) { audio.SetNativeNoise(level) }
+func (audioBackend) SetNativeGlide(s float32)     { audio.SetNativeGlide(s) }
 
 // resolveVelocity picks the velocity curve for patch p: the per-patch
 // override fields win over the global [midi.velocity] block, and a patch

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net"
@@ -72,6 +73,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/patches", s.handlePatches)
 	s.mux.HandleFunc("POST /api/patches/{name}/select", s.handlePatchSelect)
 	s.mux.HandleFunc("PATCH /api/params", s.handleParams)
+	s.mux.HandleFunc("PATCH /api/synth", s.handleSynth)
 	s.mux.HandleFunc("PATCH /api/mastering", s.handleMastering)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/clips", s.handleClips)
@@ -129,16 +131,61 @@ type devicesJSON struct {
 }
 
 type paramsJSON struct {
-	Patch            string  `json:"patch"`
-	PatchDisplay     string  `json:"patch_display"`
-	Volume           float32 `json:"volume"`
-	Reverb           float32 `json:"reverb"`
-	Compressor       float32 `json:"compressor"`
-	CutoffPos        float32 `json:"cutoff_pos"`
-	CutoffHz         float32 `json:"cutoff_hz"`
-	MasteringComp    float32 `json:"mastering_comp"`
-	LimiterCeilingDB float32 `json:"limiter_ceiling_db"`
-	VelocityCurve    string  `json:"velocity_curve"`
+	Patch            string    `json:"patch"`
+	PatchDisplay     string    `json:"patch_display"`
+	Volume           float32   `json:"volume"`
+	Reverb           float32   `json:"reverb"`
+	Compressor       float32   `json:"compressor"`
+	CutoffPos        float32   `json:"cutoff_pos"`
+	CutoffHz         float32   `json:"cutoff_hz"`
+	MasteringComp    float32   `json:"mastering_comp"`
+	LimiterCeilingDB float32   `json:"limiter_ceiling_db"`
+	VelocityCurve    string    `json:"velocity_curve"`
+	Synth            synthJSON `json:"synth"`
+}
+
+type filterEnvJSON struct {
+	Attack  float32 `json:"attack"`
+	Decay   float32 `json:"decay"`
+	Sustain float32 `json:"sustain"`
+	Release float32 `json:"release"`
+	Amount  float32 `json:"amount"`
+}
+
+type synthOscJSON struct {
+	Wave        string  `json:"wave"`
+	Octave      int     `json:"octave"`
+	DetuneCents float32 `json:"detune_cents"`
+	Level       float32 `json:"level"`
+}
+
+// synthJSON is the wire view of controls.SynthSnapshot: the PATCH
+// /api/synth response body and the "synth" block of params.
+type synthJSON struct {
+	Resonance float32         `json:"resonance"`
+	FilterEnv filterEnvJSON   `json:"filter_env"`
+	Osc       [3]synthOscJSON `json:"osc"`
+	Noise     float32         `json:"noise"`
+	Glide     float32         `json:"glide"`
+}
+
+func synthView(sy controls.SynthSnapshot) synthJSON {
+	out := synthJSON{
+		Resonance: sy.Resonance,
+		FilterEnv: filterEnvJSON{
+			Attack:  sy.FilterEnv.Attack,
+			Decay:   sy.FilterEnv.Decay,
+			Sustain: sy.FilterEnv.Sustain,
+			Release: sy.FilterEnv.Release,
+			Amount:  sy.FilterEnv.Amount,
+		},
+		Noise: sy.Noise,
+		Glide: sy.Glide,
+	}
+	for i, o := range sy.Oscs {
+		out.Osc[i] = synthOscJSON{Wave: o.Wave, Octave: o.Octave, DetuneCents: o.DetuneCents, Level: o.Level}
+	}
+	return out
 }
 
 type patchJSON struct {
@@ -186,6 +233,7 @@ func paramsView(sn controls.ParamsSnapshot) paramsJSON {
 		MasteringComp:    sn.MasteringComp,
 		LimiterCeilingDB: sn.LimiterCeilingDB,
 		VelocityCurve:    sn.VelocityCurve,
+		Synth:            synthView(sn.Synth),
 	}
 }
 
@@ -346,6 +394,185 @@ func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
 		resp["errors"] = fieldErrs
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// synthPatchBody is the PATCH /api/synth request: every field optional.
+// filter_env and osc entries are themselves partial — absent sub-fields
+// merge over the current cached values (read-modify-write against the
+// controls snapshot).
+type synthPatchBody struct {
+	Resonance *float64             `json:"resonance"`
+	Glide     *float64             `json:"glide"`
+	Noise     *float64             `json:"noise"`
+	FilterEnv *synthFilterEnvPatch `json:"filter_env"`
+	Osc       []synthOscPatch      `json:"osc"`
+}
+
+type synthFilterEnvPatch struct {
+	Attack  *float64 `json:"attack"`
+	Decay   *float64 `json:"decay"`
+	Sustain *float64 `json:"sustain"`
+	Release *float64 `json:"release"`
+	Amount  *float64 `json:"amount"`
+}
+
+type synthOscPatch struct {
+	Index       *int     `json:"index"`
+	Wave        *string  `json:"wave"`
+	Octave      *int     `json:"octave"`
+	DetuneCents *float64 `json:"detune_cents"`
+	Level       *float64 `json:"level"`
+}
+
+// validateSynthBody range-checks every present field; the returned
+// message is empty when the body is valid. Env times accept 0..10 s on
+// the wire (controls floors them at 0.0001 s), so a slider at zero is
+// not a client error.
+func validateSynthBody(b *synthPatchBody) string {
+	check := func(p *float64, lo, hi float64, name string) string {
+		if p != nil && !(*p >= lo && *p <= hi) { // NaN fails the comparison
+			return fmt.Sprintf("%s must be in [%g,%g]", name, lo, hi)
+		}
+		return ""
+	}
+	if msg := check(b.Resonance, 0, 0.95, "resonance"); msg != "" {
+		return msg
+	}
+	if msg := check(b.Glide, 0, 5, "glide"); msg != "" {
+		return msg
+	}
+	if msg := check(b.Noise, 0, 1, "noise"); msg != "" {
+		return msg
+	}
+	if fe := b.FilterEnv; fe != nil {
+		for name, p := range map[string]*float64{
+			"filter_env.attack": fe.Attack, "filter_env.decay": fe.Decay, "filter_env.release": fe.Release,
+		} {
+			if msg := check(p, 0, 10, name); msg != "" {
+				return msg
+			}
+		}
+		for name, p := range map[string]*float64{
+			"filter_env.sustain": fe.Sustain, "filter_env.amount": fe.Amount,
+		} {
+			if msg := check(p, 0, 1, name); msg != "" {
+				return msg
+			}
+		}
+	}
+	for _, o := range b.Osc {
+		if o.Index == nil {
+			return "osc entries require an index (0..2)"
+		}
+		if *o.Index < 0 || *o.Index > 2 {
+			return fmt.Sprintf("osc index %d out of range 0..2", *o.Index)
+		}
+		if o.Wave != nil {
+			switch *o.Wave {
+			case "saw", "square", "pulse":
+			default:
+				return fmt.Sprintf("osc wave %q invalid (valid: saw, square, pulse)", *o.Wave)
+			}
+		}
+		if o.Octave != nil && (*o.Octave < -2 || *o.Octave > 2) {
+			return fmt.Sprintf("osc octave %d out of range [-2,2]", *o.Octave)
+		}
+		if msg := check(o.DetuneCents, -100, 100, "osc detune_cents"); msg != "" {
+			return msg
+		}
+		if msg := check(o.Level, 0, 1, "osc level"); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleSynth(w http.ResponseWriter, r *http.Request) {
+	var body synthPatchBody
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	if msg := validateSynthBody(&body); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	// fail maps the controls gating error to 409 (no native patch
+	// selected) and anything else — unreachable after validation — to 400.
+	fail := func(err error) {
+		if errors.Is(err, controls.ErrNoNativePatch) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+	}
+
+	// Merge base: the current cached values. Partial filter_env/osc
+	// bodies overwrite only the fields they carry.
+	syn := s.deps.Controls.Synth()
+
+	if body.Resonance != nil {
+		if _, err := s.deps.Controls.SetSynthResonance(float32(*body.Resonance)); err != nil {
+			fail(err)
+			return
+		}
+	}
+	if fe := body.FilterEnv; fe != nil {
+		m := syn.FilterEnv
+		if fe.Attack != nil {
+			m.Attack = float32(*fe.Attack)
+		}
+		if fe.Decay != nil {
+			m.Decay = float32(*fe.Decay)
+		}
+		if fe.Sustain != nil {
+			m.Sustain = float32(*fe.Sustain)
+		}
+		if fe.Release != nil {
+			m.Release = float32(*fe.Release)
+		}
+		if fe.Amount != nil {
+			m.Amount = float32(*fe.Amount)
+		}
+		if _, err := s.deps.Controls.SetSynthFilterEnv(m.Attack, m.Decay, m.Sustain, m.Release, m.Amount); err != nil {
+			fail(err)
+			return
+		}
+	}
+	if body.Noise != nil {
+		if _, err := s.deps.Controls.SetSynthNoise(float32(*body.Noise)); err != nil {
+			fail(err)
+			return
+		}
+	}
+	if body.Glide != nil {
+		if _, err := s.deps.Controls.SetSynthGlide(float32(*body.Glide)); err != nil {
+			fail(err)
+			return
+		}
+	}
+	for _, o := range body.Osc {
+		m := syn.Oscs[*o.Index]
+		if o.Wave != nil {
+			m.Wave = *o.Wave
+		}
+		if o.Octave != nil {
+			m.Octave = *o.Octave
+		}
+		if o.DetuneCents != nil {
+			m.DetuneCents = float32(*o.DetuneCents)
+		}
+		if o.Level != nil {
+			m.Level = float32(*o.Level)
+		}
+		if _, err := s.deps.Controls.SetSynthOsc(*o.Index, m.Wave, m.Octave, m.DetuneCents, m.Level); err != nil {
+			fail(err)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, synthView(s.deps.Controls.Synth()))
 }
 
 type masteringPatchBody struct {

@@ -30,6 +30,9 @@ type fakeAudio struct {
 	volume, reverb, compressor      float32
 	cutoffHz                        float32
 	masteringComp, limiterCeilingDB float32
+	resonance, noise, glide         float32
+	feAttack, feAmount              float32
+	oscCalls                        int
 }
 
 func (f *fakeAudio) SetMasterVolume(v float32) { f.mu.Lock(); defer f.mu.Unlock(); f.volume = v }
@@ -51,6 +54,43 @@ func (f *fakeAudio) SetLimiterCeilingDB(v float32) {
 	f.limiterCeilingDB = v
 }
 
+func (f *fakeAudio) SetNativeResonance(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resonance = v
+}
+
+func (f *fakeAudio) SetNativeFilterEnv(a, d, s, r, amount float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.feAttack, f.feAmount = a, amount
+}
+
+func (f *fakeAudio) SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oscCalls++
+	return nil
+}
+
+func (f *fakeAudio) SetNativeNoise(level float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noise = level
+}
+
+func (f *fakeAudio) SetNativeGlide(s float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.glide = s
+}
+
+func (f *fakeAudio) getOscCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.oscCalls
+}
+
 func (f *fakeAudio) get(field string) float32 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -67,6 +107,16 @@ func (f *fakeAudio) get(field string) float32 {
 		return f.masteringComp
 	case "limiterCeilingDB":
 		return f.limiterCeilingDB
+	case "resonance":
+		return f.resonance
+	case "noise":
+		return f.noise
+	case "glide":
+		return f.glide
+	case "feAttack":
+		return f.feAttack
+	case "feAmount":
+		return f.feAmount
 	}
 	return 0
 }
@@ -523,6 +573,235 @@ func TestParamsPatchCutoffOnNonNativeCollectsError(t *testing.T) {
 	}
 	if v := f.audio.get("cutoffHz"); v != 0 {
 		t.Errorf("audio cutoff must not be touched, got %v", v)
+	}
+}
+
+// ---- synth -----------------------------------------------------------------
+
+// synthOsc pulls osc[i] out of a decoded synth response body.
+func synthOsc(t *testing.T, m map[string]any, i int) map[string]any {
+	t.Helper()
+	osc, ok := m["osc"].([]any)
+	if !ok || len(osc) != 3 {
+		t.Fatalf("expected 3-entry osc array, got %v", m["osc"])
+	}
+	o, ok := osc[i].(map[string]any)
+	if !ok {
+		t.Fatalf("osc[%d]: expected object, got %T", i, osc[i])
+	}
+	return o
+}
+
+func TestSynthPatchSingleField(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	rec := f.do(t, "PATCH", "/api/synth", map[string]any{"resonance": 0.8})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	if v := m["resonance"].(float64); !approxEq(v, 0.8) {
+		t.Errorf("resonance: expected 0.8, got %v", v)
+	}
+	if v := f.audio.get("resonance"); !approxEq(float64(v), 0.8) {
+		t.Errorf("audio resonance: expected 0.8, got %v", v)
+	}
+	// The rest of the snapshot is untouched defaults.
+	fe := m["filter_env"].(map[string]any)
+	if v := fe["decay"].(float64); !approxEq(v, 0.6) {
+		t.Errorf("filter_env.decay: expected default 0.6, got %v", v)
+	}
+	o1 := synthOsc(t, m, 1)
+	if o1["wave"] != "saw" || !approxEq(o1["detune_cents"].(float64), -7) || !approxEq(o1["level"].(float64), 0) {
+		t.Errorf("osc[1]: expected default saw/-7c/0.0, got %v", o1)
+	}
+	if v := m["glide"].(float64); v != 0 {
+		t.Errorf("glide: expected default 0, got %v", v)
+	}
+}
+
+func TestSynthPatchMergeSemantics(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	// Partial filter_env: attack only, then decay only — attack survives.
+	rec := f.do(t, "PATCH", "/api/synth", map[string]any{"filter_env": map[string]any{"attack": 0.05}})
+	wantStatus(t, rec, http.StatusOK)
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{"filter_env": map[string]any{"decay": 1.5}})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	fe := m["filter_env"].(map[string]any)
+	if v := fe["attack"].(float64); !approxEq(v, 0.05) {
+		t.Errorf("filter_env.attack: expected 0.05 to survive decay-only patch, got %v", v)
+	}
+	if v := fe["decay"].(float64); !approxEq(v, 1.5) {
+		t.Errorf("filter_env.decay: expected 1.5, got %v", v)
+	}
+	if v := fe["sustain"].(float64); !approxEq(v, 0.4) {
+		t.Errorf("filter_env.sustain: expected default 0.4, got %v", v)
+	}
+	if v := f.audio.get("feAttack"); !approxEq(float64(v), 0.05) {
+		t.Errorf("audio filter env attack: expected 0.05, got %v", v)
+	}
+
+	// Partial osc: level only — wave/octave/detune keep their values.
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{
+		"osc": []map[string]any{{"index": 1, "level": 0.6}},
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m = decodeBody(t, rec)
+	o1 := synthOsc(t, m, 1)
+	if !approxEq(o1["level"].(float64), 0.6) {
+		t.Errorf("osc[1].level: expected 0.6, got %v", o1["level"])
+	}
+	if o1["wave"] != "saw" || !approxEq(o1["detune_cents"].(float64), -7) || o1["octave"].(float64) != 0 {
+		t.Errorf("osc[1]: expected saw/0oct/-7c preserved, got %v", o1)
+	}
+
+	// Multi-field body: several sections in one request.
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{
+		"resonance": 0.5,
+		"glide":     0.2,
+		"noise":     0.1,
+		"osc": []map[string]any{
+			{"index": 0, "wave": "square"},
+			{"index": 2, "octave": -2, "level": 0.4},
+		},
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m = decodeBody(t, rec)
+	if !approxEq(m["resonance"].(float64), 0.5) || !approxEq(m["glide"].(float64), 0.2) || !approxEq(m["noise"].(float64), 0.1) {
+		t.Errorf("scalar fields: unexpected %v/%v/%v", m["resonance"], m["glide"], m["noise"])
+	}
+	o0 := synthOsc(t, m, 0)
+	if o0["wave"] != "square" || !approxEq(o0["level"].(float64), 1.0) {
+		t.Errorf("osc[0]: expected square with preserved level 1.0, got %v", o0)
+	}
+	o2 := synthOsc(t, m, 2)
+	if o2["octave"].(float64) != -2 || !approxEq(o2["level"].(float64), 0.4) || !approxEq(o2["detune_cents"].(float64), 5) {
+		t.Errorf("osc[2]: expected -2oct/0.4 with preserved +5c, got %v", o2)
+	}
+	if n := f.audio.getOscCalls(); n != 3 {
+		t.Errorf("expected 3 osc applies, got %d", n)
+	}
+	if v := f.audio.get("glide"); !approxEq(float64(v), 0.2) {
+		t.Errorf("audio glide: expected 0.2, got %v", v)
+	}
+}
+
+func TestSynthPatchConflictWithoutNativePatch(t *testing.T) {
+	bodies := []map[string]any{
+		{"resonance": 0.5},
+		{"filter_env": map[string]any{"attack": 0.1}},
+		{"osc": []map[string]any{{"index": 0, "level": 0.5}}},
+	}
+	t.Run("no patch selected", func(t *testing.T) {
+		f := newFixture(t, nil)
+		for _, b := range bodies {
+			wantStatus(t, f.do(t, "PATCH", "/api/synth", b), http.StatusConflict)
+		}
+	})
+	t.Run("soundfont patch", func(t *testing.T) {
+		f := newFixture(t, nil)
+		if err := f.ctrl.SelectPatch("salamander"); err != nil {
+			t.Fatalf("SelectPatch: %v", err)
+		}
+		for _, b := range bodies {
+			wantStatus(t, f.do(t, "PATCH", "/api/synth", b), http.StatusConflict)
+		}
+		if v := f.audio.get("resonance"); v != 0 {
+			t.Errorf("audio must not be touched on 409, got resonance %v", v)
+		}
+		if n := f.audio.getOscCalls(); n != 0 {
+			t.Errorf("audio must not be touched on 409, got %d osc calls", n)
+		}
+	})
+}
+
+func TestSynthPatchValidation(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	for name, body := range map[string]any{
+		"bad JSON":            `{"resonance": nope}`,
+		"resonance high":      map[string]any{"resonance": 0.96},
+		"resonance negative":  map[string]any{"resonance": -0.1},
+		"glide high":          map[string]any{"glide": 5.1},
+		"noise high":          map[string]any{"noise": 1.1},
+		"env attack high":     map[string]any{"filter_env": map[string]any{"attack": 11.0}},
+		"env attack negative": map[string]any{"filter_env": map[string]any{"attack": -1.0}},
+		"env sustain high":    map[string]any{"filter_env": map[string]any{"sustain": 1.5}},
+		"env amount negative": map[string]any{"filter_env": map[string]any{"amount": -0.2}},
+		"osc missing index":   map[string]any{"osc": []map[string]any{{"level": 0.5}}},
+		"osc index high":      map[string]any{"osc": []map[string]any{{"index": 3, "level": 0.5}}},
+		"osc index negative":  map[string]any{"osc": []map[string]any{{"index": -1, "level": 0.5}}},
+		"osc bad wave":        map[string]any{"osc": []map[string]any{{"index": 0, "wave": "sine"}}},
+		"osc octave high":     map[string]any{"osc": []map[string]any{{"index": 0, "octave": 3}}},
+		"osc detune high":     map[string]any{"osc": []map[string]any{{"index": 0, "detune_cents": 101.0}}},
+		"osc level high":      map[string]any{"osc": []map[string]any{{"index": 0, "level": 1.5}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			wantStatus(t, f.do(t, "PATCH", "/api/synth", body), http.StatusBadRequest)
+		})
+	}
+	// Nothing may have leaked into the engine or the cache.
+	if v := f.audio.get("resonance"); v != 0 {
+		t.Errorf("audio resonance must be untouched by rejected patches, got %v", v)
+	}
+	if n := f.audio.getOscCalls(); n != 0 {
+		t.Errorf("expected 0 osc applies after rejected patches, got %d", n)
+	}
+	if got := f.ctrl.Synth().Resonance; !approxEq(float64(got), 0.3) {
+		t.Errorf("cache resonance must keep default 0.3, got %v", got)
+	}
+}
+
+func TestSynthPatchEnvTimeZeroFloorsNotRejects(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	// A slider at 0 s is valid on the wire; controls floors it at 0.0001 s.
+	rec := f.do(t, "PATCH", "/api/synth", map[string]any{"filter_env": map[string]any{"attack": 0.0}})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	fe := m["filter_env"].(map[string]any)
+	if v := fe["attack"].(float64); !approxEq(v, 0.0001) {
+		t.Errorf("filter_env.attack: expected floor 0.0001, got %v", v)
+	}
+}
+
+func TestStatusIncludesSynth(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if _, err := f.ctrl.SetSynthResonance(0.9); err != nil {
+		t.Fatalf("SetSynthResonance: %v", err)
+	}
+
+	rec := f.do(t, "GET", "/api/status", nil)
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	params := m["params"].(map[string]any)
+	sy, ok := params["synth"].(map[string]any)
+	if !ok {
+		t.Fatalf("params.synth: expected object, got %T", params["synth"])
+	}
+	if v := sy["resonance"].(float64); !approxEq(v, 0.9) {
+		t.Errorf("synth.resonance: expected 0.9, got %v", v)
+	}
+	fe := sy["filter_env"].(map[string]any)
+	if v := fe["release"].(float64); !approxEq(v, 0.6) {
+		t.Errorf("synth.filter_env.release: expected 0.6, got %v", v)
+	}
+	o2 := synthOsc(t, sy, 2)
+	if o2["octave"].(float64) != -1 || !approxEq(o2["detune_cents"].(float64), 5) {
+		t.Errorf("synth.osc[2]: expected -1oct/+5c defaults, got %v", o2)
 	}
 }
 
