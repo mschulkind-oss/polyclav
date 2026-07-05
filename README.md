@@ -27,19 +27,40 @@ over SysEx.
   round-trip at a 128-frame quantum.
 - **Live MIDI in** over ALSA-seq (rtmidi). Notes, CCs, mod wheel, and
   pitch bend forwarded to the synth end-to-end.
-- **Two synth backends**, picked by file extension:
+- **Four synth backends**, picked per patch:
   - `.sf2` / `.sf3` → oxisynth (pure Rust)
   - `.sfz`         → sfizz (C++ via thin Rust FFI)
-- **Patches** — named soundfont presets defined in `[[patches]]` in the
+  - `type = "native"` → built-in pure-Rust analog-style synth
+  - `type = "lv2"` / `type = "clap"` → plugin hosting
+- **Patches** — named presets defined in `[[patches]]` in the
   config. Top-row Launchkey pads select patches live (8 visible).
 - **Per-patch gain matching** via `gain_db` so switching a soft EP for
   a loud grand doesn't blow your ears off.
 - **Soundfont hot-swap** — switch patches without dropping audio.
 - **DSP chain** in the audio thread, in order:
   `synth → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
-  Knobs 1/2/3 drive master volume, reverb, and the input compressor live.
-- **XR18 OSC bindings** — faders and pads drive mixer faders and mute
-  toggles over UDP. Bindings live in `[osc.xr18.bindings]`.
+  Knobs 1/2/3 drive master volume, reverb, and the input compressor live;
+  knob 4 sweeps the native synth's filter cutoff.
+- **Web dashboard** — an embedded, localhost-only web UI (`[web]` in the
+  config, off by default, `127.0.0.1:8666`): patch switching, all live
+  params, mastering, native-synth controls, and the audition transport
+  from a browser, plus a REST + SSE API. See `docs/WEB_UI.md`.
+- **Velocity curves** — global `[midi.velocity]` curve (soft / linear /
+  hard / custom gamma + output clamp) with per-patch overrides, so every
+  patch responds to your keybed the way you want. See
+  `docs/VELOCITY_CURVES.md`.
+- **Audition mode** — `polyclav --play <clip> [--loop] [--tempo N]` plays
+  one of seven built-in diagnostic clips through the full audio path, no
+  keyboard needed; the web dashboard has the same transport. See
+  `docs/AUDITION.md`.
+- **Native synth, Phase 2 voice** — 3 oscillators (saw/square/pulse,
+  octave, detune, level) + noise, runtime resonance, a dedicated filter
+  ADSR with env amount, and glide — all adjustable live from the web
+  dashboard. Still monophonic (mono-legato). See `docs/NATIVE_SYNTH.md`.
+- **Mixer OSC bindings** — faders and pads drive mixer faders and mute
+  toggles over UDP. Bindings live in `[osc.mixer]` (preferred name;
+  `[osc.xr18]` still works), with a configurable presence-check
+  `heartbeat` for non-X-Air OSC targets.
 - **Launchkey MK4 DAW driver** — handshake, knob/pad/screen control,
   per-patch knob-value persistence. The `polyclav-components` CLI also
   encodes and uploads Custom modes over SysEx.

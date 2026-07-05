@@ -1,6 +1,10 @@
 # Design: Audition Mode — hear everything without a keyboard
 
-> **Status:** design proposal, not yet implemented. Companions:
+> **Status:** P1+P2 shipped 2026-07-05 — `polyclav --play <clip> [--loop]
+> [--tempo N]`, the seven built-in patterns, and the web transport
+> (`/api/clips` + `/api/player` and the dashboard's Audition section; see
+> `docs/USER_GUIDE.md` "Audition mode"). Still to come: SMF user clips
+> from `~/.local/share/polyclav/clips/` and bundled clips. Companions:
 > `docs/WEB_UI.md` (the transport controls and per-setting demo buttons
 > live there) and `docs/VELOCITY_CURVES.md` (the velocity ramp clip is
 > the curve editor's soundtrack).

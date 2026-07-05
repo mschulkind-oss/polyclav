@@ -12,7 +12,9 @@ LV2/CLAP plugin) → per-patch gain → user compressor + reverb → mastering
 compressor + brick-wall limiter → master gain → audio out via PipeWire. It is
 designed around a Novation Launchkey 61 MK4 and a Behringer XR18 mixer, but
 works with any MIDI keyboard and any PipeWire-supported audio sink. There is no
-DAW, no recording, and no GUI — keys in, sound out.
+DAW and no recording — keys in, sound out. An optional browser dashboard
+(off by default, localhost-only) stands in for the Launchkey as a front
+panel; see "Web dashboard" below.
 
 ## What works today
 
@@ -34,12 +36,27 @@ DAW, no recording, and no GUI — keys in, sound out.
     Knob 4 sweeps the filter cutoff while a native patch is selected.
   - The screen shows the current patch's `display` name.
   - The mastering compressor, brick-wall limiter, and per-patch gain are set
-    from config and apply automatically.
+    from config and apply automatically (and can be adjusted live from the
+    web dashboard).
+- Web dashboard (`[web]`, off by default): patch switching, volume / reverb
+  / compressor / cutoff sliders, mastering, the native synth's full
+  parameter set, and the audition transport, from any browser on
+  `127.0.0.1:8666` — plus a REST + SSE API. See "Web dashboard" below.
+- Velocity curves: a global `[midi.velocity]` remap (soft / linear / hard /
+  custom gamma, with an output clamp) and per-patch overrides. See
+  "Velocity curves" below.
+- Audition mode: `polyclav --play <clip>` plays built-in diagnostic clips
+  through the full audio path with no keyboard connected. See "Audition
+  mode" below.
+- Native synth (Phase 2 voice): 3 oscillators + noise, runtime resonance,
+  filter ADSR, and glide, all adjustable live from the web dashboard. See
+  `docs/NATIVE_SYNTH.md`.
 - Per-patch gain matching via `gain_db` on each `[[patches]]` entry — line
   up the perceived loudness of wildly different soundfonts (Salamander vs
   DX7 vs analog bass) so switching patches doesn't blow your ears off.
 - XR18 OSC bindings: faders and pads on the keyboard drive mixer faders and
-  mute toggles over UDP. Bindings live in `[osc.xr18.bindings]`.
+  mute toggles over UDP. Bindings live in `[osc.mixer]` (preferred name;
+  the legacy `[osc.xr18]` still works).
 - `polyclav-components` standalone CLI: encode and upload Launchkey MK4 Custom
   modes (Pots / Pads / Faders) over SysEx. Independent of the daemon.
 
@@ -108,9 +125,35 @@ The default `"launchkey"` match picks the first, which is the MIDI port. If you
 want the knobs/faders/transport stream instead, match `"DAW"` explicitly — but
 note the bindings below assume the DAW port's CC layout.
 
-### `[[osc.xr18.bindings]]` — semantics
+### `[web]` — the browser dashboard
 
-Each binding maps one MIDI control event to one OSC dispatch on the XR18.
+Off by default. Enable it and (optionally) pick a listen address:
+
+```toml
+[web]
+enabled = true
+# listen = "127.0.0.1:8666"   # the default; loopback is the security boundary
+```
+
+There is **no auth** — the loopback default is the boundary. Binding
+wider (e.g. `listen = "0.0.0.0:8666"`) exposes full control of the daemon
+to your LAN; do that only on a network you trust. If the port is busy the
+daemon logs an error and keeps running — the web UI is never
+load-bearing. See "Web dashboard" below for what it does.
+
+### `[osc.mixer]` / `[[osc.mixer.bindings]]` — semantics
+
+`[osc.mixer]` is the preferred name for the OSC mixer block; the legacy
+`[osc.xr18]` spelling still works (if both are present, `[osc.mixer]`
+wins). Fields are identical either way.
+
+`heartbeat` selects the OSC address polled to decide whether the mixer is
+reachable. Leave it unset for the X-Air default (`"/xinfo"`); set it to
+`""` to disable presence polling entirely, which turns sends into
+fire-and-forget UDP — use that for generic OSC targets that don't answer
+X-Air pings.
+
+Each binding maps one MIDI control event to one OSC dispatch on the mixer.
 Lookup is keyed by `(source_kind, channel, controller)`; **NoteOff is ignored**
 (so pad releases don't double-fire).
 
@@ -148,6 +191,8 @@ stay in the registry without a pad slot). The first entry is loaded on startup.
 | `plugin_id`   | For `clap` type: the plugin's CLAP ID string.                      |
 | `pad_color`   | Components palette index 0..127 — the pad's lit color.             |
 | `gain_db`     | Per-patch loudness trim in dB; default `0.0`, useful range roughly -24..+24. Applied as the first stage of the DSP chain on every patch select. See "Mastering & level matching" below. |
+| `velocity_curve` | Optional per-patch velocity curve override — wins over the global `[midi.velocity]` block. `"linear"`, `"soft"`, `"hard"`, or `"custom"` (the latter needs `velocity_gamma`). See "Velocity curves" below. |
+| `velocity_gamma` | Custom gamma (> 0); setting it alone implies `velocity_curve = "custom"`. |
 
 ```toml
 # soundfont patch
@@ -211,6 +256,163 @@ You can also run the binary directly: `./bin/polyclav`.
    follow the selection. To make a permanent change, edit
    `~/.config/polyclav/polyclav.toml` and `overmind restart polyclav` — the
    daemon reads config only at startup.
+
+## Web dashboard
+
+With `[web]` enabled (see Configuration above), the daemon serves a
+single-page dashboard at `http://127.0.0.1:8666/`. It is a laptop-first
+interim front panel — the same live controls the Launchkey gives you,
+plus the ones no knob reaches:
+
+- **Patches** — a pad-style grid; click to switch. The current patch is
+  highlighted and colors follow each patch's `pad_color`.
+- **Patch params** — volume, reverb, and compressor sliders, plus a
+  cutoff slider that activates while a native patch is selected.
+- **Native synth** — shown only while a native patch is current:
+  resonance, glide, noise, the filter ADSR + env amount, and per-osc
+  wave / octave / detune / level. See `docs/NATIVE_SYNTH.md`.
+- **Mastering** — comp amount and limiter ceiling, live.
+- **Audition** — clip picker, tempo slider, loop toggle, play/stop
+  (see "Audition mode" below).
+- A header strip shows connection health, Launchkey/XR18 device states,
+  the current patch, and the daemon version.
+
+Everything updates live in both directions: turn a Launchkey knob and the
+slider moves; drag the slider and the sound changes. Web tweaks flow
+through the same controls layer as the hardware, so per-patch knob values
+persist to `state.toml` identically.
+
+The page is a thin client over a JSON API you can also drive with curl:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/status` | Full snapshot: version, device states, params, patches, player. |
+| `GET /api/events` | SSE stream — a `snapshot` event on connect, then `params` / `synth` / `patch` / `mastering` / `velocity` / `player` change events. |
+| `GET /api/patches` | The patch list. |
+| `POST /api/patches/{name}/select` | Switch patch by name. |
+| `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `cutoff_pos` (each 0..1, all fields optional). |
+| `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
+| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db`. |
+| `GET /api/config` | Your `polyclav.toml`, verbatim (read-only). |
+| `GET /api/clips` | The audition clip library. |
+| `POST /api/player` | Start a clip: `{"clip": "arp", "loop": true, "tempo": 1.0}`. |
+| `POST /api/player/stop` | Stop playback. |
+| `POST /api/player/tempo` | Change playback tempo live: `{"tempo": 1.5}`. |
+
+The dashboard cannot edit the config file — `GET /api/config` is
+read-only, and browser-side config editing is a later phase
+(`docs/WEB_UI.md`).
+
+## Audition mode — hear settings without a keyboard
+
+`polyclav --play <clip>` starts the daemon and immediately plays a
+built-in diagnostic clip through the full audio path — the exact route
+keyboard notes take, minus the keyboard:
+
+```sh
+polyclav --play vel-ramp --loop              # loop until shutdown
+polyclav --play bass-riff --loop --tempo 0.5 # ... at half speed
+```
+
+| Flag | Meaning |
+|---|---|
+| `--play <id>` | Clip to play at startup. An unknown id exits 1 and prints the clip library. |
+| `--loop` | Repeat the clip until shutdown (otherwise it plays once and the daemon keeps running). |
+| `--tempo N` | Tempo **multiplier** (not BPM), clamped to 0.25..2.0; `0` means 1.0. |
+
+Seven clips ship built in, each purpose-built to expose one setting:
+
+| id | What it plays | Built to demo |
+|---|---|---|
+| `vel-ramp` | Middle C, velocity stepping 1→127→1 | Velocity curves — hear each layer boundary move |
+| `sustain-chord` | Cmaj9 held 8 beats, then 8 beats of silence | Reverb tail, mastering comp, limiter ceiling |
+| `arp` | One-bar Am7 arpeggio in 16ths | Patch character, envelope feel, patch A/B |
+| `bass-riff` | Two-bar low-register riff, mono-friendly | Native synth — sweep the cutoff over it |
+| `chromatic` | Every note 21–108 at fixed velocity | Sample-layer seams, register balance, aliasing |
+| `staccato` | Short notes with shrinking gaps | Attack/release transients, compressor pumping |
+| `burst` | Dense five-note chords every beat | Polyphony stress, CPU headroom, limiter |
+
+`sustain-chord` and `burst` are chordal: on the monophonic native synth
+they collapse to a single line, so clip pickers label them "(poly
+patches)".
+
+The workflow this exists for is **tweak while listening**: enable
+`[web]`, run e.g. `polyclav --play bass-riff --loop`, open the dashboard,
+and drag cutoff / resonance / filter-env sliders while the riff loops.
+Every change is audible in place — no keyboard, no restart. The
+dashboard's Audition section (or `POST /api/player`) switches clips,
+loops, and changes tempo at runtime. Clip notes drive the synth only;
+they never fire the OSC mixer bindings.
+
+## Velocity curves
+
+polyclav can reshape incoming note velocity before it reaches the synth,
+so the *feel* of a patch matches your keybed. The global default lives in
+`[midi.velocity]`; any patch can override it:
+
+```toml
+[midi.velocity]                # global default for all patches
+curve = "linear"               # "soft" | "linear" | "hard" | "custom"
+# gamma = 0.8                  # required iff curve = "custom"
+# out_min = 1                  # optional output clamps, defaults 1 / 127
+# out_max = 127
+
+[[patches]]
+name           = "salamander"
+# ...existing fields...
+velocity_curve = "soft"        # per-patch override (or velocity_gamma = 0.7)
+```
+
+The curve is a gamma (power) remap with an output clamp:
+`out(v) = clamp(round(127·(v/127)^γ), out_min, out_max)`, with velocity 0
+passed through untouched (NoteOn vel 0 is NoteOff on the wire).
+
+| Preset | γ | Feel |
+|---|---|---|
+| `soft` | 0.6 | Lifts the middle — heavy keybeds / quiet patches reach loud layers with less force. |
+| `linear` | 1.0 | Identity (the default). |
+| `hard` | 1.6 | Suppresses the middle — light keybeds / shouty patches get more headroom. |
+| `custom` | your `gamma` | Anything in between (or beyond). |
+
+Details worth knowing:
+
+- **Per-patch wins.** `velocity_curve` / `velocity_gamma` on a patch
+  replaces the global curve entirely while that patch is selected.
+  Setting `velocity_gamma` alone implies `velocity_curve = "custom"`.
+- **Synth path only.** The curve applies to NoteOn events headed for the
+  synth. OSC mixer bindings always see the **raw** velocity, so
+  fader/pad bindings behave identically whatever curve is active.
+- `out_min` (≥ 1) is a floor — a played note can never remap to a
+  NoteOff; `out_max` caps the top (e.g. never trigger a hammer-noise
+  layer).
+- Bad settings (unknown curve name, `custom` without a positive gamma,
+  `out_min > out_max`) are startup errors listing every offender at once.
+- Tuning by ear: loop the ramp clip while you edit —
+  `polyclav --play vel-ramp --loop`.
+
+**Timbre note for layered soundfonts:** remapping velocity changes
+*which sample layers trigger* in multi-layer instruments, not just
+loudness. A `soft` curve on Salamander means reaching the forte layers
+with less force — timbre change included. That's the feature, not a bug.
+
+## Native synth: live parameters
+
+With a `type = "native"` patch selected, the full Phase 2 voice is
+adjustable live from the web dashboard (or `PATCH /api/synth`) — no
+restart, no config edit:
+
+- **Filter** — cutoff (also on Launchkey knob 4), resonance, and a
+  dedicated filter ADSR with an env→cutoff amount.
+- **Oscillators** — three of them: waveform (`saw` / `square` / `pulse`),
+  octave (−2..+2), detune (±100 cents), and level each; plus a white
+  noise source.
+- **Glide** — portamento time, 0–5 s (0 = off, the default).
+
+The defaults preserve the original single-saw Phase 1 sound (osc 2/3 and
+noise at level 0, env amount 0), so a native patch sounds the same until
+you reach for the sliders. The amp envelope is still fixed, the voice is
+still monophonic, and tweaks aren't yet persisted per patch — see
+`docs/NATIVE_SYNTH.md` for the full parameter table and limits.
 
 ## Mastering & level matching
 
@@ -308,8 +510,9 @@ Once you have a `.syx` file, send it to the keyboard with any SysEx tool
 
 ## XR18 mixer integration
 
-`[[osc.xr18.bindings]]` entries tell `polyclav` to forward MIDI events from
-the keyboard out to the XR18 as OSC messages. Examples:
+`[[osc.mixer.bindings]]` entries (legacy spelling: `[[osc.xr18.bindings]]`)
+tell `polyclav` to forward MIDI events from the keyboard out to the XR18
+as OSC messages. Examples:
 
 - Move fader 9 on the Launchkey (CC 13 on channel 16) → `/lr/mix/fader`
   on the XR18 → main L/R fader moves.
@@ -331,6 +534,5 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 | **Latency feels high.** | See `AGENTS.md` → "Latency tuning". For the XR18, the host-side WirePlumber rule pinning `period-size=128, period-num=3, headroom=0` is what gets you to ~8 ms round-trip. |
 | **Build fails on the Rust side.** | Check the env-var pins in `mise.toml` (`LIBCLANG_PATH`, `CPLUS_INCLUDE_PATH`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`, `C_INCLUDE_PATH`). See `AGENTS.md` → "Toolchain quirks pinned in mise.toml". |
 | **Daemon ignored my config change.** | Did you `overmind restart polyclav`? The daemon reads config only at startup. |
-| **XR18 not responding.** | Confirm the mixer is reachable (`nc -uvz <host> 10024`), and that `[osc.xr18].host`/`port` match. |
-</content>
-</invoke>
+| **XR18 not responding.** | Confirm the mixer is reachable (`nc -uvz <host> 10024`), and that `[osc.mixer].host`/`port` (or the legacy `[osc.xr18]` block) match. |
+| **Web dashboard unreachable.** | Is `[web].enabled = true`? The default bind is loopback-only (`127.0.0.1:8666`) — from another machine you must opt in with `listen = "0.0.0.0:8666"` (no auth; trusted networks only). Check the log for a `web server` error if the port was taken. |

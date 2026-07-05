@@ -1,9 +1,13 @@
 # Design: Web Settings Interface
 
-> **Status:** design proposal, not yet implemented. Companion doc:
-> `docs/VELOCITY_CURVES.md` (the velocity editor is a planned page of this
-> UI). Tech choices follow the portfolio standards (Next.js frontend,
-> pnpm + biome + tsc, hivemind for dev processes).
+> **Status:** phases A+B shipped 2026-07-05 — the REST + SSE API and the
+> embedded interim dashboard (`[web]` in `polyclav.toml`, off by default,
+> `127.0.0.1:8666`; see `docs/USER_GUIDE.md` "Web dashboard"). Still to
+> come: the Next.js app (phase C+), config editing from the browser, and
+> the velocity editor page. Companion doc: `docs/VELOCITY_CURVES.md`
+> (the velocity editor is a planned page of this UI). Tech choices follow
+> the portfolio standards (Next.js frontend, pnpm + biome + tsc,
+> hivemind for dev processes).
 
 ## Goal
 

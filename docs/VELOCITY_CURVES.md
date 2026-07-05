@@ -1,9 +1,10 @@
 # Design: Velocity Curves
 
-> **Status:** design proposal, not yet implemented. Companion doc:
-> `docs/WEB_UI.md` — the curve editor is a planned page of the web UI, but
-> the core feature here is useful standalone (config-only) and should land
-> first.
+> **Status:** v1 shipped 2026-07-05 — gamma presets (soft / linear /
+> hard / custom) + output clamp in `[midi.velocity]`, with per-patch
+> `velocity_curve` / `velocity_gamma` overrides (see `docs/USER_GUIDE.md`
+> "Velocity curves"). Still to come: v2 control points and the web UI's
+> curve editor + velocity monitor. Companion doc: `docs/WEB_UI.md`.
 
 ## Problem
 

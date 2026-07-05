@@ -34,11 +34,11 @@ The native synth no longer roadmaps alone. Five design docs landed
 
 | Doc | Scope | Status |
 |---|---|---|
-| `docs/CONFIGURABILITY.md` | The four hardware seams (audio, MIDI in, OSC mixer, control surface) + tiered generalization plan (Tier 0–4) | design |
+| `docs/CONFIGURABILITY.md` | The four hardware seams (audio, MIDI in, OSC mixer, control surface) + tiered generalization plan (Tier 0–4) | Tier 0-1 shipped |
 | `docs/NATIVE_SYNTH.md` | User-facing state-of-the-synth: what Phase 1 actually ships and how to play it | current |
-| `docs/WEB_UI.md` | Daemon-hosted web settings UI: REST + SSE + change hub + Next.js static export; decisions locked (no auth, :8666, laptop-first) | design |
-| `docs/VELOCITY_CURVES.md` | Per-patch velocity remapping: gamma+presets v1, control-point editor v2 | design |
-| `docs/AUDITION.md` | Keyboard-free clip player: generative diagnostic patterns, loop/tempo transport, per-setting demo buttons | design |
+| `docs/WEB_UI.md` | Daemon-hosted web settings UI: REST + SSE + change hub + Next.js static export; decisions locked (no auth, :8666, laptop-first) | phases A-B shipped (interim dashboard) |
+| `docs/VELOCITY_CURVES.md` | Per-patch velocity remapping: gamma+presets v1, control-point editor v2 | v1 shipped |
+| `docs/AUDITION.md` | Keyboard-free clip player: generative diagnostic patterns, loop/tempo transport, per-setting demo buttons | P1-P2 shipped |
 
 **How they stack** (each unlocks the next):
 
@@ -60,13 +60,16 @@ Everything required to go from today's Phase-1 subset to the §1 voice,
 ordered so each step is audible via `--play bass-riff` + web tweaking
 (no Launchkey needed until the last item):
 
-- [ ] **Runtime resonance** — expose Q alongside cutoff (atomic + FFI +
+- [x] **Runtime resonance** — expose Q alongside cutoff (atomic + FFI +
       web slider). Smallest possible first step; proves the param plumbing.
-- [ ] **Filter ADSR (env 2)** — second envelope with env-amount into
+      (shipped 2026-07-05)
+- [x] **Filter ADSR (env 2)** — second envelope with env-amount into
       cutoff; the single biggest "sounds like a Moog" win.
-- [ ] **3-osc + mixer + noise** — per-osc waveform (saw/square/pulse),
-      octave, detune; mixer levels; noise source.
-- [ ] **Glide** — one-pole frequency slew, mono modes only.
+      (shipped 2026-07-05)
+- [x] **3-osc + mixer + noise** — per-osc waveform (saw/square/pulse),
+      octave, detune; mixer levels; noise source. (shipped 2026-07-05)
+- [x] **Glide** — one-pole frequency slew, mono modes only.
+      (shipped 2026-07-05)
 - [ ] **Velocity → filter/amp routing** — composes with
       `docs/VELOCITY_CURVES.md` (curve shapes input; routing decides
       what velocity modulates).
