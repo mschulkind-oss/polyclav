@@ -1,0 +1,468 @@
+// Package web is the polyclav daemon's browser front panel
+// (docs/WEB_UI.md, phases A+B, plus the audition transport from
+// docs/AUDITION.md §Control surfaces): a stdlib net/http server exposing
+// the REST + SSE API over the controls layer, and an embedded interim
+// dashboard page. The server only serves — all wiring (config, listen
+// address, hub bridging for player/device events) happens in main.
+package web
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"math"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/mschulkind-oss/polyclav/internal/controls"
+	"github.com/mschulkind-oss/polyclav/internal/patches"
+	"github.com/mschulkind-oss/polyclav/internal/player"
+)
+
+// DeviceStates reports the reconciler state of each hardware device.
+// *supervisor.Supervisor satisfies this; declared locally so this package
+// does not import internal/supervisor.
+type DeviceStates interface {
+	LaunchkeyState() string
+	XR18State() string
+}
+
+// Deps carries everything the server needs. Logger, Player, Devices and
+// ConfigTOML are optional (see field comments); Controls, Hub and
+// Registry are required.
+type Deps struct {
+	Logger     *slog.Logger
+	Controls   *controls.Controls
+	Hub        *controls.Hub
+	Registry   controls.Registry
+	Player     *player.Player         // may be nil → player endpoints return 503
+	Devices    DeviceStates           // may be nil → device states report "unknown"
+	ConfigTOML func() ([]byte, error) // reads polyclav.toml verbatim; may be nil → /api/config returns 404
+	Version    string
+}
+
+// Server serves the web UI and its API. Construct with New; it holds no
+// listener state of its own — Serve owns the http.Server lifecycle.
+type Server struct {
+	deps Deps
+	mux  *http.ServeMux
+}
+
+// New builds a Server over deps and registers all routes. A nil Logger
+// falls back to slog.Default(); a nil Hub gets a private one so the SSE
+// handler never panics (mirroring controls.New).
+func New(deps Deps) *Server {
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
+	if deps.Hub == nil {
+		deps.Hub = controls.NewHub()
+	}
+	s := &Server{deps: deps, mux: http.NewServeMux()}
+	s.routes()
+	return s
+}
+
+func (s *Server) routes() {
+	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.mux.HandleFunc("GET /api/status", s.handleStatus)
+	s.mux.HandleFunc("GET /api/events", s.handleEvents)
+	s.mux.HandleFunc("GET /api/patches", s.handlePatches)
+	s.mux.HandleFunc("POST /api/patches/{name}/select", s.handlePatchSelect)
+	s.mux.HandleFunc("PATCH /api/params", s.handleParams)
+	s.mux.HandleFunc("PATCH /api/mastering", s.handleMastering)
+	s.mux.HandleFunc("GET /api/config", s.handleConfig)
+	s.mux.HandleFunc("GET /api/clips", s.handleClips)
+	s.mux.HandleFunc("POST /api/player", s.handlePlayerPlay)
+	s.mux.HandleFunc("POST /api/player/stop", s.handlePlayerStop)
+	s.mux.HandleFunc("POST /api/player/tempo", s.handlePlayerTempo)
+}
+
+// Handler returns the routed handler, for tests and for callers that
+// want to mount the server themselves.
+func (s *Server) Handler() http.Handler {
+	return s.mux
+}
+
+// Serve listens on listen and serves until ctx is cancelled, then shuts
+// down gracefully (5s drain). Request contexts derive from ctx
+// (http.Server.BaseContext), so cancelling ctx also releases long-lived
+// SSE streams — without that, Shutdown would wait on them forever.
+func (s *Server) Serve(ctx context.Context, listen string) error {
+	srv := &http.Server{
+		Addr:              listen,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	s.deps.Logger.Info("web ui listening", "addr", listen)
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := srv.Shutdown(shutdownCtx)
+		// Reap ListenAndServe's return; ErrServerClosed is the normal
+		// graceful-shutdown result, not an error.
+		if e := <-errc; err == nil && e != nil && !errors.Is(e, http.ErrServerClosed) {
+			err = e
+		}
+		return err
+	}
+}
+
+// ---- JSON wire views -------------------------------------------------
+//
+// Wire shapes are snake_case and owned by this package: the embedded
+// dashboard (static/index.html) and the future Next.js app read exactly
+// these keys.
+
+type devicesJSON struct {
+	Launchkey string `json:"launchkey"`
+	XR18      string `json:"xr18"`
+}
+
+type paramsJSON struct {
+	Patch            string  `json:"patch"`
+	PatchDisplay     string  `json:"patch_display"`
+	Volume           float32 `json:"volume"`
+	Reverb           float32 `json:"reverb"`
+	Compressor       float32 `json:"compressor"`
+	CutoffPos        float32 `json:"cutoff_pos"`
+	CutoffHz         float32 `json:"cutoff_hz"`
+	MasteringComp    float32 `json:"mastering_comp"`
+	LimiterCeilingDB float32 `json:"limiter_ceiling_db"`
+	VelocityCurve    string  `json:"velocity_curve"`
+}
+
+type patchJSON struct {
+	Name     string  `json:"name"`
+	Display  string  `json:"display"`
+	Type     string  `json:"type"`
+	PadColor uint8   `json:"pad_color"`
+	GainDB   float32 `json:"gain_db"`
+	Index    int     `json:"index"`
+}
+
+type playerJSON struct {
+	Playing bool    `json:"playing"`
+	Clip    string  `json:"clip"`
+	Loop    bool    `json:"loop"`
+	Tempo   float64 `json:"tempo"`
+}
+
+type clipJSON struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	PolyOnly    bool    `json:"poly_only"`
+	Beats       float64 `json:"beats"`
+	RefBPM      float64 `json:"ref_bpm"`
+}
+
+type statusJSON struct {
+	Version string      `json:"version"`
+	Devices devicesJSON `json:"devices"`
+	Params  paramsJSON  `json:"params"`
+	Patches []patchJSON `json:"patches"`
+	Player  *playerJSON `json:"player"`
+}
+
+func paramsView(sn controls.ParamsSnapshot) paramsJSON {
+	return paramsJSON{
+		Patch:            sn.Patch,
+		PatchDisplay:     sn.PatchDisplay,
+		Volume:           sn.Volume,
+		Reverb:           sn.Reverb,
+		Compressor:       sn.Compressor,
+		CutoffPos:        sn.CutoffPos,
+		CutoffHz:         sn.CutoffHz,
+		MasteringComp:    sn.MasteringComp,
+		LimiterCeilingDB: sn.LimiterCeilingDB,
+		VelocityCurve:    sn.VelocityCurve,
+	}
+}
+
+func patchesView(ps []patches.Patch) []patchJSON {
+	out := make([]patchJSON, len(ps))
+	for i, p := range ps {
+		typ := p.Type
+		if typ == "" {
+			typ = "soundfont" // "" is the config default; normalize for clients
+		}
+		out[i] = patchJSON{
+			Name:     p.Name,
+			Display:  p.Display,
+			Type:     typ,
+			PadColor: uint8(p.PadColor),
+			GainDB:   p.GainDB,
+			Index:    i,
+		}
+	}
+	return out
+}
+
+func playerView(st player.State) playerJSON {
+	return playerJSON{Playing: st.Playing, Clip: st.ClipID, Loop: st.Loop, Tempo: st.Tempo}
+}
+
+func (s *Server) devicesView() devicesJSON {
+	d := devicesJSON{Launchkey: "unknown", XR18: "unknown"}
+	if s.deps.Devices != nil {
+		d.Launchkey = s.deps.Devices.LaunchkeyState()
+		d.XR18 = s.deps.Devices.XR18State()
+	}
+	return d
+}
+
+// statusView assembles the full /api/status payload; it is also the SSE
+// "snapshot" event body.
+func (s *Server) statusView() statusJSON {
+	st := statusJSON{
+		Version: s.deps.Version,
+		Devices: s.devicesView(),
+		Params:  paramsView(s.deps.Controls.Snapshot()),
+		Patches: patchesView(s.deps.Registry.All()),
+	}
+	if s.deps.Player != nil {
+		p := playerView(s.deps.Player.State())
+		st.Player = &p
+	}
+	return st
+}
+
+// ---- helpers ----------------------------------------------------------
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// decodeJSON decodes the request body into dst with a 1 MiB cap. The
+// caller maps errors to 400.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	return json.NewDecoder(r.Body).Decode(dst)
+}
+
+// finite01 reports whether v is a finite number in [0,1].
+func finite01(v float64) bool {
+	return v >= 0 && v <= 1 // NaN and +Inf fail the comparison
+}
+
+func finite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+// ---- handlers ----------------------------------------------------------
+
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.statusView())
+}
+
+func (s *Server) handlePatches(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, patchesView(s.deps.Registry.All()))
+}
+
+func (s *Server) handlePatchSelect(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.deps.Controls.SelectPatch(name); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, paramsView(s.deps.Controls.Snapshot()))
+}
+
+// paramsPatchBody is the PATCH /api/params request: every field optional,
+// only the present ones are applied.
+type paramsPatchBody struct {
+	Volume     *float64 `json:"volume"`
+	Reverb     *float64 `json:"reverb"`
+	Compressor *float64 `json:"compressor"`
+	CutoffPos  *float64 `json:"cutoff_pos"`
+}
+
+func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
+	var body paramsPatchBody
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	for name, p := range map[string]*float64{
+		"volume":     body.Volume,
+		"reverb":     body.Reverb,
+		"compressor": body.Compressor,
+		"cutoff_pos": body.CutoffPos,
+	} {
+		if p != nil && !finite01(*p) {
+			writeErr(w, http.StatusBadRequest, name+" must be in [0,1]")
+			return
+		}
+	}
+	if s.deps.Registry.Current() == nil {
+		writeErr(w, http.StatusConflict, "no patch selected")
+		return
+	}
+
+	applied := map[string]any{}
+	fieldErrs := map[string]string{}
+	apply := func(name string, p *float64, set func(float32) (float32, error)) {
+		if p == nil {
+			return
+		}
+		v, err := set(float32(*p))
+		if err != nil {
+			fieldErrs[name] = err.Error()
+			return
+		}
+		applied[name] = v
+	}
+	apply("volume", body.Volume, s.deps.Controls.SetVolume)
+	apply("reverb", body.Reverb, s.deps.Controls.SetReverb)
+	apply("compressor", body.Compressor, s.deps.Controls.SetCompressor)
+	if body.CutoffPos != nil {
+		hz, err := s.deps.Controls.SetCutoffPos(float32(*body.CutoffPos))
+		if err != nil {
+			fieldErrs["cutoff_pos"] = err.Error()
+		} else {
+			applied["cutoff_pos"] = float32(*body.CutoffPos)
+			applied["cutoff_hz"] = hz
+		}
+	}
+
+	resp := map[string]any{"applied": applied}
+	if len(fieldErrs) > 0 {
+		resp["errors"] = fieldErrs
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type masteringPatchBody struct {
+	CompAmount       *float64 `json:"comp_amount"`
+	LimiterCeilingDB *float64 `json:"limiter_ceiling_db"`
+}
+
+func (s *Server) handleMastering(w http.ResponseWriter, r *http.Request) {
+	var body masteringPatchBody
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	var compP, ceilP *float32
+	if body.CompAmount != nil {
+		if !finite(*body.CompAmount) {
+			writeErr(w, http.StatusBadRequest, "comp_amount must be finite")
+			return
+		}
+		v := float32(*body.CompAmount)
+		compP = &v
+	}
+	if body.LimiterCeilingDB != nil {
+		if !finite(*body.LimiterCeilingDB) {
+			writeErr(w, http.StatusBadRequest, "limiter_ceiling_db must be finite")
+			return
+		}
+		v := float32(*body.LimiterCeilingDB)
+		ceilP = &v
+	}
+	comp, ceiling := s.deps.Controls.SetMastering(compP, ceilP)
+	writeJSON(w, http.StatusOK, map[string]float32{
+		"comp_amount":        comp,
+		"limiter_ceiling_db": ceiling,
+	})
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.ConfigTOML == nil {
+		writeErr(w, http.StatusNotFound, "config source not available")
+		return
+	}
+	b, err := s.deps.ConfigTOML()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read config: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write(b)
+}
+
+func (s *Server) handleClips(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.Player == nil {
+		writeErr(w, http.StatusServiceUnavailable, "player not available")
+		return
+	}
+	infos := s.deps.Player.Clips()
+	out := make([]clipJSON, len(infos))
+	for i, c := range infos {
+		out[i] = clipJSON{
+			ID:          c.ID,
+			Name:        c.Name,
+			Description: c.Description,
+			PolyOnly:    c.PolyOnly,
+			Beats:       c.Beats,
+			RefBPM:      c.RefBPM,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type playerPlayBody struct {
+	Clip  string  `json:"clip"`
+	Loop  bool    `json:"loop"`
+	Tempo float64 `json:"tempo"`
+}
+
+func (s *Server) handlePlayerPlay(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Player == nil {
+		writeErr(w, http.StatusServiceUnavailable, "player not available")
+		return
+	}
+	var body playerPlayBody
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	if err := s.deps.Player.Play(body.Clip, body.Loop, body.Tempo); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error()) // only failure mode is an unknown clip
+		return
+	}
+	writeJSON(w, http.StatusOK, playerView(s.deps.Player.State()))
+}
+
+func (s *Server) handlePlayerStop(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.Player == nil {
+		writeErr(w, http.StatusServiceUnavailable, "player not available")
+		return
+	}
+	s.deps.Player.Stop()
+	writeJSON(w, http.StatusOK, playerView(s.deps.Player.State()))
+}
+
+type playerTempoBody struct {
+	Tempo float64 `json:"tempo"`
+}
+
+func (s *Server) handlePlayerTempo(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Player == nil {
+		writeErr(w, http.StatusServiceUnavailable, "player not available")
+		return
+	}
+	var body playerTempoBody
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	s.deps.Player.SetTempo(body.Tempo)
+	writeJSON(w, http.StatusOK, playerView(s.deps.Player.State()))
+}

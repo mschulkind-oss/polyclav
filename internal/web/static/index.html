@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<!--
+  INTERIM polyclav dashboard.
+
+  This is the stopgap single-file UI served while the daemon grows its
+  web API. The real frontend per docs/WEB_UI.md is a Next.js static
+  export embedded from web/out/; when that ships, this file goes away.
+  Zero external requests by design: everything inline, everything vanilla.
+
+  Laptop-first layout (locked decision, docs/WEB_UI.md §Decisions #4);
+  dark-theme-friendly via prefers-color-scheme.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>polyclav</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --card: #ffffff; --fg: #17181a; --muted: #6a6d74;
+    --border: #d9dbe0; --accent: #3d6bff; --ok: #2fb35f; --bad: #d64541;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101114; --card: #1a1c20; --fg: #e7e8ea; --muted: #9a9aa2;
+      --border: #32353c; --accent: #6b8cff; --ok: #3ccc72; --bad: #e05a56;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 14px;
+           padding: 10px 22px; border-bottom: 1px solid var(--border);
+           background: var(--card); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .spacer { flex: 1; }
+  .version { color: var(--muted); font-size: 12px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px;
+          border: 1px solid var(--border); border-radius: 999px;
+          padding: 2px 10px; font-size: 12px; color: var(--muted); }
+  .chip b { color: var(--fg); font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%;
+         background: var(--bad); display: inline-block; flex: none; }
+  .dot.ok, .dot.on { background: var(--ok); }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px;
+         display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+         gap: 16px; align-items: start; }
+  section { background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; padding: 14px 18px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+               color: var(--muted); margin: 0 0 12px; font-weight: 650; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+          gap: 8px; }
+  button.patch { display: flex; align-items: center; gap: 8px;
+                 padding: 8px 10px; border: 1px solid var(--border);
+                 border-radius: 8px; background: transparent; color: var(--fg);
+                 cursor: pointer; font: inherit; text-align: left; }
+  button.patch:hover { border-color: var(--accent); }
+  button.patch.current { border-color: var(--accent);
+                         box-shadow: 0 0 0 1px var(--accent); }
+  .padcolor { width: 12px; height: 12px; border-radius: 3px; flex: none;
+              border: 1px solid rgba(128,128,128,0.35); }
+  .row { display: grid; grid-template-columns: 100px 1fr 76px; gap: 10px;
+         align-items: center; margin: 10px 0; }
+  .row label { color: var(--muted); }
+  .row.disabled label, .row.disabled .val { opacity: 0.45; }
+  .val { text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  select { background: var(--card); color: var(--fg);
+           border: 1px solid var(--border); border-radius: 6px;
+           padding: 5px 8px; font: inherit; width: 100%; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .transport-controls { display: flex; align-items: center; gap: 12px;
+                        margin-top: 12px; flex-wrap: wrap; }
+  .transport-controls button { padding: 6px 18px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--fg); font: inherit; cursor: pointer; }
+  .transport-controls button:hover { border-color: var(--accent); }
+  label.loop { display: inline-flex; align-items: center; gap: 6px;
+               color: var(--muted); }
+  #play-ind-label { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <span id="conn" class="dot" title="SSE connection"></span>
+  <h1>polyclav</h1>
+  <span class="chip">launchkey <b id="dev-lk">unknown</b></span>
+  <span class="chip">xr18 <b id="dev-xr">unknown</b></span>
+  <span class="chip">patch <b id="cur-patch">&mdash;</b></span>
+  <span class="spacer"></span>
+  <span class="version" id="version"></span>
+</header>
+<main>
+  <section>
+    <h2>Patches</h2>
+    <div id="patch-grid" class="grid"></div>
+  </section>
+  <section>
+    <h2>Patch params</h2>
+    <div class="row"><label for="volume">Volume</label>
+      <input id="volume" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="volume-val">&ndash;</span></div>
+    <div class="row"><label for="reverb">Reverb</label>
+      <input id="reverb" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="reverb-val">&ndash;</span></div>
+    <div class="row"><label for="compressor">Compressor</label>
+      <input id="compressor" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="compressor-val">&ndash;</span></div>
+    <div class="row" id="cutoff-row"><label for="cutoff">Cutoff</label>
+      <input id="cutoff" type="range" min="0" max="1" step="0.005" disabled>
+      <span class="val" id="cutoff-val">&ndash;</span></div>
+    <p class="hint">Cutoff is live only on native-synth patches.</p>
+  </section>
+  <section>
+    <h2>Mastering</h2>
+    <div class="row"><label for="mcomp">Comp amount</label>
+      <input id="mcomp" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="mcomp-val">&ndash;</span></div>
+    <div class="row"><label for="mceil">Ceiling</label>
+      <input id="mceil" type="range" min="-12" max="0" step="0.1">
+      <span class="val" id="mceil-val">&ndash;</span></div>
+  </section>
+  <section id="transport" hidden>
+    <h2>Audition</h2>
+    <div class="row"><label for="clip">Clip</label>
+      <select id="clip"></select><span></span></div>
+    <div class="row"><label for="tempo">Tempo</label>
+      <input id="tempo" type="range" min="0.25" max="2" step="0.05" value="1">
+      <span class="val" id="tempo-val">1.00&times;</span></div>
+    <div class="transport-controls">
+      <label class="loop"><input id="loop" type="checkbox"> loop</label>
+      <button id="play" type="button">Play</button>
+      <button id="stop" type="button">Stop</button>
+      <span id="play-ind" class="dot"></span>
+      <span id="play-ind-label">stopped</span>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+// Launchkey palette indexes we bother mapping; everything else is gray.
+const PAD_COLORS = {
+  3: "#ffffff", 5: "#ff3b30", 9: "#ff9500", 13: "#ffd60a", 25: "#34c759",
+  33: "#32ade6", 41: "#0a5cff", 49: "#af52de", 57: "#ff2d92",
+};
+
+const ui = { patches: [], current: null, clipsLoaded: false };
+
+// --- drag guard: while the user moves a control, ignore SSE echoes for
+// it (they'd yank the thumb backwards mid-drag). Cleared 400ms after the
+// last input event.
+const drag = {};
+const dragTimers = {};
+function markDrag(key) {
+  drag[key] = true;
+  clearTimeout(dragTimers[key]);
+  dragTimers[key] = setTimeout(() => { drag[key] = false; }, 400);
+}
+function dragging(key) { return !!drag[key]; }
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+async function send(method, url, body) {
+  try {
+    const r = await fetch(url, {
+      method,
+      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) console.warn(method, url, "->", r.status);
+    return r;
+  } catch (e) {
+    console.warn(method, url, "failed:", e);
+    return null;
+  }
+}
+
+// --- formatting
+const fmt2 = (v) => Number(v).toFixed(2);
+const fmtHz = (hz) => hz >= 1000 ? (hz / 1000).toFixed(2) + " kHz" : Math.round(hz) + " Hz";
+const fmtDb = (v) => Number(v).toFixed(1) + " dB";
+const fmtTempo = (t) => Number(t).toFixed(2) + "×";
+
+// --- debounced senders (100ms, one per field so they don't starve each other)
+const sendParam = {};
+for (const key of ["volume", "reverb", "compressor", "cutoff_pos"]) {
+  sendParam[key] = debounce((v) => send("PATCH", "/api/params", { [key]: v }), 100);
+}
+const sendMComp = debounce((v) => send("PATCH", "/api/mastering", { comp_amount: v }), 100);
+const sendMCeil = debounce((v) => send("PATCH", "/api/mastering", { limiter_ceiling_db: v }), 100);
+const sendTempo = debounce((t) => send("POST", "/api/player/tempo", { tempo: t }), 100);
+
+// --- rendering
+function setSlider(key, v) {           // key is also the element id
+  if (dragging(key) || typeof v !== "number") return;
+  $(key).value = v;
+  $(key + "-val").textContent = fmt2(v);
+}
+
+function displayOf(name) {
+  const p = ui.patches.find((x) => x.name === name);
+  return p ? (p.display || p.name) : name;
+}
+
+function setCurrentPatch(name) {
+  ui.current = name || null;
+  $("cur-patch").textContent = name ? displayOf(name) : "—";
+  for (const btn of document.querySelectorAll("button.patch")) {
+    btn.classList.toggle("current", btn.dataset.name === name);
+  }
+  const p = ui.patches.find((x) => x.name === name);
+  const isNative = !!p && p.type === "native";
+  $("cutoff").disabled = !isNative;
+  $("cutoff-row").classList.toggle("disabled", !isNative);
+}
+
+function renderPatches(list) {
+  ui.patches = list || [];
+  const grid = $("patch-grid");
+  grid.textContent = "";
+  for (const p of ui.patches) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "patch";
+    btn.dataset.name = p.name;
+    const dot = document.createElement("span");
+    dot.className = "padcolor";
+    dot.style.background = PAD_COLORS[p.pad_color] || "#8e8e93";
+    btn.appendChild(dot);
+    const label = document.createElement("span");
+    label.textContent = p.display || p.name;
+    btn.appendChild(label);
+    btn.addEventListener("click", () =>
+      send("POST", "/api/patches/" + encodeURIComponent(p.name) + "/select"));
+    grid.appendChild(btn);
+  }
+}
+
+function applyParams(p) {
+  if (!p) return;
+  setSlider("volume", p.volume);
+  setSlider("reverb", p.reverb);
+  setSlider("compressor", p.compressor);
+  if (!dragging("cutoff_pos") && typeof p.cutoff_pos === "number") $("cutoff").value = p.cutoff_pos;
+  if (typeof p.cutoff_hz === "number") $("cutoff-val").textContent = fmtHz(p.cutoff_hz);
+  if (!dragging("comp_amount") && typeof p.mastering_comp === "number") {
+    $("mcomp").value = p.mastering_comp;
+    $("mcomp-val").textContent = fmt2(p.mastering_comp);
+  }
+  if (!dragging("limiter_ceiling_db") && typeof p.limiter_ceiling_db === "number") {
+    $("mceil").value = p.limiter_ceiling_db;
+    $("mceil-val").textContent = fmtDb(p.limiter_ceiling_db);
+  }
+  setCurrentPatch(p.patch);
+}
+
+function setDevices(d) {
+  if (!d) return;
+  if (d.launchkey !== undefined) $("dev-lk").textContent = d.launchkey;
+  if (d.xr18 !== undefined) $("dev-xr").textContent = d.xr18;
+}
+
+// Player state updates only touch the indicator + tempo: the clip picker
+// and loop checkbox are the user's staging area for the NEXT play, so
+// SSE must not overwrite them.
+function applyPlayer(p) {
+  if (!p) return;
+  const playing = p.playing ?? p.Playing ?? false;
+  const clip = p.clip ?? p.clip_id ?? p.ClipID ?? "";
+  const tempo = p.tempo ?? p.Tempo;
+  $("play-ind").classList.toggle("on", !!playing);
+  $("play-ind-label").textContent = playing ? "playing " + clip : "stopped";
+  if (!dragging("tempo") && typeof tempo === "number") {
+    $("tempo").value = tempo;
+    $("tempo-val").textContent = fmtTempo(tempo);
+  }
+}
+
+async function initClips() {
+  if (ui.clipsLoaded) return;
+  const r = await send("GET", "/api/clips");
+  if (!r || !r.ok) { $("transport").hidden = true; return; }
+  const clips = await r.json();
+  const sel = $("clip");
+  sel.textContent = "";
+  for (const c of clips || []) {
+    const o = document.createElement("option");
+    o.value = c.id;
+    o.textContent = c.name + (c.poly_only ? " (poly patches)" : "");
+    sel.appendChild(o);
+  }
+  ui.clipsLoaded = true;
+  $("transport").hidden = false;
+}
+
+function applySnapshot(s) {
+  $("version").textContent = s.version || "";
+  setDevices(s.devices);
+  renderPatches(s.patches);
+  applyParams(s.params);
+  if (s.player) {
+    initClips();
+    applyPlayer(s.player);
+  } else {
+    $("transport").hidden = true; // degrade gracefully: no player wired
+  }
+}
+
+// --- control wiring
+function wireParamSlider(id, key, label) {
+  const el = $(id);
+  el.addEventListener("input", () => {
+    markDrag(key);
+    const v = parseFloat(el.value);
+    if (label) label(v);
+    sendParam[key](v);
+  });
+}
+wireParamSlider("volume", "volume", (v) => { $("volume-val").textContent = fmt2(v); });
+wireParamSlider("reverb", "reverb", (v) => { $("reverb-val").textContent = fmt2(v); });
+wireParamSlider("compressor", "compressor", (v) => { $("compressor-val").textContent = fmt2(v); });
+wireParamSlider("cutoff", "cutoff_pos", null); // Hz label comes back via SSE
+
+$("mcomp").addEventListener("input", () => {
+  markDrag("comp_amount");
+  const v = parseFloat($("mcomp").value);
+  $("mcomp-val").textContent = fmt2(v);
+  sendMComp(v);
+});
+$("mceil").addEventListener("input", () => {
+  markDrag("limiter_ceiling_db");
+  const v = parseFloat($("mceil").value);
+  $("mceil-val").textContent = fmtDb(v);
+  sendMCeil(v);
+});
+$("tempo").addEventListener("input", () => {
+  markDrag("tempo");
+  const t = parseFloat($("tempo").value);
+  $("tempo-val").textContent = fmtTempo(t);
+  sendTempo(t);
+});
+$("play").addEventListener("click", async () => {
+  const r = await send("POST", "/api/player", {
+    clip: $("clip").value,
+    loop: $("loop").checked,
+    tempo: parseFloat($("tempo").value),
+  });
+  if (r && r.ok) applyPlayer(await r.json());
+});
+$("stop").addEventListener("click", async () => {
+  const r = await send("POST", "/api/player/stop");
+  if (r && r.ok) applyPlayer(await r.json());
+});
+
+// --- SSE: the one live pipe. The browser's EventSource reconnects by
+// itself and the server re-sends a snapshot on every connect, so a
+// dropped daemon heals without any code here.
+function connect() {
+  const es = new EventSource("/api/events");
+  es.onopen = () => $("conn").classList.add("ok");
+  es.onerror = () => $("conn").classList.remove("ok");
+  es.addEventListener("snapshot", (ev) => applySnapshot(JSON.parse(ev.data)));
+  es.addEventListener("params", (ev) => {
+    const d = JSON.parse(ev.data) || {};
+    if (d.field === "cutoff") {
+      if (typeof d.hz === "number") $("cutoff-val").textContent = fmtHz(d.hz);
+      if (!dragging("cutoff_pos") && typeof d.pos === "number") $("cutoff").value = d.pos;
+    } else if (["volume", "reverb", "compressor"].includes(d.field)) {
+      setSlider(d.field, d.value);
+    }
+  });
+  es.addEventListener("patch", (ev) => {
+    const d = JSON.parse(ev.data) || {};
+    setCurrentPatch(d.name);
+    setSlider("volume", d.volume);
+    setSlider("reverb", d.reverb);
+    setSlider("compressor", d.compressor);
+  });
+  es.addEventListener("mastering", (ev) => {
+    const d = JSON.parse(ev.data) || {};
+    if (!dragging("comp_amount") && typeof d.comp_amount === "number") {
+      $("mcomp").value = d.comp_amount;
+      $("mcomp-val").textContent = fmt2(d.comp_amount);
+    }
+    if (!dragging("limiter_ceiling_db") && typeof d.limiter_ceiling_db === "number") {
+      $("mceil").value = d.limiter_ceiling_db;
+      $("mceil-val").textContent = fmtDb(d.limiter_ceiling_db);
+    }
+  });
+  es.addEventListener("player", (ev) => applyPlayer(JSON.parse(ev.data) || {}));
+  es.addEventListener("device", (ev) => setDevices(JSON.parse(ev.data) || {}));
+}
+connect();
+</script>
+</body>
+</html>
