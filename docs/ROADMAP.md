@@ -1,9 +1,11 @@
 # polyclav — Native Synth Roadmap (Phases 2-4)
 
 > **Phase 1 shipped.** polyclav already has a `SynthBackend::Native`
-> variant in `audio-core`: a polyphonic, Moog-flavored, pure-Rust
-> subtractive synth. Today it ships a **single-oscillator subset** with a
-> minimal hardcoded knob mapping. This document scopes **Phases 2-4** —
+> variant in `audio-core`: a Moog-flavored, pure-Rust subtractive synth.
+> Today it ships a **single-oscillator, monophonic (mono-legato) subset**
+> with a minimal hardcoded knob mapping — the 4-voice pool and poly
+> allocator are scaffolded but stubbed (Phase 3). This document scopes
+> **Phases 2-4** —
 > the full Minimoog voice, the Launchkey-native front-panel UX, and the
 > per-patch persistence model — all of which is forward-looking design for
 > code that does not yet exist.
