@@ -1,9 +1,11 @@
 //! Per-voice resonant lowpass.
 //!
 //! Phase 1 wraps `fundsp::Moog` in its `U1` variant — cutoff and Q are
-//! set via `set_cutoff_q`, audio rate input is the only port. The
-//! Huovilainen-style ladder gives the musical resonance behaviour the
-//! Minimoog is known for; we tune Q a bit below self-oscillation by
+//! set via `set_cutoff_q`, audio rate input is the only port. fundsp's
+//! ladder is the Stilson/Smith musicdsp variant with a tanh saturator on
+//! the fourth stage only (NOT Huovilainen — no per-stage tanh, no
+//! thermal-voltage scaling; see docs/ROADMAP.md Appendix A). Resonance
+//! still behaves musically; we tune Q a bit below self-oscillation by
 //! default (see `synth::voice::DEFAULT_RESONANCE`).
 //!
 //! Phase 2 may switch to the `U3` variant if we want sample-rate cutoff
@@ -14,7 +16,7 @@ use fundsp::audionode::AudioNode;
 use fundsp::moog::Moog;
 use fundsp::typenum::U1;
 
-/// 24 dB/oct resonant lowpass, Huovilainen ladder.
+/// 24 dB/oct resonant lowpass, Moog-style ladder (Stilson/Smith variant).
 pub struct MoogFilter {
     inner: Moog<f32, U1>,
 }

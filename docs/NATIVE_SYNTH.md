@@ -10,6 +10,10 @@ does today and how to play it**.
 > resonant lowpass → ADSR amp envelope. Monophonic. One factory voice
 > (`minimoog`). Great for basses and leads; not yet a full polysynth.
 
+*(Filter attribution note: earlier revisions called the ladder
+"Huovilainen." fundsp's `Moog` is actually the Stilson/Smith musicdsp
+variant with a single tanh stage — see `docs/ROADMAP.md` Appendix A.)*
+
 ---
 
 ## Why you'd use it
@@ -19,7 +23,7 @@ does today and how to play it**.
   fallback (`polyclav` even suggests it in its "no soundfonts installed"
   startup error) and as an instant bass/lead voice.
 - **It's a real analog-style signal path**, not a sample player: anti-aliased
-  saw through a Huovilainen Moog ladder filter with live cutoff control.
+  saw through a Moog-style ladder filter with live cutoff control.
 
 ## What it is, precisely (implemented today)
 
@@ -27,15 +31,15 @@ The per-voice signal chain (`audio-core/src/synth/voice.rs`):
 
 ```
 PolyBLEP saw osc ──▶ Moog 4-pole ladder LPF (24 dB/oct) ──▶ ADSR amp env ──▶ ×velocity
-   (fundsp)              (fundsp, Huovilainen)              (linear A/D/S/R)
+   (fundsp)           (fundsp, Stilson/Smith-variant)       (linear A/D/S/R)
 ```
 
 - **Oscillator** — one anti-aliased sawtooth (`fundsp::PolySaw`). One
   waveform, one oscillator, no detune/octave/sub.
   (`audio-core/src/synth/oscillator.rs`)
-- **Filter** — 24 dB/oct resonant lowpass, Huovilainen Moog ladder
-  (`fundsp::Moog`). This is the character of the voice.
-  (`audio-core/src/synth/filter.rs`)
+- **Filter** — 24 dB/oct resonant lowpass Moog-style ladder
+  (`fundsp::Moog` — Stilson/Smith-variant, single tanh stage). This is
+  the character of the voice. (`audio-core/src/synth/filter.rs`)
 - **Amp envelope** — linear ADSR, gate-driven from note on/off.
   (`audio-core/src/synth/envelope.rs`)
 - **Velocity** — note velocity scales voice output linearly (`vel / 127`),

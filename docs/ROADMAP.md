@@ -11,7 +11,9 @@
 > code that does not yet exist.
 
 The DSP foundation is **fundsp** (MIT OR Apache-2.0), chosen for its
-PolyBLEP oscillators, 4-pole Huovilainen Moog ladder (`moog_hz` / `moog_q`),
+PolyBLEP oscillators, 4-pole Moog-style ladder (`moog_hz` / `moog_q` — a
+Stilson/Smith-variant with a single tanh stage, **not** Huovilainen; see
+Appendix A),
 ADSR (`adsr_live`), saturation, and `oversample()` wrapper. `mi-plaits-dsp-rs`
 (MIT) is reserved for a possible Phase 4+ FM/wavetable expansion. Everything
 license-clean for static linking under polyclav's Apache 2.0.
@@ -202,8 +204,13 @@ synth has to match that bar:
 - **Anti-aliased oscillators** at all key ranges: `fundsp::poly_saw` etc.
   give us PolyBLEP at no measurable runtime cost. No naive
   `(phase * 2.0 - 1.0)` saw — aliasing above C6 is brutal.
-- **Filter nonlinearity**: `fundsp::moog_hz` is Huovilainen-style with
-  internal tanh saturation; resonance behaves musically.
+- **Filter nonlinearity**: `fundsp::moog_hz` is the classic Stilson/Smith
+  musicdsp ladder with a tanh saturator on the fourth stage only (verified
+  against `fundsp-0.23.0/src/moog.rs`; earlier drafts of this doc called
+  it Huovilainen, which has per-stage tanh + thermal-voltage scaling — it
+  isn't). Resonance still behaves musically, but expect self-oscillation
+  onset/character at high Q to deviate from a real Model D; the 2×
+  oversampling below and the Appendix A pivot ladder are the mitigations.
 - **Selective 2× oversampling** around the filter+saturation block —
   inside `fundsp::oversample(...)`.
 - **Slew on every modulation source** so knob twists don't zipper: each
