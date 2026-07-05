@@ -27,6 +27,61 @@ etc.).
 
 ---
 
+## 0. Design docs & cross-cutting workstreams (2026-07-04)
+
+The native synth no longer roadmaps alone. Five design docs landed
+2026-07-04; together with this document they form the project plan:
+
+| Doc | Scope | Status |
+|---|---|---|
+| `docs/CONFIGURABILITY.md` | The four hardware seams (audio, MIDI in, OSC mixer, control surface) + tiered generalization plan (Tier 0–4) | design |
+| `docs/NATIVE_SYNTH.md` | User-facing state-of-the-synth: what Phase 1 actually ships and how to play it | current |
+| `docs/WEB_UI.md` | Daemon-hosted web settings UI: REST + SSE + change hub + Next.js static export; decisions locked (no auth, :8666, laptop-first) | design |
+| `docs/VELOCITY_CURVES.md` | Per-patch velocity remapping: gamma+presets v1, control-point editor v2 | design |
+| `docs/AUDITION.md` | Keyboard-free clip player: generative diagnostic patterns, loop/tempo transport, per-setting demo buttons | design |
+
+**How they stack** (each unlocks the next):
+
+1. **Velocity curves v1 + Audition P1** — pure Go, no UI, no hardware;
+   `polyclav --play vel-ramp` makes both audible immediately.
+2. **Controls layer + change hub** — the shared refactor of `main.go`'s
+   closures that both `docs/WEB_UI.md` and `docs/CONFIGURABILITY.md`
+   Tier 3 require. Build once.
+3. **Web UI phases A–B** — dashboard + live control; becomes the
+   keyboard-free front panel for everything below.
+4. **OSC Tier 0–1** (`docs/CONFIGURABILITY.md`) — `[osc.mixer]` naming +
+   configurable/optional heartbeat.
+5. **Native synth Phases 2–4** (§1–§5 below) — with audition patterns +
+   web sliders as the hardware-free test rig for every DSP increment.
+
+### 0.1 Getting the full Moog voice working — consolidated checklist
+
+Everything required to go from today's Phase-1 subset to the §1 voice,
+ordered so each step is audible via `--play bass-riff` + web tweaking
+(no Launchkey needed until the last item):
+
+- [ ] **Runtime resonance** — expose Q alongside cutoff (atomic + FFI +
+      web slider). Smallest possible first step; proves the param plumbing.
+- [ ] **Filter ADSR (env 2)** — second envelope with env-amount into
+      cutoff; the single biggest "sounds like a Moog" win.
+- [ ] **3-osc + mixer + noise** — per-osc waveform (saw/square/pulse),
+      octave, detune; mixer levels; noise source.
+- [ ] **Glide** — one-pole frequency slew, mono modes only.
+- [ ] **Velocity → filter/amp routing** — composes with
+      `docs/VELOCITY_CURVES.md` (curve shapes input; routing decides
+      what velocity modulates).
+- [ ] **Poly + voice modes** — LRU steal, `mono_legato | mono_retrig |
+      poly` per §3.1 schema.
+- [ ] **LFO** — rate/depth, destinations pitch/cutoff/amp.
+- [ ] **Patch param persistence** — §3 `state.toml` schema (synth
+      sub-table per patch).
+- [ ] **2× oversampling around the ladder** — mitigation for the
+      Stilson/Smith tanh stage (Appendix A).
+- [ ] **Launchkey knob pages (§2)** — the hardware UX; last because the
+      web UI covers control until the device is back on the bench.
+
+---
+
 ## 1. Moog-flavored voice architecture (Patch 1: "Classic Minimoog")
 
 Phase 1 ships only a single oscillator into the ladder filter. The full
