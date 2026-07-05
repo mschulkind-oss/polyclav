@@ -36,6 +36,12 @@ type Patch struct {
 	PluginPath string           // CLAP bundle path (Type == "clap")
 	PluginID   string           // CLAP plugin id  (Type == "clap")
 	Engine     string           // Native synth engine name (Type == "native"), e.g. "minimoog"
+
+	// Per-patch velocity curve override (wins over [midi.velocity]); ""
+	// inherits the global curve. Consumed by the daemon's patch-select
+	// hook, not by this package — see docs/VELOCITY_CURVES.md.
+	VelocityCurve string  // "linear" | "soft" | "hard" | "custom"; "" = inherit
+	VelocityGamma float32 // > 0 with empty VelocityCurve implies "custom"
 }
 
 // audioBackend is the slice of internal/audio that Registry needs. The default
@@ -201,16 +207,18 @@ func FromConfig(cfgs []config.PatchConfig) []Patch {
 	out := make([]Patch, 0, len(cfgs))
 	for _, c := range cfgs {
 		out = append(out, Patch{
-			Name:       c.Name,
-			Display:    c.Display,
-			Soundfont:  c.Soundfont,
-			PadColor:   components.Color(c.PadColor),
-			GainDB:     c.GainDB,
-			Type:       c.Type,
-			PluginURI:  c.PluginURI,
-			PluginPath: c.PluginPath,
-			PluginID:   c.PluginID,
-			Engine:     c.Engine,
+			Name:          c.Name,
+			Display:       c.Display,
+			Soundfont:     c.Soundfont,
+			PadColor:      components.Color(c.PadColor),
+			GainDB:        c.GainDB,
+			Type:          c.Type,
+			PluginURI:     c.PluginURI,
+			PluginPath:    c.PluginPath,
+			PluginID:      c.PluginID,
+			Engine:        c.Engine,
+			VelocityCurve: c.VelocityCurve,
+			VelocityGamma: c.VelocityGamma,
 		})
 	}
 	return out

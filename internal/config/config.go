@@ -31,6 +31,7 @@ type Config struct {
 	Soundfont SoundfontConfig  `toml:"soundfont"`
 	MIDI      MIDIConfig       `toml:"midi"`
 	OSC       OSCConfig        `toml:"osc"`
+	Web       WebConfig        `toml:"web"`
 	Patches   []PatchConfig    `toml:"patches"`
 	Mastering *MasteringConfig `toml:"mastering"`
 }
@@ -43,16 +44,63 @@ type MIDIConfig struct {
 	// PortMatch is a substring (case-insensitive) matched against MIDI
 	// input port names. Empty = first available. Defaults to "launchkey".
 	PortMatch string `toml:"port_match"`
+	// Velocity is the global default velocity curve applied to incoming
+	// NoteOn velocities (see docs/VELOCITY_CURVES.md). The zero value
+	// (Curve == "") means linear passthrough. Per-patch overrides live on
+	// PatchConfig (velocity_curve / velocity_gamma) and win over this.
+	Velocity VelocityConfig `toml:"velocity"`
+}
+
+// VelocityConfig is the [midi.velocity] block: the global default velocity
+// curve. Curve is "", "linear", "soft", "hard", or "custom" ("" behaves as
+// linear); curve = "custom" requires Gamma > 0. OutMin/OutMax optionally
+// clamp the mapped output (0..127; the velocity package applies its own
+// 1/127 defaults when they are left at zero). Names and ranges are
+// validated in Load; internal/velocity revalidates at construction — this
+// package deliberately does not import it.
+type VelocityConfig struct {
+	Curve  string  `toml:"curve"`
+	Gamma  float32 `toml:"gamma"`
+	OutMin int     `toml:"out_min"`
+	OutMax int     `toml:"out_max"`
+}
+
+// DefaultWebListen is the default listen address for the embedded web UI.
+// Loopback is the security boundary — there is no auth layer (see
+// docs/WEB_UI.md "Security model"); binding beyond localhost is an
+// explicit, documented user opt-in.
+const DefaultWebListen = "127.0.0.1:8666"
+
+// WebConfig is the [web] block. Disabled by default — same opt-in
+// philosophy as osc mixer control (empty host = off).
+type WebConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Listen  string `toml:"listen"`
 }
 
 type OSCConfig struct {
+	// XR18 is the legacy [osc.xr18] name for the OSC mixer block, kept
+	// for back-compat (Tier 0 of docs/CONFIGURABILITY.md). All runtime
+	// code reads this field: when [osc.mixer] is present, Load copies it
+	// in here so there is exactly one source of truth downstream.
 	XR18 XR18Config `toml:"xr18"`
+	// Mixer is the preferred new name for the same block. Non-nil only
+	// while decoding — Load folds it into XR18 (mixer wins if both are
+	// set) and resets it to nil.
+	Mixer *XR18Config `toml:"mixer"`
 }
 
 type XR18Config struct {
-	Host     string        `toml:"host"`
-	Port     int           `toml:"port"`
-	Bindings []osc.Binding `toml:"bindings"`
+	Host string `toml:"host"`
+	Port int    `toml:"port"`
+	// Heartbeat is the OSC address polled to decide whether the mixer is
+	// reachable. Pointer semantics: nil (key absent) → the "/xinfo"
+	// default (X-Air status query); explicit "" → presence polling
+	// disabled, sends become fire-and-forget UDP (for generic OSC targets
+	// that won't answer X-Air pings). Resolution to the reconciler's
+	// plain string happens at wiring time, not here.
+	Heartbeat *string       `toml:"heartbeat"`
+	Bindings  []osc.Binding `toml:"bindings"`
 }
 
 // MasteringConfig configures the final-stage DSP applied after the
@@ -78,6 +126,11 @@ type PatchConfig struct {
 	PluginPath string  `toml:"plugin_path"` // CLAP bundle path (used when Type == "clap")
 	PluginID   string  `toml:"plugin_id"`   // CLAP plugin id (used when Type == "clap")
 	Engine     string  `toml:"engine"`      // Native synth engine name, e.g. "minimoog" (used when Type == "native")
+
+	// Per-patch velocity curve override — wins over [midi.velocity].
+	// VelocityGamma > 0 with no VelocityCurve implies curve = "custom".
+	VelocityCurve string  `toml:"velocity_curve"` // "linear" | "soft" | "hard" | "custom"; "" = inherit global
+	VelocityGamma float32 `toml:"velocity_gamma"` // required iff velocity_curve = "custom"
 }
 
 const (
@@ -101,6 +154,10 @@ func Defaults() *Config {
 				Port: 10024,
 			},
 		},
+		// Web UI off by default; loopback listen is the no-auth security
+		// boundary (docs/WEB_UI.md). MIDI.Velocity keeps its zero value:
+		// Curve "" = linear passthrough.
+		Web: WebConfig{Enabled: false, Listen: DefaultWebListen},
 	}
 }
 
@@ -172,7 +229,95 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("load config %q: patch %q: unknown type %q (valid: soundfont, lv2, clap, native)", path, c.Name, c.Type)
 		}
 	}
+
+	// Velocity settings — collect EVERY offender before failing so the
+	// user fixes the config in one pass (the "errors not warnings" rule,
+	// same philosophy as MissingDepsError).
+	if errs := velocityConfigErrors(cfg); len(errs) > 0 {
+		return nil, fmt.Errorf("load config %q: invalid velocity settings:\n  - %s",
+			path, strings.Join(errs, "\n  - "))
+	}
+
+	// [osc.mixer] is the preferred name for the OSC mixer block;
+	// [osc.xr18] is the legacy name kept for back-compat (Tier 0 of
+	// docs/CONFIGURABILITY.md). If [osc.mixer] was set it wins wholesale —
+	// fold it into XR18 so all downstream code keeps reading cfg.OSC.XR18.
+	if cfg.OSC.Mixer != nil {
+		cfg.OSC.XR18 = *cfg.OSC.Mixer
+		if cfg.OSC.XR18.Port == 0 {
+			// Mirror the [osc.xr18] default from Defaults() so the two
+			// spellings behave identically when port is omitted.
+			cfg.OSC.XR18.Port = 10024
+		}
+		cfg.OSC.Mixer = nil
+	}
+
+	// Web: enabling the UI with an empty listen address falls back to the
+	// loopback default rather than failing — localhost is the boundary.
+	if cfg.Web.Enabled && cfg.Web.Listen == "" {
+		cfg.Web.Listen = DefaultWebListen
+	}
+
 	return cfg, nil
+}
+
+// validVelocityCurves is the accepted set for [midi.velocity].curve and the
+// per-patch velocity_curve. "" means unset (linear for the global block;
+// "inherit the global" for a patch). Kept in sync with internal/velocity,
+// which revalidates at Curve construction — config validates names and
+// ranges locally instead of importing it.
+var validVelocityCurves = map[string]struct{}{
+	"":       {},
+	"linear": {},
+	"soft":   {},
+	"hard":   {},
+	"custom": {},
+}
+
+// velocityConfigErrors collects every velocity-related config problem —
+// global [midi.velocity] plus each patch's velocity_curve/velocity_gamma —
+// as one human-readable line per offender. Load joins them into a single
+// startup error.
+func velocityConfigErrors(cfg *Config) []string {
+	var errs []string
+
+	v := cfg.MIDI.Velocity
+	if _, ok := validVelocityCurves[v.Curve]; !ok {
+		errs = append(errs, fmt.Sprintf("midi.velocity: unknown curve %q (valid: linear, soft, hard, custom)", v.Curve))
+	}
+	if v.Curve == "custom" && v.Gamma <= 0 {
+		errs = append(errs, `midi.velocity: curve "custom" requires gamma > 0`)
+	} else if v.Gamma < 0 {
+		errs = append(errs, fmt.Sprintf("midi.velocity: gamma must be > 0 (got %g)", v.Gamma))
+	}
+	minInRange := v.OutMin >= 0 && v.OutMin <= 127
+	maxInRange := v.OutMax >= 0 && v.OutMax <= 127
+	if !minInRange {
+		errs = append(errs, fmt.Sprintf("midi.velocity: out_min must be in 0..127 (got %d)", v.OutMin))
+	}
+	if !maxInRange {
+		errs = append(errs, fmt.Sprintf("midi.velocity: out_max must be in 0..127 (got %d)", v.OutMax))
+	}
+	// 0 = unset (the velocity package fills its 1/127 defaults), so the
+	// ordering constraint only applies when both ends are explicitly set.
+	if minInRange && maxInRange && v.OutMin > 0 && v.OutMax > 0 && v.OutMin > v.OutMax {
+		errs = append(errs, fmt.Sprintf("midi.velocity: out_min (%d) must be <= out_max (%d)", v.OutMin, v.OutMax))
+	}
+
+	for i := range cfg.Patches {
+		p := &cfg.Patches[i]
+		if _, ok := validVelocityCurves[p.VelocityCurve]; !ok {
+			errs = append(errs, fmt.Sprintf("patch %q: unknown velocity_curve %q (valid: linear, soft, hard, custom)", p.Name, p.VelocityCurve))
+		}
+		if p.VelocityCurve == "custom" && p.VelocityGamma <= 0 {
+			errs = append(errs, fmt.Sprintf("patch %q: velocity_curve %q requires velocity_gamma > 0", p.Name, "custom"))
+		} else if p.VelocityGamma < 0 {
+			errs = append(errs, fmt.Sprintf("patch %q: velocity_gamma must be > 0 (got %g)", p.Name, p.VelocityGamma))
+		}
+		// VelocityGamma > 0 with no VelocityCurve is valid shorthand: it
+		// implies curve = "custom" (resolved by the velocity package).
+	}
+	return errs
 }
 
 // MissingDep is one patch's failure to resolve a runtime dependency

@@ -10,26 +10,35 @@ import (
 	"time"
 )
 
-// ReconcilerConfig configures the XR18 reachability reconciler.
+// ReconcilerConfig configures the OSC mixer reachability reconciler.
 type ReconcilerConfig struct {
-	Host          string
-	Port          int
+	Host string
+	Port int
+	// Heartbeat is the OSC address polled to detect mixer presence, e.g.
+	// "/xinfo" for Behringer X-Air. "" means presence polling is DISABLED:
+	// the target is treated as permanently reachable and sends go out
+	// fire-and-forget (for generic OSC targets that won't answer pings).
+	// There is no default here — callers wanting the X-Air behavior must
+	// pass "/xinfo" explicitly (main wiring resolves the config pointer:
+	// nil → "/xinfo", explicit "" → disabled).
+	Heartbeat     string
 	PollInterval  time.Duration
 	Timeout       time.Duration
 	MissThreshold int
 }
 
-// Reconciler tracks XR18 reachability via periodic /xinfo pings and
-// proxies sends. Send is a no-op (returning nil) while absent so the
+// Reconciler tracks OSC mixer reachability via periodic heartbeat pings
+// and proxies sends. Send is a no-op (returning nil) while absent so the
 // mapper does not spew errors when the mixer is offline.
 //
-// Outgoing /xinfo pings are built by hand here; everything else still
-// goes through the go-osc client.Send for symmetry with the rest of the
-// package.
+// Outgoing heartbeat pings are built by hand here (see oscPingPacket);
+// everything else still goes through the go-osc client.Send for symmetry
+// with the rest of the package.
 type Reconciler struct {
 	logger *slog.Logger
 	cfg    ReconcilerConfig
 	client *Client
+	ping   []byte // prebuilt heartbeat packet; nil when polling is disabled
 
 	state atomic.Int32 // 0 = absent, 1 = reachable
 
@@ -48,11 +57,20 @@ func NewReconciler(logger *slog.Logger, cfg ReconcilerConfig) *Reconciler {
 	if cfg.MissThreshold == 0 {
 		cfg.MissThreshold = 3
 	}
-	return &Reconciler{
+	r := &Reconciler{
 		logger: logger,
 		cfg:    cfg,
 		client: NewClient(cfg.Host, cfg.Port),
 	}
+	if cfg.Heartbeat != "" {
+		r.ping = oscPingPacket(cfg.Heartbeat)
+	} else if cfg.Host != "" {
+		// Heartbeat disabled but a target is configured: nothing will ever
+		// probe, so nothing can flip the state — pin it to reachable from
+		// construction and Send always forwards (fire-and-forget UDP).
+		r.state.Store(1)
+	}
+	return r
 }
 
 // State returns "absent" or "reachable" for log lines.
@@ -71,18 +89,38 @@ func (r *Reconciler) Send(addr string, args ...any) error {
 	return r.client.Send(addr, args...)
 }
 
-// /xinfo OSC packet: address "/xinfo" padded + type-tag ",".
-var xinfoPacket = []byte{'/', 'x', 'i', 'n', 'f', 'o', 0, 0, ',', 0, 0, 0}
+// oscPingPacket builds a minimal argument-less OSC message for the given
+// address: the address string NUL-terminated and padded to a 4-byte
+// boundary, followed by the type-tag string "," padded the same way.
+// Invariant: oscPingPacket("/xinfo") is byte-identical to the hand-rolled
+// /xinfo literal historically sent to X-Air mixers.
+func oscPingPacket(addr string) []byte {
+	n := len(addr) + 1 // address bytes + mandatory NUL terminator
+	pad := (4 - n%4) % 4
+	buf := make([]byte, n+pad+4) // padded address + ",\x00\x00\x00" type tag
+	copy(buf, addr)
+	buf[n+pad] = ','
+	return buf
+}
 
-// Run binds an ephemeral UDP socket and pings /xinfo every PollInterval.
-// Returns nil on ctx cancel.
+// Run binds an ephemeral UDP socket and pings the heartbeat address every
+// PollInterval. Returns nil on ctx cancel.
 func (r *Reconciler) Run(ctx context.Context) error {
 	// No host configured = OSC mixer control disabled. Skip all network
-	// activity (no UDP bind, no /xinfo polling) so a fresh install on
+	// activity (no UDP bind, no heartbeat polling) so a fresh install on
 	// someone else's LAN never pings a stranger's address. State stays
 	// "absent", so Send remains a safe no-op.
 	if r.cfg.Host == "" {
 		r.logger.Info("xr18 OSC disabled (no host configured)")
+		return nil
+	}
+
+	// Host configured but heartbeat disabled (heartbeat = "" in config):
+	// no UDP socket, no probes. State was pinned to reachable at
+	// construction, so every Send forwards unconditionally.
+	if r.cfg.Heartbeat == "" {
+		r.logger.Info("mixer heartbeat disabled — sends are fire-and-forget",
+			"host", r.cfg.Host, "port", r.cfg.Port)
 		return nil
 	}
 
@@ -98,7 +136,8 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	}
 
 	r.logger.Info("xr18 reconciler start", "host", r.cfg.Host, "port", r.cfg.Port,
-		"poll", r.cfg.PollInterval, "timeout", r.cfg.Timeout, "miss_threshold", r.cfg.MissThreshold)
+		"heartbeat", r.cfg.Heartbeat, "poll", r.cfg.PollInterval,
+		"timeout", r.cfg.Timeout, "miss_threshold", r.cfg.MissThreshold)
 
 	r.probe(udp, target)
 
@@ -116,7 +155,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 }
 
 func (r *Reconciler) probe(udp *net.UDPConn, target *net.UDPAddr) {
-	if _, err := udp.WriteToUDP(xinfoPacket, target); err != nil {
+	if _, err := udp.WriteToUDP(r.ping, target); err != nil {
 		r.recordMiss()
 		return
 	}

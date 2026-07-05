@@ -71,12 +71,66 @@ path = "~/.local/share/polyclav/soundfonts/YDP-GrandPiano-SF2-20160804/YDP-Grand
 # Set "" to open the first available input regardless of name.
 port_match = "launchkey"
 
+# [midi.velocity]
+# Global velocity curve — reshapes incoming NoteOn velocity before it reaches
+# the synth. Omit the whole block for a straight-through linear response.
+# On layered soundfonts (e.g. Salamander) this changes WHICH sample layers
+# trigger, not just loudness — a "soft" curve reaches the forte layers with
+# less key force, timbre change included. See docs/VELOCITY_CURVES.md.
+#
+#   curve   — one of:
+#               "soft"   easier to reach loud layers (light touch, gamma 0.6)
+#               "linear" untouched 1:1 mapping (the default)
+#               "hard"   more key force needed for loud layers (gamma 1.6)
+#               "custom" supply your own gamma below
+#   gamma   — required iff curve = "custom". <1.0 plays softer-touch/louder,
+#             >1.0 needs more force; the presets above are just named gammas.
+#   out_min — optional output clamps (0..127, out_min <= out_max).
+#   out_max   Defaults 1 / 127 when unset.
+#
+# curve   = "soft"
+# gamma   = 0.8            # only with curve = "custom"
+# out_min = 1
+# out_max = 127
+#
+# Per-patch override — wins over this block. Add to any [[patches]] entry:
+#   velocity_curve = "soft"      # a preset, or "custom" + velocity_gamma
+#   velocity_gamma = 0.7         # gamma alone implies velocity_curve = "custom"
+# (See the salamander patch below for a commented example.)
+
+# [web]
+# Built-in web UI (status dashboard, controls, config editing — see
+# docs/WEB_UI.md). OFF by default, same opt-in philosophy as [osc.xr18].host.
+#
+# There is NO authentication: binding to localhost IS the security boundary.
+# The default listen address below only accepts connections from this machine.
+#
+# enabled = true
+# listen  = "127.0.0.1:8666"
+#
+# To reach the UI from other devices on your LAN, listen on all interfaces:
+#   listen = "0.0.0.0:8666"
+# That exposes an unauthenticated control surface to everyone on your
+# network — an explicit opt-in, on your own network, at your own risk.
+
 [osc.xr18]
+# `[osc.mixer]` is the preferred new name for this block — same fields, and
+# it wins if both are present. `[osc.xr18]` remains supported as the legacy
+# spelling (the binding model was never really XR18-specific; it can drive
+# any OSC target).
+#
 # Behringer X-Air OSC speaks UDP. XR18 default port is 10024.
 # OSC mixer control is OFF until you set a host. Uncomment and set this to
 # YOUR X-Air mixer's IP (192.0.2.6 is just a placeholder showing the format).
 # host = "192.0.2.6"
 port = 10024
+
+# Presence polling: polyclav pings this OSC address to decide whether the
+# mixer is reachable (sends are suppressed while it's absent). Default is
+# "/xinfo", the X-Air status query. For generic OSC targets that won't
+# answer X-Air pings (lighting desks, Reaper, TouchOSC, other DAWs), set ""
+# to disable polling entirely — sends then go out fire-and-forget.
+# heartbeat = "/xinfo"
 
 # Bindings map a single MIDI control event to an OSC dispatch. Lookup is
 # keyed by (source_kind, channel, controller); NoteOff is ignored to avoid
@@ -170,6 +224,11 @@ transform   = "press"
 #               to level-match patches against each other (a soft EP and
 #               a loud grand can easily differ by 6–12 dB). Range roughly
 #               -24..+24; 0 = unity. Clamped to [0, 8] linear in Rust.
+#   velocity_curve — optional per-patch velocity override; wins over the
+#               global [midi.velocity] block. "soft" | "linear" | "hard" |
+#               "custom" (the latter needs velocity_gamma).
+#   velocity_gamma — custom gamma; setting it alone implies
+#               velocity_curve = "custom".
 # ---------------------------------------------------------------------------
 
 [[patches]]
@@ -185,6 +244,7 @@ display   = "Salamander"
 soundfont = "~/.local/share/polyclav/soundfonts/SalamanderGrandPianoV3_44.1khz16bit/SalamanderGrandPianoV3.sfz"
 pad_color = 41           # vibrant blue
 gain_db   = 0.0
+# velocity_curve = "soft"  # per-patch velocity override (or velocity_gamma = 0.7)
 
 [[patches]]
 name      = "wurlitzer"

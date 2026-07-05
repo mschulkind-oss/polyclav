@@ -220,7 +220,8 @@ func TestSelectIndexBounds(t *testing.T) {
 func TestFromConfig(t *testing.T) {
 	cfgs := []config.PatchConfig{
 		{Name: "a", Display: "A", Soundfont: "/path/a.sf2", PadColor: 3},
-		{Name: "b", Display: "B", Soundfont: "/path/b.sfz", PadColor: 41},
+		{Name: "b", Display: "B", Soundfont: "/path/b.sfz", PadColor: 41,
+			VelocityCurve: "custom", VelocityGamma: 0.7},
 	}
 
 	ps := FromConfig(cfgs)
@@ -234,9 +235,19 @@ func TestFromConfig(t *testing.T) {
 	if ps[0].PadColor != components.Color(3) {
 		t.Errorf("expected patch[0].PadColor %d, got %d", 3, ps[0].PadColor)
 	}
+	if ps[0].VelocityCurve != "" || ps[0].VelocityGamma != 0 {
+		t.Errorf("patch[0] should carry zero velocity override, got curve=%q gamma=%g",
+			ps[0].VelocityCurve, ps[0].VelocityGamma)
+	}
 
 	if ps[1].PadColor != components.ColorVibrantBlue {
 		t.Errorf("expected patch[1].PadColor %d (VibrantBlue), got %d", components.ColorVibrantBlue, ps[1].PadColor)
+	}
+	if ps[1].VelocityCurve != "custom" {
+		t.Errorf("expected patch[1].VelocityCurve %q, got %q", "custom", ps[1].VelocityCurve)
+	}
+	if ps[1].VelocityGamma != 0.7 {
+		t.Errorf("expected patch[1].VelocityGamma 0.7, got %g", ps[1].VelocityGamma)
 	}
 
 	psNil := FromConfig(nil)
