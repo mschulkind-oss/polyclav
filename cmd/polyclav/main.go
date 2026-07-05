@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,13 +18,17 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/audio"
 	"github.com/mschulkind-oss/polyclav/internal/bootstrap"
 	"github.com/mschulkind-oss/polyclav/internal/config"
+	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 	"github.com/mschulkind-oss/polyclav/internal/midi"
 	"github.com/mschulkind-oss/polyclav/internal/osc"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
+	"github.com/mschulkind-oss/polyclav/internal/player"
 	"github.com/mschulkind-oss/polyclav/internal/state"
 	"github.com/mschulkind-oss/polyclav/internal/supervisor"
+	"github.com/mschulkind-oss/polyclav/internal/velocity"
+	"github.com/mschulkind-oss/polyclav/internal/web"
 )
 
 // defaultSoundfontDest is the soundfont root used by bootstrap and by
@@ -52,6 +55,9 @@ func main() {
 
 	configPath := flag.String("config", "", "path to polyclav.toml (default: $XDG_CONFIG_HOME/polyclav/polyclav.toml)")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	playClip := flag.String("play", "", "audition clip id to play at startup (see docs/AUDITION.md; empty = none)")
+	playLoop := flag.Bool("loop", false, "loop the --play clip until shutdown")
+	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
 	flag.Parse()
 
 	if *showVersion {
@@ -102,9 +108,25 @@ func main() {
 	if xr18Host == "" {
 		xr18Host = "(disabled)"
 	}
+	// Same treatment for the web UI (off by default) and the global
+	// velocity curve. The curve resolved here is the [midi.velocity]
+	// default only — per-patch overrides are re-resolved on every patch
+	// change below; Load already validated the settings, so an error is
+	// unexpected.
+	webListen := "(disabled)"
+	if cfg.Web.Enabled {
+		webListen = cfg.Web.Listen
+	}
+	velLabel := "linear"
+	if curve, verr := resolveVelocity(cfg, nil); verr != nil {
+		logger.Warn("resolve global velocity curve", "err", verr)
+	} else {
+		velLabel = curve.Describe()
+	}
 	logger.Info("config loaded", "path", path,
 		"xr18_host", xr18Host, "xr18_port", cfg.OSC.XR18.Port,
-		"soundfont", cfg.Soundfont.Path)
+		"soundfont", cfg.Soundfont.Path,
+		"web", webListen, "velocity", velLabel)
 
 	// Graceful sfizz degradation: if libsfizz isn't available, .sfz patches
 	// can't play. Warn by name so it's obvious why those pads are silent —
@@ -133,18 +155,50 @@ func main() {
 		logger.Error("audio start", "err", err)
 	}
 
+	registry := patches.New(patches.FromConfig(cfg.Patches))
+	hub := controls.NewHub()
+	ctl := controls.New(logger, audioBackend{}, registry, stateStore, hub)
+
 	var compAmount float32 = 0.5
 	var limiterCeilingDB float32 = -0.3
 	if cfg.Mastering != nil {
 		compAmount = cfg.Mastering.CompAmount
 		limiterCeilingDB = cfg.Mastering.LimiterCeilingDB
 	}
-	audio.SetMasteringCompressor(compAmount)
-	audio.SetLimiterCeilingDB(limiterCeilingDB)
+	ctl.InitMastering(compAmount, limiterCeilingDB)
 
-	registry := patches.New(patches.FromConfig(cfg.Patches))
+	// pushSynth is the synth fork of the MIDI funnel — keyboard and
+	// audition-player events both land here. The velocity curve applies to
+	// NoteOn only and ONLY on this fork; the OSC mapper must keep seeing
+	// raw velocities (docs/VELOCITY_CURVES.md).
+	pushSynth := func(ev midi.Event) {
+		switch ev.Kind {
+		case midi.NoteOn:
+			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOn, Channel: ev.Channel, Note: ev.Note, Vel: ctl.ApplyVelocity(ev.Vel)})
+		case midi.NoteOff:
+			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOff, Channel: ev.Channel, Note: ev.Note})
+		case midi.ControlChange:
+			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDIControlChange, Channel: ev.Channel, CC: ev.CC, Value: ev.Value})
+		case midi.PitchBend:
+			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDIPitchBend, Channel: ev.Channel, Bend: ev.Bend})
+		}
+	}
+
+	// Audition player (docs/AUDITION.md): clip events go down the synth
+	// fork only — never mapper.Dispatch, so clip notes can't fire mixer
+	// bindings. Transport changes bridge onto the hub for the web UI.
+	plr := player.New(logger, pushSynth)
+	plr.OnChange(func(st player.State) {
+		hub.Publish(controls.Change{Type: "player", Data: map[string]any{
+			"playing": st.Playing,
+			"clip":    st.ClipID,
+			"loop":    st.Loop,
+			"tempo":   st.Tempo,
+		}})
+	})
+
 	if len(registry.All()) > 0 {
-		if err := registry.SelectIndex(0); err != nil {
+		if err := ctl.SelectPatchIndex(0); err != nil {
 			logger.Warn("patch select initial", "err", err)
 		}
 		// If state.toml recorded a previously active patch and it still exists,
@@ -159,19 +213,58 @@ func main() {
 				}
 			}
 			if found {
-				if err := registry.Select(initialState.CurrentPatch); err != nil {
+				if err := ctl.SelectPatch(initialState.CurrentPatch); err != nil {
 					logger.Warn("patch select from state", "name", initialState.CurrentPatch, "err", err)
 				}
 			}
 		}
+		// SelectPatch/SelectPatchIndex restore the patch's saved knob
+		// values and record it as current in the state store; only the
+		// log line remains main's job.
 		if cur := registry.Current(); cur != nil {
 			logger.Info("initial patch selected", "name", cur.Name, "soundfont", cur.Soundfont, "gain_db", cur.GainDB)
-			// Apply the restored knob state for this patch (or defaults if absent).
-			k := stateStore.PatchKnob(cur.Name)
-			audio.SetMasterVolume(k.Volume)
-			audio.SetReverb(k.Reverb)
-			audio.SetCompressor(k.Compressor)
-			stateStore.SetCurrentPatch(cur.Name)
+		}
+	}
+
+	// installVelocity resolves the curve for the given patch (per-patch
+	// override or global default) and installs it at the funnel point.
+	// Config was validated at Load, so an error here is unexpected: warn
+	// and keep the previous curve rather than silently going linear.
+	installVelocity := func(p *patches.Patch) {
+		curve, err := resolveVelocity(cfg, p)
+		if err != nil {
+			logger.Warn("velocity curve resolve", "err", err)
+			return
+		}
+		ctl.SetVelocityRemap(curve.Apply, curve.Describe())
+	}
+	installVelocity(registry.Current())
+	logger.Info("velocity curve installed", "curve", ctl.VelocityLabel())
+
+	// Re-resolve on every patch change, whatever surface caused it (pads,
+	// web selects, future OSC). SetVelocityRemap publishes type "velocity",
+	// which this subscriber ignores — no feedback loop.
+	velCh, velCancel := hub.Subscribe(16)
+	defer velCancel()
+	go func() {
+		for ch := range velCh {
+			if ch.Type == "patch" {
+				installVelocity(registry.Current())
+			}
+		}
+	}()
+
+	// --play: start auditioning right after the initial patch is loaded.
+	// An unknown clip id refuses to boot (exit 1 with the library listed)
+	// — a typo should not produce a silent daemon.
+	if *playClip != "" {
+		if err := plr.Play(*playClip, *playLoop, *playTempo); err != nil {
+			fmt.Fprintf(os.Stderr, "polyclav: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Available clips:")
+			for _, c := range plr.Clips() {
+				fmt.Fprintf(os.Stderr, "  %-14s %s\n", c.ID, c.Name)
+			}
+			os.Exit(1)
 		}
 	}
 
@@ -196,31 +289,15 @@ func main() {
 	}
 
 	onMIDIEvent := func(ev midi.Event) {
-		switch ev.Kind {
-		case midi.NoteOn:
-			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOn, Channel: ev.Channel, Note: ev.Note, Vel: ev.Vel})
-		case midi.NoteOff:
-			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOff, Channel: ev.Channel, Note: ev.Note})
-		case midi.ControlChange:
-			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDIControlChange, Channel: ev.Channel, CC: ev.CC, Value: ev.Value})
-		case midi.PitchBend:
-			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDIPitchBend, Channel: ev.Channel, Bend: ev.Bend})
-		}
+		pushSynth(ev)
 		if mapper != nil {
+			// The mapper always sees the RAW event — OSC bindings key on
+			// unremapped velocity (docs/VELOCITY_CURVES.md).
 			mapper.Dispatch(ev)
 		}
 	}
 
 	knobLabels := map[int]string{1: "Volume", 2: "Reverb", 3: "Comp", 4: "Cutoff"}
-
-	// Phase 1 native-synth knob-4 cutoff override. The knob is delta-driven
-	// (Launchkey relative mode), so we track a 0..1 position in-process and
-	// map it onto a log-tapered Hz range when knob 4 turns. State.toml
-	// persistence is Phase 2 work (see docs/ROADMAP.md).
-	// Default 0.5 ≈ ~630 Hz on the log curve — open enough that the first
-	// note rings, leaving plenty of room to sweep up and down.
-	var nativeCutoffPos float32 = 0.5
-	audio.SetNativeCutoffHz(cutoffHzFromPos(nativeCutoffPos))
 
 	var (
 		knobMu           sync.Mutex
@@ -239,49 +316,42 @@ func main() {
 			if !ok {
 				return // unmapped knobs 4..8 still don't update anything
 			}
-			cur := registry.Current()
-			if cur == nil {
-				return
-			}
-			knob := stateStore.PatchKnob(cur.Name)
 			const step = 1.0 / 127.0
 			delta := float32(e.Delta) * step
 
-			var newVal float32
-			var field string
+			// The controls layer owns clamp → audio apply → state persist →
+			// hub publish; main keeps only the Launchkey screen feedback.
+			// ok == false means no patch is selected (or, for knob 4, the
+			// current patch is not a native synth — Phase 2 folds cutoff
+			// into the multi-page knob system, see docs/ROADMAP.md).
 			var displayValue string
 			switch e.Index {
 			case 1:
-				newVal = clamp01(knob.Volume + delta)
-				audio.SetMasterVolume(newVal)
-				field = "volume"
-			case 2:
-				newVal = clamp01(knob.Reverb + delta)
-				audio.SetReverb(newVal)
-				field = "reverb"
-			case 3:
-				newVal = clamp01(knob.Compressor + delta)
-				audio.SetCompressor(newVal)
-				field = "compressor"
-			case 4:
-				// Phase 1 hardcoded knob 4 → native synth cutoff. Only
-				// active when the current patch is native; other patch
-				// types fall through to the unmapped branch. Phase 2
-				// will fold this into the multi-page knob system
-				// (see docs/ROADMAP.md).
-				if cur.Type != "native" {
+				v, ok := ctl.AdjustVolume(delta)
+				if !ok {
 					return
 				}
-				nativeCutoffPos = clamp01(nativeCutoffPos + delta)
-				hz := cutoffHzFromPos(nativeCutoffPos)
-				audio.SetNativeCutoffHz(hz)
+				displayValue = fmt.Sprintf("%d%%", int(v*100+0.5))
+			case 2:
+				v, ok := ctl.AdjustReverb(delta)
+				if !ok {
+					return
+				}
+				displayValue = fmt.Sprintf("%d%%", int(v*100+0.5))
+			case 3:
+				v, ok := ctl.AdjustCompressor(delta)
+				if !ok {
+					return
+				}
+				displayValue = fmt.Sprintf("%d%%", int(v*100+0.5))
+			case 4:
+				hz, ok := ctl.AdjustCutoff(delta)
+				if !ok {
+					return
+				}
 				displayValue = formatCutoffHz(hz)
 			default:
 				return
-			}
-			if field != "" {
-				stateStore.UpdatePatchKnob(cur.Name, field, newVal)
-				displayValue = fmt.Sprintf("%d%%", int(newVal*100+0.5))
 			}
 
 			if err := sup.Launchkey().SetDisplayText(label, displayValue); err != nil {
@@ -298,23 +368,27 @@ func main() {
 			if e.Row != 0 || !e.Pressed {
 				return
 			}
-			if err := registry.SelectIndex(e.Col); err != nil {
+			// SelectPatchIndex restores the patch's saved knob values,
+			// records it as current, and publishes the change.
+			if err := ctl.SelectPatchIndex(e.Col); err != nil {
 				logger.Warn("patch select", "col", e.Col, "err", err)
 				return
 			}
 			if cur := registry.Current(); cur != nil {
 				logger.Info("patch selected", "col", e.Col, "name", cur.Name, "soundfont", cur.Soundfont, "gain_db", cur.GainDB)
-				// Restore this patch's saved knob values (Defaults() if never set).
-				k := stateStore.PatchKnob(cur.Name)
-				audio.SetMasterVolume(k.Volume)
-				audio.SetReverb(k.Reverb)
-				audio.SetCompressor(k.Compressor)
-				stateStore.SetCurrentPatch(cur.Name)
 				if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
 					logger.Warn("launchkey set display text", "err", err)
 				}
 			}
 		}
+	}
+
+	// Heartbeat pointer semantics (config.XR18Config.Heartbeat): nil (key
+	// absent) → the X-Air "/xinfo" default; explicit "" → presence polling
+	// disabled, sends become fire-and-forget UDP.
+	heartbeat := "/xinfo"
+	if cfg.OSC.XR18.Heartbeat != nil {
+		heartbeat = *cfg.OSC.XR18.Heartbeat
 	}
 
 	supCfg := supervisor.Config{
@@ -329,6 +403,7 @@ func main() {
 		XR18: osc.ReconcilerConfig{
 			Host:          cfg.OSC.XR18.Host,
 			Port:          cfg.OSC.XR18.Port,
+			Heartbeat:     heartbeat,
 			PollInterval:  5 * time.Second,
 			Timeout:       3 * time.Second,
 			MissThreshold: 3,
@@ -336,6 +411,29 @@ func main() {
 	}
 	sup = supervisor.New(logger, supCfg)
 	mapper = osc.NewMapper(sup.XR18(), logger, cfg.OSC.XR18.Bindings)
+
+	// Web UI — started only after the supervisor exists, because the SSE
+	// snapshot reports device reconciler states through Deps.Devices. A
+	// serve failure (port in use, bad listen addr) is logged, not fatal:
+	// the hardware surfaces keep working without the browser one.
+	if cfg.Web.Enabled {
+		srv := web.New(web.Deps{
+			Logger:     logger,
+			Controls:   ctl,
+			Hub:        hub,
+			Registry:   registry,
+			Player:     plr,
+			Devices:    sup,
+			ConfigTOML: func() ([]byte, error) { return os.ReadFile(path) },
+			Version:    buildVersion(),
+		})
+		logger.Info("web ui starting", "url", "http://"+cfg.Web.Listen+"/")
+		go func() {
+			if err := srv.Serve(ctx, cfg.Web.Listen); err != nil {
+				logger.Error("web server", "err", err)
+			}
+		}()
+	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- sup.Run(ctx) }()
@@ -357,28 +455,55 @@ func main() {
 		logger.Warn("supervisor did not exit within 2s")
 	}
 
+	// Stop the player before the audio engine so its NoteOff hygiene
+	// (releasing anything still ringing) lands on a live engine.
+	plr.Stop()
 	audio.Stop()
 	logger.Info("shutdown complete")
 	os.Exit(0)
 }
 
-func clamp01(v float32) float32 {
-	if v < 0 {
-		return 0
+// audioBackend adapts the internal/audio package functions to the
+// controls.Audio seam (mirrors realAudioBackend in internal/patches).
+type audioBackend struct{}
+
+var _ controls.Audio = audioBackend{}
+
+func (audioBackend) SetMasterVolume(v float32)        { audio.SetMasterVolume(v) }
+func (audioBackend) SetReverb(v float32)              { audio.SetReverb(v) }
+func (audioBackend) SetCompressor(v float32)          { audio.SetCompressor(v) }
+func (audioBackend) SetNativeCutoffHz(hz float32)     { audio.SetNativeCutoffHz(hz) }
+func (audioBackend) SetMasteringCompressor(v float32) { audio.SetMasteringCompressor(v) }
+func (audioBackend) SetLimiterCeilingDB(db float32)   { audio.SetLimiterCeilingDB(db) }
+
+// resolveVelocity picks the velocity curve for patch p: the per-patch
+// override fields win over the global [midi.velocity] block, and a patch
+// VelocityGamma > 0 with no VelocityCurve name is the "custom" shorthand
+// (docs/VELOCITY_CURVES.md). p == nil (no patch selected) resolves the
+// global curve. The global OutMin/OutMax were range-checked (0..127) at
+// config.Load, so the uint8 conversions are lossless.
+func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, error) {
+	if p != nil && (p.VelocityCurve != "" || p.VelocityGamma > 0) {
+		name := p.VelocityCurve
+		if name == "" {
+			name = "custom"
+		}
+		return velocity.New(name, p.VelocityGamma, 0, 0)
 	}
-	if v > 1 {
-		return 1
-	}
-	return v
+	v := cfg.MIDI.Velocity
+	return velocity.New(v.Curve, v.Gamma, uint8(v.OutMin), uint8(v.OutMax))
 }
 
-// cutoffHzFromPos maps a 0..1 knob position onto a log-tapered Hz range
-// (20 Hz – 20 kHz). 0 -> 20 Hz, 1 -> 20 kHz, 0.5 -> ~632 Hz. Matches the
-// taper described in docs/ROADMAP.md.
-func cutoffHzFromPos(pos float32) float32 {
-	pos = clamp01(pos)
-	// 20 Hz * (1000)^pos; 1000 = 20000/20.
-	return float32(20.0 * math.Pow(1000.0, float64(pos)))
+// buildVersion returns the main module's version from build info, or
+// "devel" for untagged/dev builds — the short form used by the web UI's
+// status payload (printVersion keeps the long human-readable dump).
+func buildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "devel"
 }
 
 // formatCutoffHz renders a cutoff Hz for the Launchkey screen — kHz with
