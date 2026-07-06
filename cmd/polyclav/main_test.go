@@ -3,10 +3,33 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 )
+
+// TestNewRateGate pins the velocity monitor's throttle contract: extra
+// calls inside the gap are dropped (never queued), and the gate reopens
+// after the gap elapses.
+func TestNewRateGate(t *testing.T) {
+	gate := newRateGate(50 * time.Millisecond)
+	if !gate() {
+		t.Fatal("first call must pass")
+	}
+	for i := 0; i < 10; i++ {
+		if gate() {
+			t.Fatal("calls inside the gap must be dropped")
+		}
+	}
+	time.Sleep(70 * time.Millisecond)
+	if !gate() {
+		t.Fatal("call after the gap must pass")
+	}
+	if gate() {
+		t.Fatal("the pass must re-arm the gate")
+	}
+}
 
 // TestResolveVelocity covers the precedence rules from
 // docs/VELOCITY_CURVES.md: per-patch override fields win over the global

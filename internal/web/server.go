@@ -15,6 +15,8 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/controls"
@@ -30,9 +32,9 @@ type DeviceStates interface {
 	XR18State() string
 }
 
-// Deps carries everything the server needs. Logger, Player, Devices and
-// ConfigTOML are optional (see field comments); Controls, Hub and
-// Registry are required.
+// Deps carries everything the server needs. Logger, Player, Devices,
+// ConfigTOML and ConfigPath are optional (see field comments); Controls,
+// Hub and Registry are required.
 type Deps struct {
 	Logger     *slog.Logger
 	Controls   *controls.Controls
@@ -40,7 +42,8 @@ type Deps struct {
 	Registry   controls.Registry
 	Player     *player.Player         // may be nil → player endpoints return 503
 	Devices    DeviceStates           // may be nil → device states report "unknown"
-	ConfigTOML func() ([]byte, error) // reads polyclav.toml verbatim; may be nil → /api/config returns 404
+	ConfigTOML func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
+	ConfigPath string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
 	Version    string
 }
 
@@ -49,6 +52,14 @@ type Deps struct {
 type Server struct {
 	deps Deps
 	mux  *http.ServeMux
+
+	// velMu guards the session-velocity bookkeeping behind GET
+	// /api/velocity's "source" field: the Describe() label of the last
+	// curve installed by PUT /api/velocity, and whether that PUT also
+	// saved it to the config file (see handleVelocityGet).
+	velMu           sync.Mutex
+	sessionVelLabel string
+	sessionVelSaved bool
 }
 
 // New builds a Server over deps and registers all routes. A nil Logger
@@ -76,6 +87,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/synth", s.handleSynth)
 	s.mux.HandleFunc("PATCH /api/mastering", s.handleMastering)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
+	s.mux.HandleFunc("PUT /api/config", s.handleConfigPut)
+	s.mux.HandleFunc("GET /api/velocity", s.handleVelocityGet)
+	s.mux.HandleFunc("PUT /api/velocity", s.handleVelocityPut)
 	s.mux.HandleFunc("GET /api/clips", s.handleClips)
 	s.mux.HandleFunc("POST /api/player", s.handlePlayerPlay)
 	s.mux.HandleFunc("POST /api/player/stop", s.handlePlayerStop)
@@ -590,11 +604,15 @@ func (s *Server) handleMastering(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	if s.deps.ConfigTOML == nil {
+	read := s.deps.ConfigTOML
+	if read == nil && s.deps.ConfigPath != "" {
+		read = func() ([]byte, error) { return os.ReadFile(s.deps.ConfigPath) }
+	}
+	if read == nil {
 		writeErr(w, http.StatusNotFound, "config source not available")
 		return
 	}
-	b, err := s.deps.ConfigTOML()
+	b, err := read()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "read config: "+err.Error())
 		return

@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -173,10 +174,28 @@ func main() {
 	// audition-player events both land here. The velocity curve applies to
 	// NoteOn only and ONLY on this fork; the OSC mapper must keep seeing
 	// raw velocities (docs/VELOCITY_CURVES.md).
+	//
+	// Every NoteOn also feeds the web UI's velocity monitor
+	// (docs/VELOCITY_CURVES.md "Live tweaking"): a "note" hub change
+	// carrying the raw and remapped velocity, throttled by noteGate to
+	// ~30 events/s. Extras are dropped, never queued — the monitor is a
+	// visualization, and it must never back-pressure the MIDI path.
+	noteGate := newRateGate(33 * time.Millisecond)
 	pushSynth := func(ev midi.Event) {
 		switch ev.Kind {
 		case midi.NoteOn:
-			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOn, Channel: ev.Channel, Note: ev.Note, Vel: ctl.ApplyVelocity(ev.Vel)})
+			// Raw velocity is captured BEFORE the curve so the monitor
+			// plots true (in, out) pairs.
+			raw := ev.Vel
+			applied := ctl.ApplyVelocity(raw)
+			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOn, Channel: ev.Channel, Note: ev.Note, Vel: applied})
+			if noteGate() {
+				hub.Publish(controls.Change{Type: "note", Data: map[string]any{
+					"in":   int(raw),
+					"out":  int(applied),
+					"note": int(ev.Note),
+				}})
+			}
 		case midi.NoteOff:
 			audio.PushMIDI(audio.MIDIEvent{Kind: audio.MIDINoteOff, Channel: ev.Channel, Note: ev.Note})
 		case midi.ControlChange:
@@ -476,6 +495,7 @@ func main() {
 			Player:     plr,
 			Devices:    sup,
 			ConfigTOML: func() ([]byte, error) { return os.ReadFile(path) },
+			ConfigPath: path,
 			Version:    buildVersion(),
 		})
 		logger.Info("web ui starting", "url", "http://"+cfg.Web.Listen+"/")
@@ -535,6 +555,25 @@ func (audioBackend) SetNativeOsc(idx int, wave string, octave int, detuneCents, 
 }
 func (audioBackend) SetNativeNoise(level float32) { audio.SetNativeNoise(level) }
 func (audioBackend) SetNativeGlide(s float32)     { audio.SetNativeGlide(s) }
+
+// newRateGate returns a non-blocking rate limiter: each call reports
+// whether the caller may proceed, allowing at most one pass per minGap.
+// Extra calls are dropped, never queued — the gate exists to throttle the
+// velocity monitor's hub traffic without ever delaying a NoteOn. Safe for
+// concurrent use (pushSynth runs on both the MIDI callback goroutine and
+// the audition player's scheduler); the CAS means a race between two
+// callers admits exactly one.
+func newRateGate(minGap time.Duration) func() bool {
+	var last atomic.Int64
+	return func() bool {
+		now := time.Now().UnixNano()
+		prev := last.Load()
+		if now-prev < int64(minGap) {
+			return false
+		}
+		return last.CompareAndSwap(prev, now)
+	}
+}
 
 // newPatchFollower returns a level-triggered change handler for hub
 // subscribers: each call compares the current patch's name against the

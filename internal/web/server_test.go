@@ -1114,7 +1114,7 @@ func TestIndexServed(t *testing.T) {
 		t.Errorf("content-type: expected text/html, got %q", ct)
 	}
 	body := rec.Body.String()
-	for _, marker := range []string{"polyclav", "/api/events", "patch-grid"} {
+	for _, marker := range []string{"polyclav", "/api/events", "patch-grid", "vel-canvas", "/api/velocity", "config-text", "data-clip"} {
 		if !strings.Contains(body, marker) {
 			t.Errorf("index.html missing %q", marker)
 		}

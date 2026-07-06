@@ -87,6 +87,44 @@
   label.loop { display: inline-flex; align-items: center; gap: 6px;
                color: var(--muted); }
   #play-ind-label { color: var(--muted); }
+  /* per-setting demo buttons (docs/AUDITION.md): one ▶ per section header */
+  button.demo { border: 1px solid var(--border); background: transparent;
+                color: var(--muted); border-radius: 6px; cursor: pointer;
+                font: inherit; font-size: 10px; padding: 1px 8px;
+                margin-left: 8px; vertical-align: middle; }
+  button.demo:hover { border-color: var(--accent); color: var(--fg); }
+  button.demo.playing { border-color: var(--ok); color: var(--ok); }
+  .no-player button.demo { display: none; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+            margin: 10px 0 4px; }
+  .btnrow button { padding: 5px 14px; border-radius: 8px;
+                   border: 1px solid var(--border); background: transparent;
+                   color: var(--fg); font: inherit; cursor: pointer; }
+  .btnrow button:hover { border-color: var(--accent); }
+  .btnrow button.active { border-color: var(--accent);
+                          box-shadow: 0 0 0 1px var(--accent); }
+  .warn { background: rgba(255, 170, 0, 0.16); border: 1px solid #b8860b;
+          border-radius: 8px; padding: 8px 12px; margin: 10px 0;
+          font-size: 13px; }
+  .errbox { background: rgba(214, 69, 65, 0.12); border: 1px solid var(--bad);
+            border-radius: 8px; padding: 8px 12px; margin: 10px 0;
+            font-size: 12px; white-space: pre-wrap;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #vel-canvas { width: 100%; max-width: 340px; border: 1px solid var(--border);
+                border-radius: 8px; display: block; margin: 10px auto;
+                touch-action: none; }
+  .numpair { display: flex; gap: 6px; align-items: center; }
+  .numpair input[type=number] { width: 70px; background: var(--card);
+                color: var(--fg); border: 1px solid var(--border);
+                border-radius: 6px; padding: 4px 6px; font: inherit; }
+  #vel-active { color: var(--muted); font-size: 12px; }
+  section.wide { grid-column: 1 / -1; }
+  details summary { cursor: pointer; color: var(--muted); }
+  #config-text { width: 100%; min-height: 320px; resize: vertical;
+                 margin-top: 10px; background: var(--bg); color: var(--fg);
+                 border: 1px solid var(--border); border-radius: 8px;
+                 padding: 10px; font: 12px/1.45 ui-monospace, SFMono-Regular,
+                 Menlo, monospace; }
 </style>
 </head>
 <body>
@@ -101,11 +139,11 @@
 </header>
 <main>
   <section>
-    <h2>Patches</h2>
+    <h2>Patches <button class="demo" type="button" data-clip="arp" title="demo: arp (loop)">&#9654;</button></h2>
     <div id="patch-grid" class="grid"></div>
   </section>
   <section>
-    <h2>Patch params</h2>
+    <h2>Patch params <button class="demo" type="button" data-clip="arp" title="demo: arp (loop)">&#9654;</button></h2>
     <div class="row"><label for="volume">Volume</label>
       <input id="volume" type="range" min="0" max="1" step="0.01">
       <span class="val" id="volume-val">&ndash;</span></div>
@@ -121,7 +159,7 @@
     <p class="hint">Cutoff is live only on native-synth patches.</p>
   </section>
   <section id="synth" hidden>
-    <h2>Native synth</h2>
+    <h2>Native synth <button class="demo" type="button" data-clip="bass-riff" title="demo: bass-riff (loop)">&#9654;</button></h2>
     <div class="row"><label for="resonance">Resonance</label>
       <input id="resonance" type="range" min="0" max="0.95" step="0.005">
       <span class="val" id="resonance-val">&ndash;</span></div>
@@ -152,13 +190,46 @@
     <p class="hint">Per-osc: wave &middot; octave &middot; detune (&cent;) &middot; level.</p>
   </section>
   <section>
-    <h2>Mastering</h2>
+    <h2>Mastering <button class="demo" type="button" data-clip="sustain-chord" title="demo: sustain-chord (loop)">&#9654;</button></h2>
     <div class="row"><label for="mcomp">Comp amount</label>
       <input id="mcomp" type="range" min="0" max="1" step="0.01">
       <span class="val" id="mcomp-val">&ndash;</span></div>
     <div class="row"><label for="mceil">Ceiling</label>
       <input id="mceil" type="range" min="-12" max="0" step="0.1">
       <span class="val" id="mceil-val">&ndash;</span></div>
+  </section>
+  <section id="velocity">
+    <h2>Velocity <button class="demo" type="button" data-clip="vel-ramp" title="demo: vel-ramp (loop)">&#9654;</button></h2>
+    <div class="btnrow" id="vel-presets">
+      <button type="button" data-curve="soft">soft</button>
+      <button type="button" data-curve="linear">linear</button>
+      <button type="button" data-curve="hard">hard</button>
+      <button type="button" id="vel-points-btn">points</button>
+    </div>
+    <div class="row"><label for="vel-gamma">Gamma</label>
+      <input id="vel-gamma" type="range" min="0.3" max="3" step="0.01" value="1">
+      <span class="val" id="vel-gamma-val">1.00</span></div>
+    <div class="row"><label>Out clamp</label>
+      <span class="numpair">
+        <input id="vel-outmin" type="number" min="0" max="127" value="0"
+               title="out_min (0 = default 1)">
+        <span>&hellip;</span>
+        <input id="vel-outmax" type="number" min="0" max="127" value="0"
+               title="out_max (0 = default 127)">
+      </span>
+      <span></span></div>
+    <canvas id="vel-canvas" width="340" height="240"></canvas>
+    <div class="btnrow">
+      <button type="button" id="vel-apply">Apply (session)</button>
+      <button type="button" id="vel-save">Save</button>
+      <span id="vel-active"></span>
+    </div>
+    <div id="vel-error" class="errbox" hidden></div>
+    <p class="hint">Points mode: click to add, drag to move, double-click to
+      remove. Played notes appear as fading dots at (in, out).</p>
+    <p class="hint">Per-patch velocity overrides in polyclav.toml still win:
+      switching patches re-resolves the curve from config, replacing session
+      edits.</p>
   </section>
   <section id="transport" hidden>
     <h2>Audition</h2>
@@ -174,6 +245,21 @@
       <span id="play-ind" class="dot"></span>
       <span id="play-ind-label">stopped</span>
     </div>
+  </section>
+  <section id="config-section" class="wide">
+    <h2>Config</h2>
+    <details id="config-details">
+      <summary>polyclav.toml &mdash; edit &amp; save (validated before write)</summary>
+      <div id="config-banner" class="warn" hidden>Saved. Restart polyclav to
+        apply the new config.</div>
+      <textarea id="config-text" spellcheck="false"
+        placeholder="loading polyclav.toml&hellip;"></textarea>
+      <div class="btnrow">
+        <button type="button" id="config-save">Save</button>
+        <button type="button" id="config-reload">Reload</button>
+      </div>
+      <div id="config-error" class="errbox" hidden></div>
+    </details>
   </section>
 </main>
 <script>
@@ -346,7 +432,14 @@ function setDevices(d) {
 
 // Player state updates only touch the indicator + tempo: the clip picker
 // and loop checkbox are the user's staging area for the NEXT play, so
-// SSE must not overwrite them.
+// SSE must not overwrite them. playerNow mirrors the transport for the
+// per-section demo buttons (toggle + highlight).
+const playerNow = { playing: false, clip: "" };
+function updateDemoButtons() {
+  for (const b of document.querySelectorAll("button.demo")) {
+    b.classList.toggle("playing", playerNow.playing && b.dataset.clip === playerNow.clip);
+  }
+}
 function applyPlayer(p) {
   if (!p) return;
   const playing = p.playing ?? p.Playing ?? false;
@@ -358,6 +451,9 @@ function applyPlayer(p) {
     $("tempo").value = tempo;
     $("tempo-val").textContent = fmtTempo(tempo);
   }
+  playerNow.playing = !!playing;
+  playerNow.clip = clip;
+  updateDemoButtons();
 }
 
 async function initClips() {
@@ -382,6 +478,10 @@ function applySnapshot(s) {
   setDevices(s.devices);
   renderPatches(s.patches);
   applyParams(s.params);
+  if (s.params && typeof s.params.velocity_curve === "string" && s.params.velocity_curve) {
+    $("vel-active").textContent = s.params.velocity_curve;
+  }
+  document.body.classList.toggle("no-player", !s.player);
   if (s.player) {
     initClips();
     applyPlayer(s.player);
@@ -528,6 +628,294 @@ $("stop").addEventListener("click", async () => {
   if (r && r.ok) applyPlayer(await r.json());
 });
 
+// --- per-setting demo buttons (docs/AUDITION.md): each section header's
+// ▶ toggles its mapped clip looping at tempo 1. State reflects back via
+// SSE "player" events (updateDemoButtons above), so a demo started from
+// any surface highlights the matching section here.
+for (const b of document.querySelectorAll("button.demo")) {
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (playerNow.playing && playerNow.clip === b.dataset.clip) {
+      send("POST", "/api/player/stop");
+    } else {
+      send("POST", "/api/player", { clip: b.dataset.clip, loop: true, tempo: 1 });
+    }
+  });
+}
+
+// --- velocity editor (docs/VELOCITY_CURVES.md "Live tweaking") ---------
+// Edits are staged locally and only hit the daemon on Apply (session) or
+// Save (config write-back) — the explicit-save contract from the doc.
+const vel = {
+  mode: "gamma",           // "gamma" | "points"
+  curve: "linear",         // preset name or "custom"
+  gamma: 1.0,
+  outMin: 0, outMax: 0,     // 0 = the daemon's defaults (1 / 127)
+  points: [[0, 0], [64, 64], [127, 127]],
+  drag: -1,                 // control-point index being dragged
+  dots: [],                 // live monitor dots {in, out, t}
+  raf: 0,
+};
+const PRESET_GAMMA = { soft: 0.6, linear: 1.0, hard: 1.6 };
+const velCanvas = $("vel-canvas");
+const VP = 14; // canvas padding, px
+
+// velMap mirrors internal/velocity.Curve.Apply exactly (interpolate or
+// power, round, clamp, floor 1) so the drawn curve IS the applied curve.
+function velMap(v) {
+  if (v === 0) return 0;
+  let out;
+  if (vel.mode === "points") {
+    const pts = vel.points;
+    out = pts[pts.length - 1][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (v <= pts[i][0]) {
+        const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+        out = y0 + (y1 - y0) * (v - x0) / (x1 - x0);
+        break;
+      }
+    }
+    out = Math.round(out);
+  } else {
+    out = Math.round(127 * Math.pow(v / 127, vel.gamma));
+  }
+  out = Math.max(out, vel.outMin || 1);
+  out = Math.min(out, vel.outMax || 127);
+  return Math.max(out, 1);
+}
+
+function velXY(inV, outV) {
+  const w = velCanvas.width, h = velCanvas.height;
+  return [VP + inV / 127 * (w - 2 * VP), h - VP - outV / 127 * (h - 2 * VP)];
+}
+function velFromXY(x, y) {
+  const w = velCanvas.width, h = velCanvas.height;
+  const inV = Math.round((x - VP) / (w - 2 * VP) * 127);
+  const outV = Math.round((h - VP - y) / (h - 2 * VP) * 127);
+  return [Math.min(127, Math.max(0, inV)), Math.min(127, Math.max(0, outV))];
+}
+function velCanvasPos(e) {
+  const r = velCanvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * velCanvas.width / r.width,
+          (e.clientY - r.top) * velCanvas.height / r.height];
+}
+function velHitPoint(x, y) {
+  for (let i = 0; i < vel.points.length; i++) {
+    const [px, py] = velXY(vel.points[i][0], vel.points[i][1]);
+    if (Math.hypot(px - x, py - y) <= 9) return i;
+  }
+  return -1;
+}
+
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+function velDraw() {
+  const ctx = velCanvas.getContext("2d");
+  const w = velCanvas.width, h = velCanvas.height;
+  ctx.clearRect(0, 0, w, h);
+  // grid
+  ctx.strokeStyle = cssVar("--border", "#888");
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.6;
+  for (const g of [0, 32, 64, 96, 127]) {
+    const [x] = velXY(g, 0);
+    const [, y] = velXY(0, g);
+    ctx.beginPath(); ctx.moveTo(x, VP); ctx.lineTo(x, h - VP); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(VP, y); ctx.lineTo(w - VP, y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // curve
+  const accent = cssVar("--accent", "#3d6bff");
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let v = 1; v <= 127; v++) {
+    const [x, y] = velXY(v, velMap(v));
+    if (v === 1) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  // draggable control points
+  if (vel.mode === "points") {
+    for (let i = 0; i < vel.points.length; i++) {
+      const [x, y] = velXY(vel.points[i][0], vel.points[i][1]);
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = i === vel.drag ? cssVar("--ok", "#2fb35f") : accent;
+      ctx.fill();
+    }
+  }
+  // live monitor dots, fading over 2 s
+  const now = performance.now();
+  ctx.fillStyle = cssVar("--ok", "#2fb35f");
+  for (const d of vel.dots) {
+    const age = now - d.t;
+    if (age > 2000) continue;
+    const [x, y] = velXY(d.in, d.out);
+    ctx.globalAlpha = 1 - age / 2000;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function velAnimate() {
+  vel.dots = vel.dots.filter((d) => performance.now() - d.t <= 2000);
+  velDraw();
+  vel.raf = vel.dots.length ? requestAnimationFrame(velAnimate) : 0;
+}
+function velAddDot(inV, outV) {
+  vel.dots.push({ in: inV, out: outV, t: performance.now() });
+  if (vel.dots.length > 64) vel.dots.shift();
+  if (!vel.raf) vel.raf = requestAnimationFrame(velAnimate);
+}
+
+function velSetMode(mode) {
+  vel.mode = mode;
+  for (const b of document.querySelectorAll("#vel-presets button")) {
+    b.classList.toggle("active",
+      mode === "points" ? b.id === "vel-points-btn" : b.dataset.curve === vel.curve);
+  }
+  velDraw();
+}
+for (const b of document.querySelectorAll("#vel-presets button[data-curve]")) {
+  b.addEventListener("click", () => {
+    vel.curve = b.dataset.curve;
+    vel.gamma = PRESET_GAMMA[vel.curve];
+    $("vel-gamma").value = vel.gamma;
+    $("vel-gamma-val").textContent = fmt2(vel.gamma);
+    velSetMode("gamma");
+  });
+}
+$("vel-points-btn").addEventListener("click", () => velSetMode("points"));
+$("vel-gamma").addEventListener("input", () => {
+  vel.gamma = parseFloat($("vel-gamma").value);
+  vel.curve = "custom"; // touching the slider leaves the preset
+  $("vel-gamma-val").textContent = fmt2(vel.gamma);
+  velSetMode("gamma");
+});
+for (const id of ["vel-outmin", "vel-outmax"]) {
+  $(id).addEventListener("input", () => {
+    vel.outMin = Math.max(0, Math.min(127, parseInt($("vel-outmin").value, 10) || 0));
+    vel.outMax = Math.max(0, Math.min(127, parseInt($("vel-outmax").value, 10) || 0));
+    velDraw();
+  });
+}
+
+// Canvas point editing. Client-side constraints keep the staged points
+// LOOSELY valid (first pinned at [0,0], last x at 127, xs strictly
+// increasing, ys non-decreasing); the server re-validates on Apply/Save.
+velCanvas.addEventListener("pointerdown", (e) => {
+  if (vel.mode !== "points") return;
+  e.preventDefault();
+  const [x, y] = velCanvasPos(e);
+  let i = velHitPoint(x, y);
+  if (i < 0) {
+    if (vel.points.length >= 16) return;
+    const [inV, outV] = velFromXY(x, y);
+    const at = vel.points.findIndex((p) => p[0] >= inV);
+    if (at <= 0 || vel.points.some((p) => p[0] === inV)) return;
+    const lo = vel.points[at - 1][1], hi = vel.points[at][1];
+    vel.points.splice(at, 0, [inV, Math.min(Math.max(outV, lo), hi)]);
+    i = at;
+  }
+  vel.drag = i;
+  velCanvas.setPointerCapture(e.pointerId);
+  velDraw();
+});
+velCanvas.addEventListener("pointermove", (e) => {
+  if (vel.mode !== "points" || vel.drag < 0) return;
+  const i = vel.drag, pts = vel.points;
+  if (i === 0) return; // [0,0] is fixed: NoteOn vel 0 must stay NoteOff
+  let [inV, outV] = velFromXY(...velCanvasPos(e));
+  if (i === pts.length - 1) inV = 127; // last x pinned: full input coverage
+  else inV = Math.min(Math.max(inV, pts[i - 1][0] + 1), pts[i + 1][0] - 1);
+  const lo = pts[i - 1][1];
+  const hi = i === pts.length - 1 ? 127 : pts[i + 1][1];
+  pts[i] = [inV, Math.min(Math.max(outV, lo), hi)];
+  velDraw();
+});
+velCanvas.addEventListener("pointerup", () => { vel.drag = -1; velDraw(); });
+velCanvas.addEventListener("dblclick", (e) => {
+  if (vel.mode !== "points") return;
+  const i = velHitPoint(...velCanvasPos(e));
+  if (i > 0 && i < vel.points.length - 1) { vel.points.splice(i, 1); velDraw(); }
+});
+
+function velBody(save) {
+  const b = {};
+  if (vel.mode === "points") {
+    b.points = vel.points.map((p) => [p[0], p[1]]);
+  } else if (vel.curve === "custom") {
+    b.curve = "custom";
+    b.gamma = vel.gamma;
+  } else {
+    b.curve = vel.curve;
+  }
+  if (vel.outMin > 0) b.out_min = vel.outMin;
+  if (vel.outMax > 0) b.out_max = vel.outMax;
+  if (save) b.save = true;
+  return b;
+}
+async function velSend(save) {
+  const r = await send("PUT", "/api/velocity", velBody(save));
+  const box = $("vel-error");
+  if (!r) { box.textContent = "request failed"; box.hidden = false; return; }
+  if (r.ok) {
+    box.hidden = true;
+    const m = await r.json();
+    $("vel-active").textContent = m.curve + (m.saved ? " · saved" : " · session");
+  } else {
+    const m = await r.json().catch(() => ({}));
+    box.textContent = m.error || ("error " + r.status);
+    box.hidden = false;
+  }
+}
+$("vel-apply").addEventListener("click", () => velSend(false));
+$("vel-save").addEventListener("click", () => velSend(true));
+velSetMode("gamma"); // initial draw with the linear preset active
+
+// --- config editor (docs/WEB_UI.md phase C) ----------------------------
+// Loaded lazily on first expand; Save PUTs the full TOML text. The daemon
+// validates against a temp file and atomically replaces polyclav.toml —
+// hot reload is out of scope, hence the persistent restart banner.
+let configLoaded = false;
+async function loadConfig() {
+  const r = await send("GET", "/api/config");
+  if (r && r.ok) {
+    $("config-text").value = await r.text();
+    configLoaded = true;
+    $("config-error").hidden = true;
+  }
+}
+$("config-details").addEventListener("toggle", () => {
+  if ($("config-details").open && !configLoaded) loadConfig();
+});
+$("config-reload").addEventListener("click", loadConfig);
+$("config-save").addEventListener("click", async () => {
+  let r;
+  try {
+    r = await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: $("config-text").value,
+    });
+  } catch (e) {
+    $("config-error").textContent = "request failed: " + e;
+    $("config-error").hidden = false;
+    return;
+  }
+  if (r.ok) {
+    $("config-error").hidden = true;
+    $("config-banner").hidden = false; // persistent until restart
+  } else {
+    const m = await r.json().catch(() => ({}));
+    $("config-error").textContent = m.error || ("error " + r.status);
+    $("config-error").hidden = false;
+  }
+});
+
 // --- SSE: the one live pipe. The browser's EventSource reconnects by
 // itself and the server re-sends a snapshot on every connect, so a
 // dropped daemon heals without any code here.
@@ -574,6 +962,16 @@ function connect() {
     }
   });
   es.addEventListener("player", (ev) => applyPlayer(JSON.parse(ev.data) || {}));
+  es.addEventListener("velocity", (ev) => {
+    const d = JSON.parse(ev.data) || {};
+    if (typeof d.curve === "string") $("vel-active").textContent = d.curve;
+  });
+  es.addEventListener("note", (ev) => {
+    // Velocity monitor: every (throttled) NoteOn as a fading dot at
+    // (raw in, remapped out) on the curve canvas.
+    const d = JSON.parse(ev.data) || {};
+    if (typeof d.in === "number" && typeof d.out === "number") velAddDot(d.in, d.out);
+  });
   es.addEventListener("device", (ev) => {
     // Hub device events carry {device, state}; snapshots use the
     // {launchkey, xr18} map that setDevices expects — adapt the former.
