@@ -1,9 +1,13 @@
 # Configurability & Hardware Abstraction
 
-> **Status:** design notes; Tiers 0–1 shipped 2026-07-05 (`[osc.mixer]`
-> as the preferred name for `[osc.xr18]`, plus the configurable
-> `heartbeat` — unset → `/xinfo`, `""` → fire-and-forget for generic OSC
-> targets). Tiers 2–4 remain design. This document describes
+> **Status (2026-07-06):** design notes; Tiers 0–1 shipped 2026-07-05
+> (`[osc.mixer]` as the preferred name for `[osc.xr18]`, plus the
+> configurable `heartbeat` — unset → `/xinfo`, `""` → fire-and-forget
+> for generic OSC targets). Tiers 2–4 remain design. Since then the
+> control-surface seam has grown *deeper* Launchkey coupling by design:
+> the knob-page state machine (`internal/controls/pages`) mutates only
+> through the controls layer — the Tier-3 groundwork — but its
+> screen/pad adapters are MK4-shaped. This document describes
 > where polyclav is currently hardwired to a **Novation Launchkey 61 MK4**
 > control surface and a **Behringer XR18** OSC mixer, and lays out options
 > for making both pluggable. The native-synth/UX work in `docs/ROADMAP.md`

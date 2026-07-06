@@ -39,24 +39,36 @@ over SysEx.
 - **Soundfont hot-swap** — switch patches without dropping audio.
 - **DSP chain** in the audio thread, in order:
   `synth → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
-  Knobs 1/2/3 drive master volume, reverb, and the input compressor live;
-  knob 4 sweeps the native synth's filter cutoff.
+  Knobs 1/2/3 drive master volume, reverb, and the input compressor live.
+- **Launchkey knob pages** — five pages (MAIN / OSC / FILTER / AMP /
+  LFO/MOD) on Scene ▲/▼ put the whole native-synth voice on the 8
+  encoders, with page indicators on the bottom pad row. Code-complete,
+  pending hardware verification (`docs/HARDWARE_TESTS.md`).
 - **Web dashboard** — an embedded, localhost-only web UI (`[web]` in the
-  config, off by default, `127.0.0.1:8666`): patch switching, all live
-  params, mastering, native-synth controls, and the audition transport
-  from a browser, plus a REST + SSE API. See `docs/WEB_UI.md`.
+  config, off by default, `127.0.0.1:8666`): a Next.js app (static
+  export embedded in the binary — `go build` needs no Node) with patch
+  switching, all live params, mastering, the full native-synth panel, a
+  velocity-curve editor with a live note monitor, validated in-browser
+  config editing, and the audition transport, plus a REST + SSE API.
+  The pre-Next single-file page remains at `/legacy`. See
+  `docs/WEB_UI.md`.
 - **Velocity curves** — global `[midi.velocity]` curve (soft / linear /
-  hard / custom gamma + output clamp) with per-patch overrides, so every
-  patch responds to your keybed the way you want. See
+  hard / custom gamma, or 2–16 control points, + output clamp) with
+  per-patch overrides, so every patch responds to your keybed the way
+  you want — editable live from the browser. See
   `docs/VELOCITY_CURVES.md`.
 - **Audition mode** — `polyclav --play <clip> [--loop] [--tempo N]` plays
   one of seven built-in diagnostic clips through the full audio path, no
   keyboard needed; the web dashboard has the same transport. See
   `docs/AUDITION.md`.
-- **Native synth, Phase 2 voice** — 3 oscillators (saw/square/pulse,
-  octave, detune, level) + noise, runtime resonance, a dedicated filter
-  ADSR with env amount, and glide — all adjustable live from the web
-  dashboard. Still monophonic (mono-legato). See `docs/NATIVE_SYNTH.md`.
+- **Native synth — a full Minimoog-style voice**: 3 oscillators
+  (saw/square/pulse, octave, detune, level) + noise + pre-filter drive,
+  resonant ladder filter with its own ADSR and keyboard tracking, a
+  runtime amp ADSR, velocity→amp/cutoff routing, a global LFO
+  (pitch/cutoff/amp), mod-wheel vibrato, pitch bend, glide, optional 2×
+  oversampling, and up to **8-voice polyphony** with live-switchable
+  voice modes. Every tweak persists per patch in `state.toml`. See
+  `docs/NATIVE_SYNTH.md`.
 - **Mixer OSC bindings** — faders and pads drive mixer faders and mute
   toggles over UDP. Bindings live in `[osc.mixer]` (preferred name;
   `[osc.xr18]` still works), with a configurable presence-check
@@ -149,7 +161,7 @@ any MIDI keyboard work; the Launchkey-specific code paths just stay idle.
 | [`docs/INSTALL.md`](docs/INSTALL.md) | System-level install: build deps, soundfonts, hardware notes. Start here on a fresh machine. |
 | [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | End-user install / configure / play, including the full config schema. |
 | [`docs/HARDWARE_TESTS.md`](docs/HARDWARE_TESTS.md) | Hardware verification checklist (Launchkey MK4 + XR18). |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Forward-looking native-synth roadmap (Phases 2-4). |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Native-synth design record (Phases 2-4, now implemented) + open questions. |
 | [`AGENTS.md`](AGENTS.md) | For AI agents and developers working on the code. Build/test workflow, current state, DSP API. |
 
 ---

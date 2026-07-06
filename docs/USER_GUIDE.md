@@ -32,24 +32,35 @@ panel; see "Web dashboard" below.
   `synth → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
 - Launchkey live control surface:
   - Top-row pads select patches; the lit pad tracks the current patch.
-  - Knobs: 1 = master volume, 2 = reverb wet/dry, 3 = input compressor amount.
-    Knob 4 sweeps the filter cutoff while a native patch is selected.
-  - The screen shows the current patch's `display` name.
+  - Five knob pages (MAIN / OSC / FILTER / AMP / LFO/MOD) switched with
+    Scene ▲/▼; the bottom pad row shows the active page. MAIN keeps the
+    classic layout: knob 1 = master volume, 2 = reverb wet/dry, 3 = input
+    compressor, 4 = filter cutoff (native patches). The other pages cover
+    the native synth's full voice. Code-complete, **pending hardware
+    verification** — see "Launchkey knob pages" below.
+  - The screen shows the current patch's `display` name, with value
+    popups while you turn a knob.
   - The mastering compressor, brick-wall limiter, and per-patch gain are set
     from config and apply automatically (and can be adjusted live from the
     web dashboard).
-- Web dashboard (`[web]`, off by default): patch switching, volume / reverb
-  / compressor / cutoff sliders, mastering, the native synth's full
-  parameter set, and the audition transport, from any browser on
-  `127.0.0.1:8666` — plus a REST + SSE API. See "Web dashboard" below.
+- Web dashboard (`[web]`, off by default): a Next.js app at `/app/`
+  (the root URL redirects there; the original single-file page remains at
+  `/legacy`) with patch switching, volume / reverb / compressor / cutoff
+  sliders, mastering, the native synth's full parameter set, a velocity
+  curve editor with a live note monitor, a validated config editor, and
+  the audition transport, from any browser on `127.0.0.1:8666` — plus a
+  REST + SSE API. See "Web dashboard" below.
 - Velocity curves: a global `[midi.velocity]` remap (soft / linear / hard /
-  custom gamma, with an output clamp) and per-patch overrides. See
+  custom gamma, or 2–16 draggable control points, with an output clamp)
+  and per-patch overrides — editable live from the browser. See
   "Velocity curves" below.
 - Audition mode: `polyclav --play <clip>` plays built-in diagnostic clips
   through the full audio path with no keyboard connected. See "Audition
   mode" below.
-- Native synth (Phase 2 voice): 3 oscillators + noise, runtime resonance,
-  filter ADSR, and glide, all adjustable live from the web dashboard. See
+- Native synth — the full Minimoog-style voice: 3 oscillators + noise +
+  drive, two runtime ADSRs, LFO, velocity routing, keyboard tracking,
+  glide, pitch bend + mod wheel, and up to 8-voice polyphony with
+  switchable voice modes; every tweak persists per patch. See
   `docs/NATIVE_SYNTH.md`.
 - Per-patch gain matching via `gain_db` on each `[[patches]]` entry — line
   up the perceived loudness of wildly different soundfonts (Salamander vs
@@ -193,6 +204,7 @@ stay in the registry without a pad slot). The first entry is loaded on startup.
 | `gain_db`     | Per-patch loudness trim in dB; default `0.0`, useful range roughly -24..+24. Applied as the first stage of the DSP chain on every patch select. See "Mastering & level matching" below. |
 | `velocity_curve` | Optional per-patch velocity curve override — wins over the global `[midi.velocity]` block. `"linear"`, `"soft"`, `"hard"`, or `"custom"` (the latter needs `velocity_gamma`). See "Velocity curves" below. |
 | `velocity_gamma` | Custom gamma (> 0); setting it alone implies `velocity_curve = "custom"`. |
+| `velocity_points` | Per-patch control-point curve, e.g. `[[0,0], [64,40], [127,127]]` — 2..16 monotonic points; mutually exclusive with `velocity_curve`/`velocity_gamma`. Wins over everything. |
 
 ```toml
 # soundfont patch
@@ -257,23 +269,72 @@ You can also run the binary directly: `./bin/polyclav`.
    `~/.config/polyclav/polyclav.toml` and `overmind restart polyclav` — the
    daemon reads config only at startup.
 
+## Launchkey knob pages
+
+> **Hardware-pending caveat:** the knob-page code is complete and
+> unit-tested, but it shipped without a Launchkey on the bench — the
+> on-device checklist in `docs/HARDWARE_TESTS.md` ("Knob pages") hasn't
+> been run yet. Until it passes, treat the web dashboard as the
+> reference control surface.
+
+The 8 encoders drive the native synth through five pages. **Scene ▲**
+goes to the previous page, **Scene ▼** to the next; the page name
+flashes on the screen and the **bottom pad row lights the active page**
+(pads 1–5 as indicators). Turning a knob pops the parameter name and
+value on the screen for 800 ms, then the patch name returns.
+
+| # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
+|---|------|--------|--------|--------|--------|--------|--------|--------|--------|
+| 1 | **MAIN** | Volume | Reverb | Comp | Cutoff | Resonance | Glide | Drive | — |
+| 2 | **OSC** | Osc1 lvl | Osc1 detune | Osc2 lvl | Osc2 detune | Osc3 lvl | Osc3 detune | Noise | Pulse width |
+| 3 | **FILTER** | Cutoff | Resonance | Env amount | F.Attack | F.Decay | F.Sustain | F.Release | Kbd track |
+| 4 | **AMP** | A.Attack | A.Decay | A.Sustain | A.Release | Vel→Amp | Vel→Cutoff | Drive | — |
+| 5 | **LFO/MOD** | LFO rate | LFO→Pitch | LFO→Cutoff | LFO→Amp | Bend range | Glide | Voice mode | — |
+
+Notes:
+
+- **MAIN preserves muscle memory** — knobs 1–4 are exactly the historic
+  volume / reverb / comp / cutoff layout.
+- With a **non-native patch** selected, only MAIN's knobs 1–3 (the
+  global volume / reverb / comp) respond; the synth pages apply to
+  native patches only.
+- **Voice mode** (LFO/MOD knob 7) steps mono_legato → mono_retrig →
+  poly, one detent per step.
+- **Play** on the transport row toggles the audition player's last-used
+  clip. Every knob edit persists to the current patch automatically
+  (debounced) — there is nothing to "save".
+
 ## Web dashboard
 
 With `[web]` enabled (see Configuration above), the daemon serves a
-single-page dashboard at `http://127.0.0.1:8666/`. It is a laptop-first
-interim front panel — the same live controls the Launchkey gives you,
-plus the ones no knob reaches:
+dashboard at `http://127.0.0.1:8666/` — a laptop-first front panel with
+the same live controls the Launchkey gives you, plus the ones no knob
+reaches. The root URL redirects to the **Next.js app at `/app/`** (a
+static export embedded in the binary — no Node.js needed at runtime);
+the original single-file page is still available at `/legacy`. Both
+offer the same cards:
 
 - **Patches** — a pad-style grid; click to switch. The current patch is
   highlighted and colors follow each patch's `pad_color`.
 - **Patch params** — volume, reverb, and compressor sliders, plus a
   cutoff slider that activates while a native patch is selected.
-- **Native synth** — shown only while a native patch is current:
-  resonance, glide, noise, the filter ADSR + env amount, and per-osc
-  wave / octave / detune / level. See `docs/NATIVE_SYNTH.md`.
+- **Native synth** — shown only while a native patch is current: the
+  full voice — oscillators, pulse width, noise, drive, filter + both
+  ADSRs, keyboard tracking, velocity routing, LFO, bend range, glide,
+  voice mode (mono/poly), and the 2× oversampling toggle. See
+  `docs/NATIVE_SYNTH.md`.
+- **Velocity** — a curve editor (presets, custom gamma, or draggable
+  control points on a canvas) with a **live note monitor**: play and
+  watch each note appear as an (in, out) dot on the curve. Apply for
+  the session, or Save to write the curve into `polyclav.toml` (see
+  "Velocity curves" below).
 - **Mastering** — comp amount and limiter ceiling, live.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
   (see "Audition mode" below).
+- **Config** — view and edit `polyclav.toml` in the browser. Saving
+  validates the whole file first (a config the daemon would refuse to
+  boot from is never written) and shows a restart banner on success —
+  config edits still apply at the next restart, not live.
 - A header strip shows connection health, Launchkey/XR18 device states,
   the current patch, and the daemon version.
 
@@ -287,21 +348,20 @@ The page is a thin client over a JSON API you can also drive with curl:
 | Endpoint | What it does |
 |---|---|
 | `GET /api/status` | Full snapshot: version, device states, params, patches, player. |
-| `GET /api/events` | SSE stream — a `snapshot` event on connect, then `params` / `synth` / `patch` / `mastering` / `velocity` / `player` change events. |
+| `GET /api/events` | SSE stream — a `snapshot` event on connect, then `params` / `synth` / `patch` / `mastering` / `velocity` / `player` / `device` / `note` change events (`note` carries each played note's raw + remapped velocity for the monitor, throttled to ~30/s). |
 | `GET /api/patches` | The patch list. |
 | `POST /api/patches/{name}/select` | Switch patch by name. |
 | `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `cutoff_pos` (each 0..1, all fields optional). |
 | `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
 | `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db`. |
-| `GET /api/config` | Your `polyclav.toml`, verbatim (read-only). |
+| `GET /api/config` | Your `polyclav.toml`, verbatim. |
+| `PUT /api/config` | Replace `polyclav.toml` (full TOML text). Validated before write; 422 on a config the daemon would refuse. Restart to apply. |
+| `GET /api/velocity` | The active velocity curve and whether it came from config or a session edit. |
+| `PUT /api/velocity` | Apply a velocity curve live (`curve`/`gamma` or `points`); `"save": true` also persists it to a managed `[midi.velocity]` block in `polyclav.toml`. |
 | `GET /api/clips` | The audition clip library. |
 | `POST /api/player` | Start a clip: `{"clip": "arp", "loop": true, "tempo": 1.0}`. |
 | `POST /api/player/stop` | Stop playback. |
 | `POST /api/player/tempo` | Change playback tempo live: `{"tempo": 1.5}`. |
-
-The dashboard cannot edit the config file — `GET /api/config` is
-read-only, and browser-side config editing is a later phase
-(`docs/WEB_UI.md`).
 
 ## Audition mode — hear settings without a keyboard
 
@@ -345,6 +405,13 @@ dashboard's Audition section (or `POST /api/player`) switches clips,
 loops, and changes tempo at runtime. Clip notes drive the synth only;
 they never fire the OSC mixer bindings.
 
+**User clips (`.mid` files).** Drop `.mid`/`.midi` files in
+`~/.local/share/polyclav/clips/` and they join the clip list at the next
+daemon start (IDs `file:<name>`, e.g. `polyclav --play file:mysong`).
+Files are flattened to a single notes-only stream on channel 1; SMPTE-
+timed files are rejected with a logged warning; unparseable files are
+skipped without breaking the rest of the scan.
+
 ## Velocity curves
 
 polyclav can reshape incoming note velocity before it reaches the synth,
@@ -357,11 +424,15 @@ curve = "linear"               # "soft" | "linear" | "hard" | "custom"
 # gamma = 0.8                  # required iff curve = "custom"
 # out_min = 1                  # optional output clamps, defaults 1 / 127
 # out_max = 127
+# points = [[0, 0], [64, 40], [127, 127]]   # OR a control-point curve
+                               # (points and curve/gamma are mutually
+                               # exclusive within one block)
 
 [[patches]]
 name           = "salamander"
 # ...existing fields...
-velocity_curve = "soft"        # per-patch override (or velocity_gamma = 0.7)
+velocity_curve = "soft"        # per-patch override (or velocity_gamma = 0.7,
+                               # or velocity_points = [[0,0], ..., [127,127]])
 ```
 
 The curve is a gamma (power) remap with an output clamp:
@@ -375,11 +446,20 @@ passed through untouched (NoteOn vel 0 is NoteOff on the wire).
 | `hard` | 1.6 | Suppresses the middle — light keybeds / shouty patches get more headroom. |
 | `custom` | your `gamma` | Anything in between (or beyond). |
 
+**Control points (v2):** instead of a gamma curve, either scope can
+carry a piecewise-linear curve of 2–16 `[in, out]` control points —
+`points` in `[midi.velocity]`, `velocity_points` on a patch. The first
+point must be exactly `[0, 0]` (vel 0 stays NoteOff), the last input
+must be `127`, inputs strictly increasing, outputs non-decreasing.
+Within one scope, points and curve/gamma are mutually exclusive.
+
 Details worth knowing:
 
-- **Per-patch wins.** `velocity_curve` / `velocity_gamma` on a patch
-  replaces the global curve entirely while that patch is selected.
-  Setting `velocity_gamma` alone implies `velocity_curve = "custom"`.
+- **Precedence, most specific first:** per-patch `velocity_points` >
+  per-patch `velocity_curve`/`velocity_gamma` > global `points` >
+  global `curve`/`gamma`. A per-patch override replaces the global
+  curve entirely while that patch is selected. Setting
+  `velocity_gamma` alone implies `velocity_curve = "custom"`.
 - **Synth path only.** The curve applies to NoteOn events headed for the
   synth. OSC mixer bindings always see the **raw** velocity, so
   fader/pad bindings behave identically whatever curve is active.
@@ -387,9 +467,24 @@ Details worth knowing:
   NoteOff; `out_max` caps the top (e.g. never trigger a hammer-noise
   layer).
 - Bad settings (unknown curve name, `custom` without a positive gamma,
-  `out_min > out_max`) are startup errors listing every offender at once.
+  non-monotonic points, `out_min > out_max`) are startup errors listing
+  every offender at once.
 - Tuning by ear: loop the ramp clip while you edit —
   `polyclav --play vel-ramp --loop`.
+
+**Live tweaking from the browser:** the dashboard's Velocity card is
+the fastest way to dial a curve in. Pick a preset or drag the gamma
+slider, or switch to points mode and drag control points directly on
+the canvas; **Apply** installs the curve for the session immediately
+(no config edit, no restart). Play while you tweak — the **live
+monitor** plots every note you strike as an (in, out) dot on the curve,
+so you can see exactly where your keybed lands. When it feels right,
+**Save** writes the curve into a clearly-marked, tool-managed
+`[midi.velocity]` block in `polyclav.toml` (a hand-written
+`[midi.velocity]` section is never overwritten — saving refuses
+instead). Session-applied curves last until the next patch change
+re-resolves the curve from config. Per-patch overrides still win and
+remain a config-file edit.
 
 **Timbre note for layered soundfonts:** remapping velocity changes
 *which sample layers trigger* in multi-layer instruments, not just
@@ -398,22 +493,32 @@ with less force — timbre change included. That's the feature, not a bug.
 
 ## Native synth: live parameters
 
-With a `type = "native"` patch selected, the full Phase 2 voice is
-adjustable live from the web dashboard (or `PATCH /api/synth`) — no
-restart, no config edit:
+With a `type = "native"` patch selected, the whole voice is adjustable
+live from the web dashboard, `PATCH /api/synth`, or the Launchkey knob
+pages — no restart, no config edit:
 
-- **Filter** — cutoff (also on Launchkey knob 4), resonance, and a
-  dedicated filter ADSR with an env→cutoff amount.
 - **Oscillators** — three of them: waveform (`saw` / `square` / `pulse`),
-  octave (−2..+2), detune (±100 cents), and level each; plus a white
-  noise source.
-- **Glide** — portamento time, 0–5 s (0 = off, the default).
+  octave (−2..+2), detune (±100 cents), and level each; a shared pulse
+  width; plus a white noise source.
+- **Filter** — cutoff, resonance, a dedicated filter ADSR with an
+  env→cutoff amount, and keyboard tracking.
+- **Amp** — a runtime ADSR, velocity→amp and velocity→cutoff routing
+  amounts, and a pre-filter tanh drive.
+- **LFO** — triangle / saw / square / sample-and-hold, 0.05–20 Hz, with
+  depths into pitch (vibrato, scaled by the mod wheel), cutoff, and amp.
+- **Performance** — glide (0–5 s portamento), pitch-bend range (0–12
+  semitones), and the **voice mode**: `mono_legato` (the default),
+  `mono_retrig`, or `poly` — switch to `poly` and **chords work** (up to
+  8 voices; when all are sounding, the oldest is stolen).
+- **Oversampling** — an optional 2× oversampled drive + filter path for
+  cleaner high-drive sounds.
 
 The defaults preserve the original single-saw Phase 1 sound (osc 2/3 and
-noise at level 0, env amount 0), so a native patch sounds the same until
-you reach for the sliders. The amp envelope is still fixed, the voice is
-still monophonic, and tweaks aren't yet persisted per patch — see
-`docs/NATIVE_SYNTH.md` for the full parameter table and limits.
+noise at level 0, env amount 0, LFO depths 0, mono), so a native patch
+sounds the same until you reach for the controls. Every tweak persists
+to the patch automatically (only the cutoff knob position is
+session-only) — see `docs/NATIVE_SYNTH.md` for the full parameter table
+with defaults and ranges.
 
 ## Mastering & level matching
 

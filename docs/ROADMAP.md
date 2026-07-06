@@ -1,14 +1,20 @@
 # polyclav — Native Synth Roadmap (Phases 2-4)
 
-> **Phase 1 shipped.** polyclav already has a `SynthBackend::Native`
-> variant in `audio-core`: a Moog-flavored, pure-Rust subtractive synth.
-> Today it ships a **single-oscillator, monophonic (mono-legato) subset**
-> with a minimal hardcoded knob mapping — the 4-voice pool and poly
-> allocator are scaffolded but stubbed (Phase 3). This document scopes
-> **Phases 2-4** —
-> the full Minimoog voice, the Launchkey-native front-panel UX, and the
-> per-patch persistence model — all of which is forward-looking design for
-> code that does not yet exist.
+> **Phases 2-4 are implemented (2026-07-06).** The `SynthBackend::Native`
+> voice in `audio-core` is now the full Minimoog-flavored instrument this
+> document designed: 3 oscillators + noise + pre-filter drive into the
+> ladder, two runtime ADSRs, a global LFO (→ pitch/cutoff/amp), mod-wheel
+> vibrato and pitch bend, velocity → amp/cutoff routing, keyboard
+> tracking, glide, optional 2× oversampling, and **8-voice polyphony**
+> with runtime-switchable voice modes. The §2 Launchkey knob-page UX is
+> code-complete (`internal/controls/pages`) pending hardware verification
+> (`docs/HARDWARE_TESTS.md`), and the §3 per-patch persistence model is
+> live as `state.toml`'s `[patches.<name>.synth]` tables. Read this doc
+> as the **design record** — the rationale behind what shipped, §5's
+> open questions, and Appendix A's DSP crate survey — not as a plan for
+> unbuilt code; where the implementation deviated, the code comments in
+> `internal/controls/pages/defs.go` and `internal/state/state.go` say how
+> and why. Current user-facing truth: `docs/NATIVE_SYNTH.md`.
 
 The DSP foundation is **fundsp** (MIT OR Apache-2.0), chosen for its
 PolyBLEP oscillators, 4-pole Moog-style ladder (`moog_hz` / `moog_q` — a
@@ -35,10 +41,10 @@ The native synth no longer roadmaps alone. Five design docs landed
 | Doc | Scope | Status |
 |---|---|---|
 | `docs/CONFIGURABILITY.md` | The four hardware seams (audio, MIDI in, OSC mixer, control surface) + tiered generalization plan (Tier 0–4) | Tier 0-1 shipped |
-| `docs/NATIVE_SYNTH.md` | User-facing state-of-the-synth: what Phase 1 actually ships and how to play it | current |
-| `docs/WEB_UI.md` | Daemon-hosted web settings UI: REST + SSE + change hub + Next.js static export; decisions locked (no auth, :8666, laptop-first) | phases A-B shipped (interim dashboard) |
-| `docs/VELOCITY_CURVES.md` | Per-patch velocity remapping: gamma+presets v1, control-point editor v2 | v1 shipped |
-| `docs/AUDITION.md` | Keyboard-free clip player: generative diagnostic patterns, loop/tempo transport, per-setting demo buttons | P1-P2 shipped |
+| `docs/NATIVE_SYNTH.md` | User-facing state-of-the-synth: what actually ships and how to play it | current |
+| `docs/WEB_UI.md` | Daemon-hosted web settings UI: REST + SSE + change hub + Next.js static export; decisions locked (no auth, :8666, laptop-first) | shipped through phase C + Next.js app (`/app/`; interim page at `/legacy`) |
+| `docs/VELOCITY_CURVES.md` | Per-patch velocity remapping: gamma+presets v1, control-point editor v2 | v1+v2 shipped (editor + live monitor in the web UI) |
+| `docs/AUDITION.md` | Keyboard-free clip player: generative diagnostic patterns, loop/tempo transport, per-setting demo buttons | P1-P3 shipped (user clips scanned at boot); P4 bundled clips open |
 
 **How they stack** (each unlocks the next):
 
@@ -70,16 +76,19 @@ ordered so each step is audible via `--play bass-riff` + web tweaking
       octave, detune; mixer levels; noise source. (shipped 2026-07-05)
 - [x] **Glide** — one-pole frequency slew, mono modes only.
       (shipped 2026-07-05)
-- [ ] **Velocity → filter/amp routing** — composes with
+- [x] **Velocity → filter/amp routing** — composes with
       `docs/VELOCITY_CURVES.md` (curve shapes input; routing decides
-      what velocity modulates).
-- [ ] **Poly + voice modes** — LRU steal, `mono_legato | mono_retrig |
-      poly` per §3.1 schema.
-- [ ] **LFO** — rate/depth, destinations pitch/cutoff/amp.
-- [ ] **Patch param persistence** — §3 `state.toml` schema (synth
-      sub-table per patch).
-- [ ] **2× oversampling around the ladder** — mitigation for the
-      Stilson/Smith tanh stage (Appendix A).
+      what velocity modulates). (shipped 2026-07-06)
+- [x] **Poly + voice modes** — oldest-voice steal, `mono_legato |
+      mono_retrig | poly` per §3.1 schema, 8 voices, live-switchable.
+      (shipped 2026-07-06)
+- [x] **LFO** — rate/depth, destinations pitch/cutoff/amp; mod-wheel
+      scales the pitch depth. (shipped 2026-07-06)
+- [x] **Patch param persistence** — §3 `state.toml` schema (synth
+      sub-table per patch). (shipped 2026-07-06)
+- [x] **2× oversampling around the ladder** — mitigation for the
+      Stilson/Smith tanh stage (Appendix A); optional, off by default.
+      (shipped 2026-07-06)
 - [x] **Launchkey knob pages (§2)** — the hardware UX; last because the
       web UI covers control until the device is back on the bench.
       (code-complete 2026-07-06 — `internal/controls/pages`, §2 adapted
@@ -91,8 +100,9 @@ ordered so each step is audible via `--play bass-riff` + web tweaking
 
 ## 1. Moog-flavored voice architecture (Patch 1: "Classic Minimoog")
 
-Phase 1 ships only a single oscillator into the ladder filter. The full
-voice below is the **Phase 2** target.
+The full voice below **has shipped** (Phases 2-4 complete; Phase 1 was
+the single-oscillator subset it grew from). This section is the design
+it was built from.
 
 ### 1.1 Signal flow (per voice)
 

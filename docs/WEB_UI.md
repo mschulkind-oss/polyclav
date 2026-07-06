@@ -1,13 +1,18 @@
 # Design: Web Settings Interface
 
-> **Status:** phases A+B shipped 2026-07-05 — the REST + SSE API and the
-> embedded interim dashboard (`[web]` in `polyclav.toml`, off by default,
-> `127.0.0.1:8666`; see `docs/USER_GUIDE.md` "Web dashboard"). Still to
-> come: the Next.js app (phase C+), config editing from the browser, and
-> the velocity editor page. Companion doc: `docs/VELOCITY_CURVES.md`
-> (the velocity editor is a planned page of this UI). Tech choices follow
-> the portfolio standards (Next.js frontend, pnpm + biome + tsc,
-> hivemind for dev processes).
+> **Status:** shipped through phase C + the Next.js app, 2026-07-06 —
+> the REST + SSE API, live control, config editing from the browser
+> (`PUT /api/config`, validated, restart banner), and the velocity
+> editor + live note monitor (`GET`/`PUT /api/velocity`). `/` redirects
+> to the Next.js static export at `/app/` (committed under
+> `internal/web/static/app/`, so `go build` needs no Node); the interim
+> single-file dashboard survives at `/legacy` until the app fully
+> replaces it. Dev workflow: `just web-setup` / `web-dev` / `web-build`
+> / `web-check` and `hivemind Procfile.dev`. The phased plan below is
+> complete — read on for the design record and decisions. Companion
+> doc: `docs/VELOCITY_CURVES.md`. Tech choices follow the portfolio
+> standards (Next.js frontend, pnpm + biome + tsc, hivemind for dev
+> processes).
 
 ## Goal
 

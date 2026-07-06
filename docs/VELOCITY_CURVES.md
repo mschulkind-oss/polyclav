@@ -1,10 +1,18 @@
 # Design: Velocity Curves
 
-> **Status:** v1 shipped 2026-07-05 — gamma presets (soft / linear /
-> hard / custom) + output clamp in `[midi.velocity]`, with per-patch
-> `velocity_curve` / `velocity_gamma` overrides (see `docs/USER_GUIDE.md`
-> "Velocity curves"). Still to come: v2 control points and the web UI's
-> curve editor + velocity monitor. Companion doc: `docs/WEB_UI.md`.
+> **Status:** v1 + v2 shipped (v1 2026-07-05, v2 2026-07-06). v1: gamma
+> presets (soft / linear / hard / custom) + output clamp in
+> `[midi.velocity]`, with per-patch `velocity_curve` / `velocity_gamma`
+> overrides. v2: control-point curves — `points` in `[midi.velocity]`
+> and `velocity_points` per patch (2–16 monotonic points anchored
+> `[0,0]` → `x=127`), precedence per-patch points > per-patch
+> curve/gamma > global points > global curve/gamma — plus the web UI's
+> curve editor (presets / gamma / draggable points), the live SSE note
+> monitor, session apply, and explicit save into a managed
+> `[midi.velocity]` block (`PUT /api/velocity`). See
+> `docs/USER_GUIDE.md` "Velocity curves". Still open: editing
+> *per-patch* overrides from the browser (the editor writes the global
+> block only). Companion doc: `docs/WEB_UI.md`.
 
 ## Problem
 
