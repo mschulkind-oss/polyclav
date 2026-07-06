@@ -20,7 +20,9 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/bootstrap"
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
+	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey"
+	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 	"github.com/mschulkind-oss/polyclav/internal/midi"
 	"github.com/mschulkind-oss/polyclav/internal/osc"
@@ -281,6 +283,7 @@ func main() {
 
 	var sup *supervisor.Supervisor
 	var mapper *osc.Mapper
+	var pg *pages.Pages
 
 	pushPadColors := func() {
 		lk := sup.Launchkey()
@@ -292,6 +295,9 @@ func main() {
 				logger.Warn("launchkey set pad color", "col", i, "err", err)
 			}
 		}
+		// The device forgets pad LEDs across power cycles: repaint the
+		// page-indicator row (row 1) alongside the patch row (row 0).
+		pg.RefreshPads()
 		if cur := registry.Current(); cur != nil {
 			if err := lk.SetDisplayText(cur.Display, ""); err != nil {
 				logger.Warn("launchkey set display text", "err", err)
@@ -308,8 +314,6 @@ func main() {
 		}
 	}
 
-	knobLabels := map[int]string{1: "Volume", 2: "Reverb", 3: "Comp", 4: "Cutoff"}
-
 	var (
 		knobMu           sync.Mutex
 		knobRestoreTimer *time.Timer
@@ -319,61 +323,55 @@ func main() {
 			_ = sup.Launchkey().SetDisplayText(cur.Display, "")
 		}
 	}
+	// armScreenRestore (re)starts the 800 ms revert-to-patch-name timer.
+	// Every pages-driven screen write (knob value popup, page-name flash,
+	// play/stop flash) shares it — the ROADMAP §2.3 base-layer behavior,
+	// unchanged from the pre-pages hardcoded knobs.
+	armScreenRestore := func() {
+		knobMu.Lock()
+		if knobRestoreTimer != nil {
+			knobRestoreTimer.Stop()
+		}
+		knobRestoreTimer = time.AfterFunc(800*time.Millisecond, restoreDisplayToPatch)
+		knobMu.Unlock()
+	}
 
 	onDAWEvent := func(ev driver.Event) {
 		switch e := ev.(type) {
 		case driver.KnobEvent:
-			label, ok := knobLabels[e.Index]
-			if !ok {
-				return // unmapped knobs 4..8 still don't update anything
-			}
-			const step = 1.0 / 127.0
-			delta := float32(e.Delta) * step
-
-			// The controls layer owns clamp → audio apply → state persist →
-			// hub publish; main keeps only the Launchkey screen feedback.
-			// ok == false means no patch is selected (or, for knob 4, the
-			// current patch is not a native synth — Phase 2 folds cutoff
-			// into the multi-page knob system, see docs/ROADMAP.md).
-			var displayValue string
-			switch e.Index {
-			case 1:
-				v, ok := ctl.AdjustVolume(delta)
-				if !ok {
-					return
-				}
-				displayValue = fmt.Sprintf("%d%%", int(v*100+0.5))
-			case 2:
-				v, ok := ctl.AdjustReverb(delta)
-				if !ok {
-					return
-				}
-				displayValue = fmt.Sprintf("%d%%", int(v*100+0.5))
-			case 3:
-				v, ok := ctl.AdjustCompressor(delta)
-				if !ok {
-					return
-				}
-				displayValue = fmt.Sprintf("%d%%", int(v*100+0.5))
-			case 4:
-				hz, ok := ctl.AdjustCutoff(delta)
-				if !ok {
-					return
-				}
-				displayValue = formatCutoffHz(hz)
-			default:
+			// The pages state machine owns all knob→param routing
+			// (docs/ROADMAP.md §2.1; page 1 keeps the pre-pages knob 1-4
+			// behavior: volume/reverb/comp/cutoff). It mutates through the
+			// controls layer only and writes the label+value popup through
+			// the screen adapter below, which arms the 800 ms restore.
+			pg.HandleKnob(e.Index, e.Delta)
+		case driver.TransportEvent:
+			// ROADMAP §2.5 transport table — status as shipped:
+			//
+			//   Play      → audition-player toggle of the last-used clip.
+			//               (§2.5 proposed LFO tap-tempo; there is no
+			//               tempo-synced LFO, and the player toggle is the
+			//               transport-shaped capability we do have.)
+			//   Stop      → unmapped. §2.5 wants panic / all-notes-off;
+			//               controls exposes no panic surface yet — deferred
+			//               with it.
+			//   Record    → OBSOLETE, unmapped. §2.5/§3.4's "arm save"
+			//               button predates the controls layer: every synth
+			//               edit already persists (debounced) to state.toml,
+			//               so there is nothing to arm.
+			//   Loop      → unmapped (reserved in §2.5 as well).
+			//   Rewind/FF → unmapped (reserved for XR18 control per §2.5).
+			//   Track ←/→ → unmapped for now. §2.2 proposed page switching
+			//               here; pages moved to Scene ↑/↓, keeping Track
+			//               free for a future octave shift or patch bank.
+			//   Scene ↑   → previous knob page (§2.2 adapted).
+			//   Scene ↓   → next knob page.
+			//   Shift     → unmapped (fine-adjust modifier stays an open
+			//               §2.2 question).
+			if !e.Pressed {
 				return
 			}
-
-			if err := sup.Launchkey().SetDisplayText(label, displayValue); err != nil {
-				logger.Warn("launchkey knob display", "err", err)
-			}
-			knobMu.Lock()
-			if knobRestoreTimer != nil {
-				knobRestoreTimer.Stop()
-			}
-			knobRestoreTimer = time.AfterFunc(800*time.Millisecond, restoreDisplayToPatch)
-			knobMu.Unlock()
+			dispatchTransport(pg, e.Button)
 		case driver.PadEvent:
 			logger.Info("pad event", "row", e.Row, "col", e.Col, "pressed", e.Pressed, "vel", e.Velocity)
 			if e.Row != 0 || !e.Pressed {
@@ -446,6 +444,36 @@ func main() {
 	sup = supervisor.New(logger, supCfg)
 	mapper = osc.NewMapper(sup.XR18(), logger, cfg.OSC.XR18.Bindings)
 
+	// Knob-page state machine (docs/ROADMAP.md §2): page state and all
+	// knob→param routing live in internal/controls/pages; main only adapts
+	// the launchkey reconciler into its screen/pad seams. pg is assigned
+	// before sup.Run starts the reconciler goroutines, so onDAWEvent and
+	// pushPadColors reading it is race-free (the same ordering argument as
+	// sup itself, per the supCfg comment above).
+	pg = pages.New(ctl,
+		screenAdapter{write: func(line1, line2 string) error {
+			err := sup.Launchkey().SetDisplayText(line1, line2)
+			if err != nil {
+				logger.Warn("launchkey pages display", "err", err)
+			}
+			armScreenRestore()
+			return err
+		}},
+		padAdapter{set: func(row, col int, color components.Color) error {
+			err := sup.Launchkey().SetPadColor(row, col, color)
+			if err != nil {
+				logger.Warn("launchkey page indicator pad", "row", row, "col", col, "err", err)
+			}
+			return err
+		}},
+	)
+	pg.AttachPlayer(playerToggle{plr: plr})
+	// Seed the page machine with the already-selected boot patch; the
+	// followPages hub follower below keeps it in sync from here on.
+	if cur := registry.Current(); cur != nil {
+		pg.OnPatchChange(cur.Type)
+	}
+
 	// Follow patch changes from ANY surface (pads, web selects, future
 	// OSC): re-resolve the velocity curve and repaint the Launchkey
 	// display. Level-triggered on purpose — the subscription buffer is
@@ -473,12 +501,23 @@ func main() {
 		}
 		return true
 	})
+	// Page availability follows the patch type: leaving the native engine
+	// snaps the knob pages back to MAIN and refreshes the indicator pads.
+	followPages := newPatchFollower(currentPatchName(), registry.Current, func(cur *patches.Patch) bool {
+		typ := ""
+		if cur != nil {
+			typ = cur.Type
+		}
+		pg.OnPatchChange(typ)
+		return true
+	})
 	patchCh, patchCancel := hub.Subscribe(64)
 	defer patchCancel()
 	go func() {
 		for range patchCh {
 			followVelocity()
 			followDisplay()
+			followPages()
 		}
 	}()
 
@@ -572,6 +611,60 @@ func (audioBackend) SetNativeVoiceMode(mode string) error {
 	return audio.SetNativeVoiceMode(mode)
 }
 func (audioBackend) SetNativeOversample(on bool) { audio.SetNativeOversample(on) }
+
+// screenAdapter and padAdapter bridge the launchkey reconciler (plus
+// main's restore-timer / logging concerns) into the pages package's
+// driver-agnostic ScreenWriter/PadWriter seams.
+type screenAdapter struct {
+	write func(line1, line2 string) error
+}
+
+func (a screenAdapter) SetDisplayText(line1, line2 string) error { return a.write(line1, line2) }
+
+type padAdapter struct {
+	set func(row, col int, color components.Color) error
+}
+
+func (a padAdapter) SetPadColor(row, col int, color components.Color) error {
+	return a.set(row, col, color)
+}
+
+// playerToggle adapts the audition player to pages.PlayerControl: the
+// transport Play button restarts the last-used clip when stopped and
+// stops it when playing (player.State retains ClipID/Loop/Tempo after a
+// stop precisely so it can be resumed). ok=false until something has
+// played this session — there is no clip to restart yet.
+type playerToggle struct{ plr *player.Player }
+
+func (t playerToggle) Toggle() (playing bool, clip string, ok bool) {
+	st := t.plr.State()
+	if st.Playing {
+		t.plr.Stop()
+		return false, st.ClipID, true
+	}
+	if st.ClipID == "" {
+		return false, "", false
+	}
+	if err := t.plr.Play(st.ClipID, st.Loop, st.Tempo); err != nil {
+		return false, st.ClipID, false
+	}
+	return true, st.ClipID, true
+}
+
+// dispatchTransport maps a pressed transport button onto the pages state
+// machine — split from onDAWEvent so the §2.5 mapping is unit-testable.
+// Unlisted buttons are intentionally unbound; see the status table at
+// the TransportEvent case in onDAWEvent.
+func dispatchTransport(pg *pages.Pages, b driver.TransportButton) {
+	switch b {
+	case driver.TransportSceneUp:
+		pg.PrevPage()
+	case driver.TransportSceneDown:
+		pg.NextPage()
+	case driver.TransportPlay:
+		pg.TogglePlay()
+	}
+}
 
 // newRateGate returns a non-blocking rate limiter: each call reports
 // whether the caller may proceed, allowing at most one pass per minGap.
@@ -703,15 +796,6 @@ func buildVersion() string {
 		}
 	}
 	return "devel"
-}
-
-// formatCutoffHz renders a cutoff Hz for the Launchkey screen — kHz with
-// one decimal place above 1 kHz, integer Hz below.
-func formatCutoffHz(hz float32) string {
-	if hz >= 1000.0 {
-		return fmt.Sprintf("%.1f kHz", hz/1000.0)
-	}
-	return fmt.Sprintf("%d Hz", int(hz+0.5))
 }
 
 // ensureConfigExists is the first-run config bootstrap: if the user has

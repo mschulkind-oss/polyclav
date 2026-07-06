@@ -80,8 +80,12 @@ ordered so each step is audible via `--play bass-riff` + web tweaking
       sub-table per patch).
 - [ ] **2× oversampling around the ladder** — mitigation for the
       Stilson/Smith tanh stage (Appendix A).
-- [ ] **Launchkey knob pages (§2)** — the hardware UX; last because the
+- [x] **Launchkey knob pages (§2)** — the hardware UX; last because the
       web UI covers control until the device is back on the bench.
+      (code-complete 2026-07-06 — `internal/controls/pages`, §2 adapted
+      to the shipped controls layer with deviations documented on the
+      page table; hardware verification pending, see
+      docs/HARDWARE_TESTS.md "Knob pages".)
 
 ---
 

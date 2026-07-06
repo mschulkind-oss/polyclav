@@ -6,6 +6,10 @@ import (
 	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
+	"github.com/mschulkind-oss/polyclav/internal/controls"
+	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
+	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
+	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 )
 
@@ -331,6 +335,68 @@ func TestPatchFollowerRetriesFailedApply(t *testing.T) {
 	follow() // level satisfied: no further calls
 	if calls != 3 {
 		t.Fatalf("after success: %d calls, want 3 (no re-apply once recorded)", calls)
+	}
+}
+
+// Minimal pages seams for TestDispatchTransport: the transport paths
+// (page cycling, player toggle) never touch controls' collaborators, so
+// the Controls underneath can be built over nil audio/registry/store.
+type nopScreen struct{}
+
+func (nopScreen) SetDisplayText(_, _ string) error { return nil }
+
+type nopPads struct{}
+
+func (nopPads) SetPadColor(_, _ int, _ components.Color) error { return nil }
+
+type countingPlayer struct{ toggles int }
+
+func (p *countingPlayer) Toggle() (bool, string, bool) {
+	p.toggles++
+	return true, "clip", true
+}
+
+// TestDispatchTransport pins the §2.5 button mapping as shipped: Scene
+// Up/Down cycle pages (with wraparound), Play toggles the audition
+// player, and every other transport button is intentionally inert.
+func TestDispatchTransport(t *testing.T) {
+	ctl := controls.New(nil, nil, nil, nil, nil)
+	pg := pages.New(ctl, nopScreen{}, nopPads{})
+	pg.OnPatchChange("native") // unlock the synth pages
+	plr := &countingPlayer{}
+	pg.AttachPlayer(plr)
+
+	dispatchTransport(pg, driver.TransportSceneDown)
+	if idx, name := pg.CurrentPage(); idx != 1 || name != "OSC" {
+		t.Fatalf("SceneDown: page %d %q, want 1 OSC", idx, name)
+	}
+	dispatchTransport(pg, driver.TransportSceneUp)
+	if idx, _ := pg.CurrentPage(); idx != 0 {
+		t.Fatalf("SceneUp: page %d, want 0", idx)
+	}
+	dispatchTransport(pg, driver.TransportSceneUp) // wraps to the last page
+	if idx, name := pg.CurrentPage(); idx != 4 || name != "LFO/MOD" {
+		t.Fatalf("SceneUp wrap: page %d %q, want 4 LFO/MOD", idx, name)
+	}
+
+	dispatchTransport(pg, driver.TransportPlay)
+	if plr.toggles != 1 {
+		t.Fatalf("Play: toggles = %d, want 1", plr.toggles)
+	}
+
+	// Everything else in the §2.5 table is unbound (see onDAWEvent).
+	for _, b := range []driver.TransportButton{
+		driver.TransportStop, driver.TransportRecord, driver.TransportLoop,
+		driver.TransportRewind, driver.TransportFastForward,
+		driver.TransportTrackLeft, driver.TransportTrackRight, driver.TransportShift,
+	} {
+		dispatchTransport(pg, b)
+	}
+	if idx, _ := pg.CurrentPage(); idx != 4 {
+		t.Errorf("unbound buttons moved the page to %d", idx)
+	}
+	if plr.toggles != 1 {
+		t.Errorf("unbound buttons toggled the player (%d)", plr.toggles)
 	}
 }
 

@@ -9,11 +9,33 @@ it any time after a rebuild or before a release.
 - Keys produce sound on every patch.
 - Sustain pedal sustains.
 - Mod wheel modulates (CC 1).
-- Knobs 1/2/3 drive volume / reverb / compressor.
-- Knob 4 drives cutoff *only* on `type = "native"` patches (no-op on
-  others); knobs 5-8 are intentionally unbound.
+- On page 1 (MAIN): knobs 1/2/3 drive volume / reverb / compressor on
+  every patch; knob 4 drives cutoff *only* on `type = "native"` patches
+  (no-op on others).
 - Top-row pads switch patches.
 - `overmind quit` returns the Launchkey to non-DAW (Custom/factory) mode.
+
+## Knob pages (pending hardware verification)
+
+The paged-knob UX (docs/ROADMAP.md §2, adapted) is code-complete and
+unit-tested against driver fakes, but has never met the device. Verify:
+
+- Scene ↑/↓ cycle the 5 pages (MAIN → OSC → FILTER → AMP → LFO/MOD,
+  wrapping) on a native patch; the page name flashes on the screen and
+  reverts to the patch name after ~800 ms.
+- Bottom-row pads 1-5 indicate pages: active page orange, others dim
+  white. The indicator follows Scene presses and survives a device
+  power-cycle/reconnect.
+- On a soundfont patch, Scene ↑/↓ flash "(native only)" and stay on
+  MAIN; bottom-row pads 2-5 go dark.
+- Knob 1 on each page sounds right on a native patch: MAIN=volume,
+  OSC=osc1 level, FILTER=cutoff, AMP=amp attack, LFO/MOD=LFO rate
+  (audible vibrato/wah once LFO>Pitch or LFO>Cutoff is raised).
+- Knob labels/values on the screen are legible for every slot (16-char
+  lines; e.g. "Osc1 Detune" / "+7 c").
+- Transport Play toggles the audition player's last-used clip (run with
+  `--play <clip>` first); shows PLAY/STOP, or "(no clip)" if nothing
+  has played yet. Stop/Record/Loop/Rewind/FF/Track/Shift do nothing.
 
 ## How to report back
 
