@@ -206,6 +206,20 @@ func TestLoadVelocityGoodConfigs(t *testing.T) {
 			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_gamma = 0.7\n"},
 		{"global gamma alone implies custom",
 			"[midi.velocity]\ngamma = 0.7\n"},
+		{"global points",
+			"[midi.velocity]\npoints = [[0, 0], [64, 90], [127, 127]]\n"},
+		{"global points minimum pair count",
+			"[midi.velocity]\npoints = [[0, 0], [127, 127]]\n"},
+		{"global points with clamps",
+			"[midi.velocity]\npoints = [[0, 0], [64, 90], [127, 127]]\nout_min = 10\nout_max = 120\n"},
+		{"global points flat segment (ys may repeat)",
+			"[midi.velocity]\npoints = [[0, 0], [64, 90], [100, 90], [127, 127]]\n"},
+		{"per-patch points",
+			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_points = [[0, 0], [64, 90], [127, 127]]\n"},
+		{"global curve with per-patch points (different scopes)",
+			"[midi.velocity]\ncurve = \"soft\"\n\n[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_points = [[0, 0], [127, 127]]\n"},
+		{"global points with per-patch curve (different scopes)",
+			"[midi.velocity]\npoints = [[0, 0], [127, 127]]\n\n[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_curve = \"hard\"\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -264,6 +278,43 @@ velocity_gamma = 0.7
 	}
 }
 
+func TestLoadVelocityDecodesPoints(t *testing.T) {
+	cfg := mustLoadTOML(t, `
+[midi.velocity]
+points = [[0, 0], [64, 90], [127, 127]]
+
+[[patches]]
+name = "p"
+soundfont = "/tmp/p.sf2"
+velocity_points = [[0, 0], [32, 20], [127, 127]]
+`)
+	wantGlobal := [][]int{{0, 0}, {64, 90}, {127, 127}}
+	if !equalPoints(cfg.MIDI.Velocity.Points, wantGlobal) {
+		t.Errorf("global points = %v, want %v", cfg.MIDI.Velocity.Points, wantGlobal)
+	}
+	wantPatch := [][]int{{0, 0}, {32, 20}, {127, 127}}
+	if !equalPoints(cfg.Patches[0].VelocityPoints, wantPatch) {
+		t.Errorf("patch velocity_points = %v, want %v", cfg.Patches[0].VelocityPoints, wantPatch)
+	}
+}
+
+func equalPoints(a, b [][]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if len(a[i]) != len(b[i]) {
+			return false
+		}
+		for j := range a[i] {
+			if a[i][j] != b[i][j] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func TestLoadVelocityErrorCases(t *testing.T) {
 	cases := []struct {
 		name string
@@ -297,6 +348,51 @@ func TestLoadVelocityErrorCases(t *testing.T) {
 		{"per-patch negative gamma",
 			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_gamma = -1.0\n",
 			`patch "p": velocity_gamma must be > 0`},
+		{"points single pair",
+			"[midi.velocity]\npoints = [[0, 0]]\n",
+			"points must have 2..16 [x, y] pairs (got 1)"},
+		{"points too many pairs",
+			"[midi.velocity]\npoints = [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8],[9,9],[10,10],[11,11],[12,12],[13,13],[14,14],[15,15],[127,127]]\n",
+			"points must have 2..16 [x, y] pairs (got 17)"},
+		{"points malformed pair",
+			"[midi.velocity]\npoints = [[0, 0], [64], [127, 127]]\n",
+			"points[1] must be an [x, y] pair (got 1 values)"},
+		{"points triple",
+			"[midi.velocity]\npoints = [[0, 0], [64, 90, 1], [127, 127]]\n",
+			"points[1] must be an [x, y] pair (got 3 values)"},
+		{"points x out of range",
+			"[midi.velocity]\npoints = [[0, 0], [200, 90], [127, 127]]\n",
+			"points[1] x must be in 0..127 (got 200)"},
+		{"points y out of range",
+			"[midi.velocity]\npoints = [[0, 0], [64, -3], [127, 127]]\n",
+			"points[1] y must be in 0..127 (got -3)"},
+		{"points first not zero",
+			"[midi.velocity]\npoints = [[0, 5], [127, 127]]\n",
+			"points[0] must be [0, 0] (got [0, 5])"},
+		{"points last x not 127",
+			"[midi.velocity]\npoints = [[0, 0], [126, 127]]\n",
+			"points last x must be 127 (got 126)"},
+		{"points x not strictly increasing",
+			"[midi.velocity]\npoints = [[0, 0], [64, 60], [64, 90], [127, 127]]\n",
+			"points[2] x (64) must be > previous x (64)"},
+		{"points y decreasing",
+			"[midi.velocity]\npoints = [[0, 0], [64, 90], [127, 80]]\n",
+			"points[2] y (80) must be >= previous y (90)"},
+		{"points and curve in same scope",
+			"[midi.velocity]\ncurve = \"soft\"\npoints = [[0, 0], [127, 127]]\n",
+			"midi.velocity: points and curve/gamma are mutually exclusive"},
+		{"points and gamma in same scope",
+			"[midi.velocity]\ngamma = 0.8\npoints = [[0, 0], [127, 127]]\n",
+			"midi.velocity: points and curve/gamma are mutually exclusive"},
+		{"per-patch points and curve in same scope",
+			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_curve = \"soft\"\nvelocity_points = [[0, 0], [127, 127]]\n",
+			`patch "p": velocity_points and velocity_curve/velocity_gamma are mutually exclusive`},
+		{"per-patch points and gamma in same scope",
+			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_gamma = 0.7\nvelocity_points = [[0, 0], [127, 127]]\n",
+			`patch "p": velocity_points and velocity_curve/velocity_gamma are mutually exclusive`},
+		{"per-patch points shape error carries patch prefix",
+			"[[patches]]\nname = \"p\"\nsoundfont = \"/tmp/p.sf2\"\nvelocity_points = [[0, 0], [126, 127]]\n",
+			`patch "p": velocity_points last x must be 127 (got 126)`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -329,6 +425,12 @@ velocity_curve = "custom"
 name = "p2"
 soundfont = "/tmp/p2.sf2"
 velocity_gamma = -2.0
+
+[[patches]]
+name = "p3"
+soundfont = "/tmp/p3.sf2"
+velocity_curve = "soft"
+velocity_points = [[0, 0], [90, 80], [64, 90], [127, 127]]
 `)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -338,6 +440,8 @@ velocity_gamma = -2.0
 		"out_min (100) must be <= out_max (50)",
 		`patch "p1": velocity_curve "custom" requires velocity_gamma > 0`,
 		`patch "p2": velocity_gamma must be > 0`,
+		`patch "p3": velocity_points and velocity_curve/velocity_gamma are mutually exclusive`,
+		`patch "p3": velocity_points[2] x (64) must be > previous x (90)`,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing offender %q:\n%s", want, err.Error())
@@ -530,7 +634,10 @@ func TestExampleConfigEmbedNonEmpty(t *testing.T) {
 	}
 	// The example doubles as user documentation — make sure the newer
 	// config surfaces stay documented there.
-	for _, want := range []string{"[midi.velocity]", "[web]", "heartbeat", "[osc.mixer]"} {
+	for _, want := range []string{
+		"[midi.velocity]", "[web]", "heartbeat", "[osc.mixer]",
+		"points  = [[0, 0], [64, 90], [127, 127]]", "velocity_points",
+	} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("ExampleConfig() missing %q documentation block", want)
 		}

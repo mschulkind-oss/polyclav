@@ -561,15 +561,21 @@ func newPatchFollower(last string, current func() *patches.Patch, apply func(*pa
 	}
 }
 
-// resolveVelocity picks the velocity curve for patch p: the per-patch
-// override fields win over the global [midi.velocity] block, and — for
-// the patch fields and the global block alike — Gamma > 0 with no curve
-// name is the "custom" shorthand (docs/VELOCITY_CURVES.md). p == nil
-// (no patch selected) resolves the global curve. config.Load normalizes
-// the global shorthand too; it is re-applied here so configs built in
-// code (tests, Defaults()) behave identically. The global OutMin/OutMax
-// were range-checked (0..127) at config.Load, so the uint8 conversions
-// are lossless.
+// resolveVelocity picks the velocity curve for patch p, most specific
+// override first (docs/VELOCITY_CURVES.md):
+//
+//	per-patch points > per-patch curve/gamma > global points > global curve/gamma
+//
+// Within one scope points vs curve/gamma is a config.Load error, so the
+// two same-scope rungs only both exist for configs built in code — the
+// order still matters there so tests and future callers get one
+// deterministic answer. For the patch fields and the global block
+// alike, Gamma > 0 with no curve name is the "custom" shorthand. p ==
+// nil (no patch selected) resolves the global curve. config.Load
+// normalizes the global shorthand too; it is re-applied here so configs
+// built in code (tests, Defaults()) behave identically. The global
+// OutMin/OutMax were range-checked (0..127) at config.Load, so the
+// uint8 conversions are lossless.
 // applyWebFlag overlays the --web CLI flag onto the loaded config. An
 // empty value leaves the config untouched. "on" (or "true") enables the
 // server on the config's listen address; anything else is taken as the
@@ -589,6 +595,11 @@ func applyWebFlag(cfg *config.Config, val string) {
 }
 
 func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, error) {
+	if p != nil && len(p.VelocityPoints) > 0 {
+		// Per-patch overrides carry no clamp fields (same as the
+		// curve/gamma rung below): the velocity package defaults to 1..127.
+		return newPointCurve(p.VelocityPoints, 0, 0)
+	}
 	if p != nil && (p.VelocityCurve != "" || p.VelocityGamma > 0) {
 		name := p.VelocityCurve
 		if name == "" {
@@ -597,11 +608,33 @@ func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, erro
 		return velocity.New(name, p.VelocityGamma, 0, 0)
 	}
 	v := cfg.MIDI.Velocity
+	if len(v.Points) > 0 {
+		return newPointCurve(v.Points, uint8(v.OutMin), uint8(v.OutMax))
+	}
 	name := v.Curve
 	if name == "" && v.Gamma > 0 {
 		name = "custom"
 	}
 	return velocity.New(name, v.Gamma, uint8(v.OutMin), uint8(v.OutMax))
+}
+
+// newPointCurve bridges the config-shaped [][]int point list (TOML has
+// no fixed-size arrays) into the velocity package's [][2]uint8. Shape
+// and range were already validated at config.Load; they are re-checked
+// here — like the rest of resolveVelocity — so configs built in code
+// fail loudly instead of silently truncating to uint8.
+func newPointCurve(pts [][]int, outMin, outMax uint8) (velocity.Curve, error) {
+	pairs := make([][2]uint8, len(pts))
+	for i, pt := range pts {
+		if len(pt) != 2 {
+			return velocity.Curve{}, fmt.Errorf("velocity points[%d]: want an [x, y] pair, got %d values", i, len(pt))
+		}
+		if pt[0] < 0 || pt[0] > 127 || pt[1] < 0 || pt[1] > 127 {
+			return velocity.Curve{}, fmt.Errorf("velocity points[%d]: [%d, %d] out of range 0..127", i, pt[0], pt[1])
+		}
+		pairs[i] = [2]uint8{uint8(pt[0]), uint8(pt[1])}
+	}
+	return velocity.NewFromPoints(pairs, outMin, outMax)
 }
 
 // buildVersion returns the main module's version from build info, or

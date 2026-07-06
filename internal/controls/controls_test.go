@@ -182,16 +182,23 @@ type knobUpdate struct {
 	value        float32
 }
 
-// fakeStore implements StateStore in memory.
+// fakeStore implements StateStore in memory. Deliberately unsynchronized:
+// every call happens under Controls.applyMu, so the race detector flags
+// any path that escapes the writer lock.
 type fakeStore struct {
 	knobs        map[string]state.Knob
+	synths       map[string]state.SynthState
 	currentPatch string
 	updates      []knobUpdate
+	synthUpdates int
 	setCurrCalls int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{knobs: map[string]state.Knob{}}
+	return &fakeStore{
+		knobs:  map[string]state.Knob{},
+		synths: map[string]state.SynthState{},
+	}
 }
 
 func (f *fakeStore) PatchKnob(name string) state.Knob {
@@ -213,6 +220,16 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 	}
 	f.knobs[name] = k
 	f.updates = append(f.updates, knobUpdate{patch: name, field: field, value: value})
+}
+
+func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
+	syn, ok := f.synths[name]
+	return syn, ok
+}
+
+func (f *fakeStore) UpdatePatchSynth(name string, syn state.SynthState) {
+	f.synths[name] = syn
+	f.synthUpdates++
 }
 
 func (f *fakeStore) SetCurrentPatch(name string) {
@@ -273,8 +290,9 @@ func approxEq(a, b float32) bool {
 }
 
 var (
-	sfPatch     = patches.Patch{Name: "salamander", Display: "Salamander", Type: "soundfont"}
-	nativePatch = patches.Patch{Name: "moog", Display: "Moog", Type: "native", Engine: "minimoog"}
+	sfPatch      = patches.Patch{Name: "salamander", Display: "Salamander", Type: "soundfont"}
+	nativePatch  = patches.Patch{Name: "moog", Display: "Moog", Type: "native", Engine: "minimoog"}
+	nativePatch2 = patches.Patch{Name: "moog2", Display: "Moog II", Type: "native", Engine: "minimoog"}
 )
 
 func TestAbsoluteSetters(t *testing.T) {
@@ -565,6 +583,9 @@ func TestSelectPatchRestoresKnobsAndPublishes(t *testing.T) {
 	if f.audio.cutoffCalls != 0 {
 		t.Error("cutoff must not be initialized for a non-native patch")
 	}
+	if f.audio.synthCalls() != 0 {
+		t.Error("synth params must not be touched by a non-native select")
+	}
 
 	ch := recvChange(t, f.ch)
 	if ch.Type != "patch" {
@@ -581,6 +602,9 @@ func TestSelectPatchRestoresKnobsAndPublishes(t *testing.T) {
 	}
 	if _, present := ch.Data["cutoff_hz"]; present {
 		t.Error("cutoff_hz must not appear in a non-native patch change")
+	}
+	if _, present := ch.Data["synth"]; present {
+		t.Error("synth must not appear in a non-native patch change")
 	}
 }
 
@@ -603,6 +627,26 @@ func TestSelectPatchNativePublishesCutoff(t *testing.T) {
 	hz, ok := ch.Data["cutoff_hz"].(float32)
 	if !ok || !approxEq(hz, 632.456) {
 		t.Errorf("expected cutoff_hz~632.456 in native patch change, got %v", ch.Data["cutoff_hz"])
+	}
+	// A native select applies and publishes the full synth block (factory
+	// defaults here — the patch has never been tweaked).
+	syn, ok := ch.Data["synth"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected synth block in native patch change, got %T", ch.Data["synth"])
+	}
+	if syn["resonance"] != float32(0.3) || syn["noise"] != float32(0) || syn["glide"] != float32(0) {
+		t.Errorf("unexpected synth scalars in patch change: %v", syn)
+	}
+	fe, ok := syn["filter_env"].(map[string]any)
+	if !ok || fe["decay"] != float32(0.6) {
+		t.Errorf("unexpected filter_env in patch change: %v", syn["filter_env"])
+	}
+	oscs, ok := syn["osc"].([]map[string]any)
+	if !ok || len(oscs) != 3 {
+		t.Fatalf("expected 3 oscs in patch change, got %v", syn["osc"])
+	}
+	if oscs[0]["wave"] != "saw" || oscs[0]["level"] != float32(1.0) {
+		t.Errorf("unexpected osc 0 in patch change: %v", oscs[0])
 	}
 }
 
@@ -1170,8 +1214,12 @@ func TestSetSynthNoiseAndGlide(t *testing.T) {
 	}
 }
 
-func TestSynthSurvivesPatchSelect(t *testing.T) {
-	f := newFixture(t, sfPatch, nativePatch)
+// TestSynthPerPatchPersistence pins the ROADMAP §3 contract end to end:
+// tweak patch A, select fresh patch B (factory defaults hit the engine),
+// re-select A (A's tweaks come back), with every step flowing through
+// the state store.
+func TestSynthPerPatchPersistence(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch, nativePatch2)
 	if err := f.c.SelectPatch("moog"); err != nil {
 		t.Fatalf("SelectPatch(moog): %v", err)
 	}
@@ -1184,28 +1232,170 @@ func TestSynthSurvivesPatchSelect(t *testing.T) {
 	if _, err := f.c.SetSynthGlide(0.5); err != nil {
 		t.Fatalf("SetSynthGlide: %v", err)
 	}
+	tweaked := f.c.Synth()
 
-	// Leave for a soundfont patch and come back: the synth params are
-	// engine-global atomics for now, so nothing may reset (unlike cutoff).
+	// The tweaks were persisted for moog as they happened.
+	stored, ok := f.st.PatchSynth("moog")
+	if !ok {
+		t.Fatal("moog synth block missing from state store after tweaks")
+	}
+	if got := synthFromState(stored); got != tweaked {
+		t.Errorf("stored block: want %+v, got %+v", tweaked, got)
+	}
+
+	// A soundfont detour must not touch the engine's synth params.
+	calls := f.audio.synthCalls()
 	if err := f.c.SelectPatch("salamander"); err != nil {
 		t.Fatalf("SelectPatch(salamander): %v", err)
 	}
+	if f.audio.synthCalls() != calls {
+		t.Error("non-native select must leave engine synth params untouched")
+	}
+
+	// A fresh native patch gets FACTORY DEFAULTS applied to the engine —
+	// not moog's leftovers.
+	if err := f.c.SelectPatch("moog2"); err != nil {
+		t.Fatalf("SelectPatch(moog2): %v", err)
+	}
+	if f.c.Synth() != defaultSynthWant {
+		t.Errorf("moog2 cache: want factory defaults, got %+v", f.c.Synth())
+	}
+	if f.audio.resonance != 0.3 || f.audio.glide != 0 || f.audio.noise != 0 {
+		t.Errorf("moog2 engine: want factory (0.3, 0, 0), got (%v, %v, %v)",
+			f.audio.resonance, f.audio.glide, f.audio.noise)
+	}
+	if f.audio.feD != 0.6 {
+		t.Errorf("moog2 engine filter decay: want factory 0.6, got %v", f.audio.feD)
+	}
+	// applySynthAll pushes oscs 0..2 in order, so the last osc call is
+	// factory osc 2.
+	if want := (oscCall{idx: 2, wave: "saw", octave: -1, detune: 5, level: 0}); f.audio.lastOsc != want {
+		t.Errorf("moog2 engine osc 2: want factory %+v, got %+v", want, f.audio.lastOsc)
+	}
+	// Restoring defaults is not an edit: moog2 reaches disk only on its
+	// first tweak.
+	if _, ok := f.st.PatchSynth("moog2"); ok {
+		t.Error("fresh native select must not persist a synth block")
+	}
+
+	// Re-selecting moog restores its tweaks to engine and cache.
 	if err := f.c.SelectPatch("moog"); err != nil {
 		t.Fatalf("SelectPatch(moog) again: %v", err)
 	}
+	if f.c.Synth() != tweaked {
+		t.Errorf("moog cache after reselect: want %+v, got %+v", tweaked, f.c.Synth())
+	}
+	if f.audio.resonance != 0.7 || f.audio.glide != 0.5 {
+		t.Errorf("moog engine after reselect: want (0.7, 0.5), got (%v, %v)",
+			f.audio.resonance, f.audio.glide)
+	}
+	if want := (oscCall{idx: 2, wave: "pulse", octave: -2, detune: 12, level: 0.9}); f.audio.lastOsc != want {
+		t.Errorf("moog engine osc 2 after reselect: want %+v, got %+v", want, f.audio.lastOsc)
+	}
+	if tweaked.FilterEnv != defaultSynthWant.FilterEnv {
+		t.Errorf("filter env: expected untouched defaults, got %+v", tweaked.FilterEnv)
+	}
+}
 
-	s := f.c.Snapshot().Synth
-	if s.Resonance != 0.7 {
-		t.Errorf("resonance: expected 0.7 to survive selects, got %v", s.Resonance)
+// TestSynthMutationsPersist asserts EVERY mutating synth entry point
+// writes the resulting whole-block snapshot to the state store.
+func TestSynthMutationsPersist(t *testing.T) {
+	mutations := map[string]func(c *Controls) error{
+		"SetSynthResonance": func(c *Controls) error { _, err := c.SetSynthResonance(0.5); return err },
+		"SetSynthFilterEnv": func(c *Controls) error { _, err := c.SetSynthFilterEnv(0.01, 0.5, 0.5, 0.5, 0.3); return err },
+		"SetSynthOsc":       func(c *Controls) error { _, err := c.SetSynthOsc(1, "square", 1, -7, 0.6); return err },
+		"SetSynthNoise":     func(c *Controls) error { _, err := c.SetSynthNoise(0.2); return err },
+		"SetSynthGlide":     func(c *Controls) error { _, err := c.SetSynthGlide(0.1); return err },
+		"MergeSynth": func(c *Controls) error {
+			_, err := c.MergeSynth(SynthPartial{Noise: fp(0.4), Oscs: []OscPartial{{Index: 0, Level: fp(0.3)}}})
+			return err
+		},
 	}
-	if want := (OscParams{Wave: "pulse", Octave: -2, DetuneCents: 12, Level: 0.9}); s.Oscs[2] != want {
-		t.Errorf("osc 2: expected %+v to survive selects, got %+v", want, s.Oscs[2])
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, nativePatch)
+			selectNative(t, f)
+			if err := mutate(f.c); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			stored, ok := f.st.PatchSynth("moog")
+			if !ok {
+				t.Fatal("mutation did not persist a synth block")
+			}
+			if want := synthToState(f.c.Synth()); stored != want {
+				t.Errorf("persisted block diverges from cache:\nwant %+v\ngot  %+v", want, stored)
+			}
+		})
 	}
-	if s.Glide != 0.5 {
-		t.Errorf("glide: expected 0.5 to survive selects, got %v", s.Glide)
+}
+
+// TestSelectPatchSanitizesStoredSynth pins the trust boundary: state.toml
+// is hand-editable, so a restored block re-clamps numerics and falls back
+// to the factory wave for an unknown osc wave before touching the engine.
+func TestSelectPatchSanitizesStoredSynth(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	f.st.synths["moog"] = state.SynthState{
+		Resonance: 2.0, // > maxResonance
+		FilterEnv: state.FilterEnvState{Attack: -1, Decay: 99, Sustain: 2, Release: 0, Amount: -3},
+		Oscs: [3]state.OscState{
+			{Wave: "sine", Octave: 9, DetuneCents: 999, Level: 7}, // invalid wave + out of range
+			{Wave: "square", Octave: -2, DetuneCents: -7, Level: 0.5},
+			{Wave: "pulse", Octave: 1, DetuneCents: 3, Level: 0.25},
+		},
+		Noise: -0.5,
+		Glide: 99,
 	}
-	if s.FilterEnv != defaultSynthWant.FilterEnv {
-		t.Errorf("filter env: expected untouched defaults, got %+v", s.FilterEnv)
+
+	if err := f.c.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	s := f.c.Synth()
+	if s.Resonance != 0.95 {
+		t.Errorf("resonance: want clamp to 0.95, got %v", s.Resonance)
+	}
+	want := FilterEnv{Attack: 0.0001, Decay: 10, Sustain: 1, Release: 0.0001, Amount: 0}
+	if s.FilterEnv != want {
+		t.Errorf("filter env: want %+v, got %+v", want, s.FilterEnv)
+	}
+	if wantOsc := (OscParams{Wave: "saw", Octave: 2, DetuneCents: 100, Level: 1}); s.Oscs[0] != wantOsc {
+		t.Errorf("osc 0: want sanitized %+v, got %+v", wantOsc, s.Oscs[0])
+	}
+	if s.Noise != 0 || s.Glide != 5 {
+		t.Errorf("noise/glide: want (0, 5), got (%v, %v)", s.Noise, s.Glide)
+	}
+	if f.audio.resonance != 0.95 || f.audio.glide != 5 {
+		t.Errorf("engine: want clamped (0.95, 5), got (%v, %v)", f.audio.resonance, f.audio.glide)
+	}
+}
+
+// TestSelectPatchSynthEngineRejection: if the engine still rejects a
+// sanitized oscillator during restore, that osc keeps its previous cached
+// value so cache and engine agree; the rest of the block applies.
+func TestSelectPatchSynthEngineRejection(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	f.st.synths["moog"] = synthToState(SynthSnapshot{
+		Resonance: 0.6,
+		FilterEnv: defaultSynthWant.FilterEnv,
+		Oscs: [3]OscParams{
+			{Wave: "square", Octave: 1, DetuneCents: 2, Level: 0.9},
+			defaultSynthWant.Oscs[1],
+			defaultSynthWant.Oscs[2],
+		},
+	})
+	f.audio.oscErr = errors.New("boom")
+
+	if err := f.c.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	s := f.c.Synth()
+	if s.Resonance != 0.6 || f.audio.resonance != 0.6 {
+		t.Errorf("resonance: want 0.6 applied despite osc rejection, got %v/%v", s.Resonance, f.audio.resonance)
+	}
+	// All three oscs were rejected, so the cache keeps the pre-select
+	// (factory) oscs rather than lying about what the engine holds.
+	if s.Oscs != defaultSynthWant.Oscs {
+		t.Errorf("oscs: want previous cached values on rejection, got %+v", s.Oscs)
 	}
 }
 

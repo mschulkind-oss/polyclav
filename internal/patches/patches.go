@@ -42,6 +42,11 @@ type Patch struct {
 	// hook, not by this package — see docs/VELOCITY_CURVES.md.
 	VelocityCurve string  // "linear" | "soft" | "hard" | "custom"; "" = inherit
 	VelocityGamma float32 // > 0 with empty VelocityCurve implies "custom"
+	// VelocityPoints mirrors config.PatchConfig.VelocityPoints: v2
+	// piecewise-linear control points, already validated at config load.
+	// Non-empty wins over VelocityCurve/VelocityGamma in the daemon's
+	// precedence order; nil = no point override.
+	VelocityPoints [][]int
 }
 
 // audioBackend is the slice of internal/audio that Registry needs. The default
@@ -207,18 +212,19 @@ func FromConfig(cfgs []config.PatchConfig) []Patch {
 	out := make([]Patch, 0, len(cfgs))
 	for _, c := range cfgs {
 		out = append(out, Patch{
-			Name:          c.Name,
-			Display:       c.Display,
-			Soundfont:     c.Soundfont,
-			PadColor:      components.Color(c.PadColor),
-			GainDB:        c.GainDB,
-			Type:          c.Type,
-			PluginURI:     c.PluginURI,
-			PluginPath:    c.PluginPath,
-			PluginID:      c.PluginID,
-			Engine:        c.Engine,
-			VelocityCurve: c.VelocityCurve,
-			VelocityGamma: c.VelocityGamma,
+			Name:           c.Name,
+			Display:        c.Display,
+			Soundfont:      c.Soundfont,
+			PadColor:       components.Color(c.PadColor),
+			GainDB:         c.GainDB,
+			Type:           c.Type,
+			PluginURI:      c.PluginURI,
+			PluginPath:     c.PluginPath,
+			PluginID:       c.PluginID,
+			Engine:         c.Engine,
+			VelocityCurve:  c.VelocityCurve,
+			VelocityGamma:  c.VelocityGamma,
+			VelocityPoints: c.VelocityPoints,
 		})
 	}
 	return out

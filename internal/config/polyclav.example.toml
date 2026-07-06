@@ -87,17 +87,32 @@ port_match = "launchkey"
 #             omitted) implies curve = "custom". <1.0 plays softer-touch/
 #             louder, >1.0 needs more force; the presets above are just
 #             named gammas.
+#   points  — v2 alternative to curve/gamma: piecewise-linear control
+#             points, [input, output] pairs linearly interpolated (this
+#             is the shape the web UI's drag-the-curve editor edits).
+#             2..16 pairs; must start at [0, 0] (a NoteOn with velocity
+#             0 stays a NoteOff), end at input 127, inputs strictly
+#             increasing, outputs never decreasing. Values 0..127.
+#             points and curve/gamma are mutually exclusive within one
+#             block — set one or the other, not both. out_min/out_max
+#             still clamp point-curve output.
 #   out_min — optional output clamps (0..127, out_min <= out_max).
 #   out_max   Defaults 1 / 127 when unset.
 #
 # curve   = "soft"
 # gamma   = 0.8            # with curve = "custom", or alone (implies custom)
+# points  = [[0, 0], [64, 90], [127, 127]]   # INSTEAD of curve/gamma
 # out_min = 1
 # out_max = 127
 #
 # Per-patch override — wins over this block. Add to any [[patches]] entry:
-#   velocity_curve = "soft"      # a preset, or "custom" + velocity_gamma
-#   velocity_gamma = 0.7         # gamma alone implies velocity_curve = "custom"
+#   velocity_curve  = "soft"     # a preset, or "custom" + velocity_gamma
+#   velocity_gamma  = 0.7        # gamma alone implies velocity_curve = "custom"
+#   velocity_points = [[0, 0], [64, 90], [127, 127]]
+#                                # control points INSTEAD of curve/gamma;
+#                                # wins over velocity_curve/velocity_gamma
+#                                # precedence: patch points > patch curve/
+#                                # gamma > global points > global curve/gamma
 # (See the salamander patch below for a commented example.)
 
 # [web]
@@ -232,6 +247,9 @@ transform   = "press"
 #               "custom" (the latter needs velocity_gamma).
 #   velocity_gamma — custom gamma; setting it alone implies
 #               velocity_curve = "custom".
+#   velocity_points — per-patch control points (same shape and rules as
+#               [midi.velocity].points); mutually exclusive with
+#               velocity_curve/velocity_gamma on the same patch.
 # ---------------------------------------------------------------------------
 
 [[patches]]
@@ -248,6 +266,7 @@ soundfont = "~/.local/share/polyclav/soundfonts/SalamanderGrandPianoV3_44.1khz16
 pad_color = 41           # vibrant blue
 gain_db   = 0.0
 # velocity_curve = "soft"  # per-patch velocity override (or velocity_gamma = 0.7)
+# velocity_points = [[0, 0], [64, 90], [127, 127]]  # ...or control points instead
 
 [[patches]]
 name      = "wurlitzer"

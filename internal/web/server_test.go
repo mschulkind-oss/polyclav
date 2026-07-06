@@ -176,10 +176,16 @@ func (f *fakeRegistry) SelectIndex(i int) error {
 type fakeStore struct {
 	mu           sync.Mutex
 	knobs        map[string]state.Knob
+	synths       map[string]state.SynthState
 	currentPatch string
 }
 
-func newFakeStore() *fakeStore { return &fakeStore{knobs: map[string]state.Knob{}} }
+func newFakeStore() *fakeStore {
+	return &fakeStore{
+		knobs:  map[string]state.Knob{},
+		synths: map[string]state.SynthState{},
+	}
+}
 
 func (f *fakeStore) PatchKnob(name string) state.Knob {
 	f.mu.Lock()
@@ -206,6 +212,19 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 		k.Compressor = value
 	}
 	f.knobs[name] = k
+}
+
+func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	syn, ok := f.synths[name]
+	return syn, ok
+}
+
+func (f *fakeStore) UpdatePatchSynth(name string, syn state.SynthState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.synths[name] = syn
 }
 
 func (f *fakeStore) SetCurrentPatch(name string) {
@@ -626,6 +645,10 @@ func TestSynthPatchMergeSemantics(t *testing.T) {
 	if err := f.ctrl.SelectPatch("moog"); err != nil {
 		t.Fatalf("SelectPatch: %v", err)
 	}
+	// A native select applies the patch's whole synth block (per-patch
+	// persistence, ROADMAP §3) — baseline the osc counter after it so the
+	// assertions below count only the PATCH requests' applies.
+	oscBase := f.audio.getOscCalls()
 
 	// Partial filter_env: attack only, then decay only — attack survives.
 	rec := f.do(t, "PATCH", "/api/synth", map[string]any{"filter_env": map[string]any{"attack": 0.05}})
@@ -684,7 +707,7 @@ func TestSynthPatchMergeSemantics(t *testing.T) {
 	if o2["octave"].(float64) != -2 || !approxEq(o2["level"].(float64), 0.4) || !approxEq(o2["detune_cents"].(float64), 5) {
 		t.Errorf("osc[2]: expected -2oct/0.4 with preserved +5c, got %v", o2)
 	}
-	if n := f.audio.getOscCalls(); n != 3 {
+	if n := f.audio.getOscCalls() - oscBase; n != 3 {
 		t.Errorf("expected 3 osc applies, got %d", n)
 	}
 	if v := f.audio.get("glide"); !approxEq(float64(v), 0.2) {
@@ -726,6 +749,11 @@ func TestSynthPatchValidation(t *testing.T) {
 	if err := f.ctrl.SelectPatch("moog"); err != nil {
 		t.Fatalf("SelectPatch: %v", err)
 	}
+	// The select itself restores the synth block (factory defaults here);
+	// baseline after it so the "nothing leaked" checks below see only what
+	// the rejected PATCH requests did.
+	resBase := f.audio.get("resonance")
+	oscBase := f.audio.getOscCalls()
 	for name, body := range map[string]any{
 		"bad JSON":            `{"resonance": nope}`,
 		"resonance high":      map[string]any{"resonance": 0.96},
@@ -749,10 +777,10 @@ func TestSynthPatchValidation(t *testing.T) {
 		})
 	}
 	// Nothing may have leaked into the engine or the cache.
-	if v := f.audio.get("resonance"); v != 0 {
-		t.Errorf("audio resonance must be untouched by rejected patches, got %v", v)
+	if v := f.audio.get("resonance"); v != resBase {
+		t.Errorf("audio resonance must be untouched by rejected patches, got %v (baseline %v)", v, resBase)
 	}
-	if n := f.audio.getOscCalls(); n != 0 {
+	if n := f.audio.getOscCalls() - oscBase; n != 0 {
 		t.Errorf("expected 0 osc applies after rejected patches, got %d", n)
 	}
 	if got := f.ctrl.Synth().Resonance; !approxEq(float64(got), 0.3) {

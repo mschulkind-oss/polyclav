@@ -222,11 +222,13 @@ func TestFromConfig(t *testing.T) {
 		{Name: "a", Display: "A", Soundfont: "/path/a.sf2", PadColor: 3},
 		{Name: "b", Display: "B", Soundfont: "/path/b.sfz", PadColor: 41,
 			VelocityCurve: "custom", VelocityGamma: 0.7},
+		{Name: "c", Display: "C", Soundfont: "/path/c.sf2", PadColor: 5,
+			VelocityPoints: [][]int{{0, 0}, {64, 90}, {127, 127}}},
 	}
 
 	ps := FromConfig(cfgs)
-	if len(ps) != 2 {
-		t.Fatalf("expected 2 patches, got %d", len(ps))
+	if len(ps) != 3 {
+		t.Fatalf("expected 3 patches, got %d", len(ps))
 	}
 
 	if ps[0].Name != "a" {
@@ -248,6 +250,19 @@ func TestFromConfig(t *testing.T) {
 	}
 	if ps[1].VelocityGamma != 0.7 {
 		t.Errorf("expected patch[1].VelocityGamma 0.7, got %g", ps[1].VelocityGamma)
+	}
+	if ps[1].VelocityPoints != nil {
+		t.Errorf("patch[1] should carry no velocity points, got %v", ps[1].VelocityPoints)
+	}
+
+	wantPoints := [][]int{{0, 0}, {64, 90}, {127, 127}}
+	if len(ps[2].VelocityPoints) != len(wantPoints) {
+		t.Fatalf("expected patch[2].VelocityPoints %v, got %v", wantPoints, ps[2].VelocityPoints)
+	}
+	for i, pt := range ps[2].VelocityPoints {
+		if len(pt) != 2 || pt[0] != wantPoints[i][0] || pt[1] != wantPoints[i][1] {
+			t.Errorf("patch[2].VelocityPoints[%d] = %v, want %v", i, pt, wantPoints[i])
+		}
 	}
 
 	psNil := FromConfig(nil)

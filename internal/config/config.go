@@ -57,14 +57,27 @@ type MIDIConfig struct {
 // empty is the "custom" shorthand — the same rule as the per-patch
 // velocity_gamma field — normalized to Curve = "custom" at Load. OutMin/
 // OutMax optionally clamp the mapped output (0..127; the velocity package
-// applies its own 1/127 defaults when they are left at zero). Names and
-// ranges are validated in Load; internal/velocity revalidates at
-// construction — this package deliberately does not import it.
+// applies its own 1/127 defaults when they are left at zero).
+//
+// Points is the v2 alternative curve shape: piecewise-linear [x, y]
+// control points (docs/VELOCITY_CURVES.md "v2"), 2..16 pairs starting at
+// [0, 0], ending at x = 127, xs strictly increasing, ys non-decreasing.
+// Points and Curve/Gamma are mutually exclusive WITHIN a scope (setting
+// both here — or both on one patch — is a load error), because "which of
+// the two curves wins" inside one block has no right answer. ACROSS
+// scopes normal precedence applies: per-patch points > per-patch
+// curve/gamma > global points > global curve/gamma (resolved by the
+// daemon). OutMin/OutMax still clamp point-curve output.
+//
+// Names, ranges, and point shapes are validated in Load;
+// internal/velocity revalidates at construction — this package
+// deliberately does not import it.
 type VelocityConfig struct {
 	Curve  string  `toml:"curve"`
 	Gamma  float32 `toml:"gamma"`
 	OutMin int     `toml:"out_min"`
 	OutMax int     `toml:"out_max"`
+	Points [][]int `toml:"points"`
 }
 
 // DefaultWebListen is the default listen address for the embedded web UI.
@@ -131,8 +144,12 @@ type PatchConfig struct {
 
 	// Per-patch velocity curve override — wins over [midi.velocity].
 	// VelocityGamma > 0 with no VelocityCurve implies curve = "custom".
-	VelocityCurve string  `toml:"velocity_curve"` // "linear" | "soft" | "hard" | "custom"; "" = inherit global
-	VelocityGamma float32 `toml:"velocity_gamma"` // required iff velocity_curve = "custom"
+	// VelocityPoints is the point-curve override (same shape and
+	// same-scope exclusivity rules as VelocityConfig.Points); it wins
+	// over VelocityCurve/VelocityGamma in the daemon's precedence order.
+	VelocityCurve  string  `toml:"velocity_curve"` // "linear" | "soft" | "hard" | "custom"; "" = inherit global
+	VelocityGamma  float32 `toml:"velocity_gamma"` // required iff velocity_curve = "custom"
+	VelocityPoints [][]int `toml:"velocity_points"`
 }
 
 const (
@@ -320,6 +337,16 @@ func velocityConfigErrors(cfg *Config) []string {
 	if minInRange && maxInRange && v.OutMin > 0 && v.OutMax > 0 && v.OutMin > v.OutMax {
 		errs = append(errs, fmt.Sprintf("midi.velocity: out_min (%d) must be <= out_max (%d)", v.OutMin, v.OutMax))
 	}
+	if len(v.Points) > 0 {
+		// Same-scope exclusivity: within one block "points or curve/gamma"
+		// must be an either/or — otherwise which curve wins is ambiguous.
+		// Gamma-only configs were normalized to Curve = "custom" above, so
+		// checking Curve/Gamma here catches every gamma-shaped spelling.
+		if v.Curve != "" || v.Gamma != 0 {
+			errs = append(errs, "midi.velocity: points and curve/gamma are mutually exclusive — set one or the other")
+		}
+		errs = append(errs, velocityPointsErrors("midi.velocity", "points", v.Points)...)
+	}
 
 	for i := range cfg.Patches {
 		p := &cfg.Patches[i]
@@ -335,6 +362,63 @@ func velocityConfigErrors(cfg *Config) []string {
 		// implies curve = "custom" (resolved by the velocity package).
 		// The equivalent global shorthand was already normalized to
 		// Curve = "custom" by Load before this function runs.
+		if len(p.VelocityPoints) > 0 {
+			if p.VelocityCurve != "" || p.VelocityGamma != 0 {
+				errs = append(errs, fmt.Sprintf("patch %q: velocity_points and velocity_curve/velocity_gamma are mutually exclusive — set one or the other", p.Name))
+			}
+			errs = append(errs, velocityPointsErrors(fmt.Sprintf("patch %q", p.Name), "velocity_points", p.VelocityPoints)...)
+		}
+	}
+	return errs
+}
+
+// velocityPointsErrors validates one piecewise-linear point set (global
+// `points` or per-patch `velocity_points`) against the v2 constraints
+// from docs/VELOCITY_CURVES.md: 2..16 [x, y] pairs, first [0, 0] (a
+// NoteOn with velocity 0 must stay NoteOff), last x = 127 (full input
+// coverage), xs strictly increasing, ys non-decreasing (monotonic).
+// prefix/field make the messages match the user's own spelling. Same
+// all-offenders style as the rest of the velocity checks, except that
+// the ordering/endpoint checks are skipped when any pair is malformed
+// or out of range — they would only add noise about values the user
+// already has to rewrite.
+func velocityPointsErrors(prefix, field string, pts [][]int) []string {
+	var errs []string
+	if len(pts) < 2 || len(pts) > 16 {
+		errs = append(errs, fmt.Sprintf("%s: %s must have 2..16 [x, y] pairs (got %d)", prefix, field, len(pts)))
+	}
+	pairsOK := true
+	for i, pt := range pts {
+		if len(pt) != 2 {
+			errs = append(errs, fmt.Sprintf("%s: %s[%d] must be an [x, y] pair (got %d values)", prefix, field, i, len(pt)))
+			pairsOK = false
+			continue
+		}
+		if pt[0] < 0 || pt[0] > 127 {
+			errs = append(errs, fmt.Sprintf("%s: %s[%d] x must be in 0..127 (got %d)", prefix, field, i, pt[0]))
+			pairsOK = false
+		}
+		if pt[1] < 0 || pt[1] > 127 {
+			errs = append(errs, fmt.Sprintf("%s: %s[%d] y must be in 0..127 (got %d)", prefix, field, i, pt[1]))
+			pairsOK = false
+		}
+	}
+	if !pairsOK || len(pts) < 2 {
+		return errs
+	}
+	if pts[0][0] != 0 || pts[0][1] != 0 {
+		errs = append(errs, fmt.Sprintf("%s: %s[0] must be [0, 0] (got [%d, %d])", prefix, field, pts[0][0], pts[0][1]))
+	}
+	if last := pts[len(pts)-1]; last[0] != 127 {
+		errs = append(errs, fmt.Sprintf("%s: %s last x must be 127 (got %d)", prefix, field, last[0]))
+	}
+	for i := 1; i < len(pts); i++ {
+		if pts[i][0] <= pts[i-1][0] {
+			errs = append(errs, fmt.Sprintf("%s: %s[%d] x (%d) must be > previous x (%d)", prefix, field, i, pts[i][0], pts[i-1][0]))
+		}
+		if pts[i][1] < pts[i-1][1] {
+			errs = append(errs, fmt.Sprintf("%s: %s[%d] y (%d) must be >= previous y (%d)", prefix, field, i, pts[i][1], pts[i-1][1]))
+		}
 	}
 	return errs
 }

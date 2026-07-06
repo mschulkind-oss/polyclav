@@ -44,6 +44,11 @@ type Registry interface {
 type StateStore interface {
 	PatchKnob(string) state.Knob
 	UpdatePatchKnob(string, string, float32)
+	// PatchSynth/UpdatePatchSynth carry the per-patch native-synth block
+	// (ROADMAP §3): ok=false from PatchSynth means "never tweaked", which
+	// SelectPatch maps to the factory defaults.
+	PatchSynth(string) (state.SynthState, bool)
+	UpdatePatchSynth(string, state.SynthState)
 	SetCurrentPatch(string)
 }
 
@@ -129,6 +134,115 @@ func defaultSynth() SynthSnapshot {
 	}
 }
 
+// synthToState converts the live cache to its persisted mirror
+// (state.SynthState). The mirror is duplicated in internal/state because
+// state must not import controls; these two helpers are the single
+// crossing point, so a field added to SynthSnapshot fails to compile
+// here until the state mirror learns it too.
+func synthToState(s SynthSnapshot) state.SynthState {
+	out := state.SynthState{
+		Resonance: s.Resonance,
+		FilterEnv: state.FilterEnvState{
+			Attack:  s.FilterEnv.Attack,
+			Decay:   s.FilterEnv.Decay,
+			Sustain: s.FilterEnv.Sustain,
+			Release: s.FilterEnv.Release,
+			Amount:  s.FilterEnv.Amount,
+		},
+		Noise: s.Noise,
+		Glide: s.Glide,
+	}
+	for i, o := range s.Oscs {
+		out.Oscs[i] = state.OscState{Wave: o.Wave, Octave: o.Octave, DetuneCents: o.DetuneCents, Level: o.Level}
+	}
+	return out
+}
+
+// synthFromState is synthToState's inverse. It does NOT sanitize —
+// state.toml is hand-editable, so every load goes through clampSynth
+// before touching the engine (see applySynthAll).
+func synthFromState(s state.SynthState) SynthSnapshot {
+	out := SynthSnapshot{
+		Resonance: s.Resonance,
+		FilterEnv: FilterEnv{
+			Attack:  s.FilterEnv.Attack,
+			Decay:   s.FilterEnv.Decay,
+			Sustain: s.FilterEnv.Sustain,
+			Release: s.FilterEnv.Release,
+			Amount:  s.FilterEnv.Amount,
+		},
+		Noise: s.Noise,
+		Glide: s.Glide,
+	}
+	for i, o := range s.Oscs {
+		out.Oscs[i] = OscParams{Wave: o.Wave, Octave: o.Octave, DetuneCents: o.DetuneCents, Level: o.Level}
+	}
+	return out
+}
+
+// clampSynth re-applies every setter's clamp to a whole snapshot, and
+// swaps invalid osc waves for the factory default wave. Needed when a
+// snapshot arrives wholesale (a persisted block at patch select) rather
+// than through the individually-clamping setters: state.toml is
+// hand-editable, so persisted values are inputs, not gospel.
+func clampSynth(in SynthSnapshot) SynthSnapshot {
+	def := defaultSynth()
+	out := SynthSnapshot{
+		Resonance: clampRange(in.Resonance, 0, maxResonance),
+		FilterEnv: FilterEnv{
+			Attack:  clampRange(in.FilterEnv.Attack, minEnvTime, maxEnvTime),
+			Decay:   clampRange(in.FilterEnv.Decay, minEnvTime, maxEnvTime),
+			Sustain: clamp01(in.FilterEnv.Sustain),
+			Release: clampRange(in.FilterEnv.Release, minEnvTime, maxEnvTime),
+			Amount:  clamp01(in.FilterEnv.Amount),
+		},
+		Noise: clamp01(in.Noise),
+		Glide: clampRange(in.Glide, 0, maxGlide),
+	}
+	for i, o := range in.Oscs {
+		if validateOsc(i, o.Wave) != nil {
+			o.Wave = def.Oscs[i].Wave
+		}
+		if o.Octave < -2 {
+			o.Octave = -2
+		} else if o.Octave > 2 {
+			o.Octave = 2
+		}
+		o.DetuneCents = clampRange(o.DetuneCents, -maxDetune, maxDetune)
+		o.Level = clamp01(o.Level)
+		out.Oscs[i] = o
+	}
+	return out
+}
+
+// synthData is the wire shape of a full synth block inside a "patch"
+// change: keys match the web layer's synthJSON (resonance, filter_env,
+// osc, noise, glide) so SSE clients decode both the same way.
+func synthData(s SynthSnapshot) map[string]any {
+	oscs := make([]map[string]any, len(s.Oscs))
+	for i, o := range s.Oscs {
+		oscs[i] = map[string]any{
+			"wave":         o.Wave,
+			"octave":       o.Octave,
+			"detune_cents": o.DetuneCents,
+			"level":        o.Level,
+		}
+	}
+	return map[string]any{
+		"resonance": s.Resonance,
+		"filter_env": map[string]any{
+			"attack":  s.FilterEnv.Attack,
+			"decay":   s.FilterEnv.Decay,
+			"sustain": s.FilterEnv.Sustain,
+			"release": s.FilterEnv.Release,
+			"amount":  s.FilterEnv.Amount,
+		},
+		"osc":   oscs,
+		"noise": s.Noise,
+		"glide": s.Glide,
+	}
+}
+
 // Controls owns the param-change sequence shared by every surface:
 // clamp → audio apply → state persist → hub publish. It also holds the
 // bits of runtime state that previously lived in main.go closures (the
@@ -163,9 +277,14 @@ type Controls struct {
 	cutoffPos        float32
 	masteringComp    float32
 	limiterCeilingDB float32
-	// synth caches the native-synth params. Engine-global atomics for
-	// now: patch selection does NOT reset them (per-patch persistence is
-	// ROADMAP §3 work).
+	// synth caches the native-synth params of the CURRENT patch. The
+	// per-patch persistence contract (ROADMAP §3): every synth mutation
+	// writes the whole resulting block to the state store for the
+	// current patch, and every NATIVE patch select replaces cache and
+	// engine from that patch's stored block (factory defaults when the
+	// patch has never been tweaked). Non-native selects leave cache and
+	// engine alone — the params are inaudible there, and clobbering them
+	// would churn state.toml for nothing.
 	synth SynthSnapshot
 
 	// vel is an atomic pointer (not a mutex) because ApplyVelocity runs
@@ -373,6 +492,46 @@ func (c *Controls) publishSynth(patch string, data map[string]any) {
 	c.hub.Publish(Change{Type: "synth", Data: data})
 }
 
+// persistSynth writes the current cached snapshot to the state store as
+// patch's synth block — the save half of the ROADMAP §3 contract (every
+// synth mutation persists; every native select restores). Callers hold
+// applyMu, so the cache read and the store write cannot interleave with
+// another mutation's sequence.
+func (c *Controls) persistSynth(patch string) {
+	c.st.UpdatePatchSynth(patch, synthToState(c.Synth()))
+}
+
+// applySynthAll pushes an ENTIRE snapshot into the engine and replaces
+// the cache — the patch-select restore path, where the whole block
+// changes at once. Unlike the apply* helpers it neither publishes (the
+// caller folds the block into its "patch" change, so SSE clients see one
+// atomic switch) nor persists (restoring is not an edit; a fresh patch
+// only reaches disk on its first tweak). Values are re-clamped because
+// persisted blocks are hand-editable. If the engine still rejects an
+// oscillator, that osc keeps its previous cached value so cache and
+// engine stay in agreement. Callers hold applyMu. Returns the snapshot
+// as applied.
+func (c *Controls) applySynthAll(in SynthSnapshot) SynthSnapshot {
+	syn := clampSynth(in)
+	c.audio.SetNativeResonance(syn.Resonance)
+	c.audio.SetNativeFilterEnv(syn.FilterEnv.Attack, syn.FilterEnv.Decay, syn.FilterEnv.Sustain, syn.FilterEnv.Release, syn.FilterEnv.Amount)
+	c.audio.SetNativeNoise(syn.Noise)
+	c.audio.SetNativeGlide(syn.Glide)
+	for i := range syn.Oscs {
+		o := syn.Oscs[i]
+		if err := c.audio.SetNativeOsc(i, o.Wave, o.Octave, o.DetuneCents, o.Level); err != nil {
+			c.mu.Lock()
+			syn.Oscs[i] = c.synth.Oscs[i]
+			c.mu.Unlock()
+			c.logger.Warn("restore synth osc rejected by engine", "index", i, "err", err)
+		}
+	}
+	c.mu.Lock()
+	c.synth = syn
+	c.mu.Unlock()
+	return syn
+}
+
 // SetSynthResonance sets the native filter resonance (clamped to
 // [0, 0.95]), applies it to the engine, caches it, and publishes a
 // "synth" change. Errors unless a native patch is selected.
@@ -386,14 +545,15 @@ func (c *Controls) SetSynthResonance(v float32) (float32, error) {
 	return c.applyResonance(cur.Name, v), nil
 }
 
-// applyResonance is SetSynthResonance's clamp/apply/cache/publish body.
-// Callers hold applyMu and have passed the native-patch gate.
+// applyResonance is SetSynthResonance's clamp/apply/cache/persist/publish
+// body. Callers hold applyMu and have passed the native-patch gate.
 func (c *Controls) applyResonance(patch string, v float32) float32 {
 	v = clampRange(v, 0, maxResonance)
 	c.mu.Lock()
 	c.synth.Resonance = v
 	c.mu.Unlock()
 	c.audio.SetNativeResonance(v)
+	c.persistSynth(patch)
 	c.publishSynth(patch, map[string]any{"field": "resonance", "resonance": v})
 	return v
 }
@@ -411,8 +571,8 @@ func (c *Controls) SetSynthFilterEnv(a, d, s, r, amount float32) (FilterEnv, err
 	return c.applyFilterEnv(cur.Name, FilterEnv{Attack: a, Decay: d, Sustain: s, Release: r, Amount: amount}), nil
 }
 
-// applyFilterEnv is SetSynthFilterEnv's clamp/apply/cache/publish body.
-// Callers hold applyMu and have passed the native-patch gate.
+// applyFilterEnv is SetSynthFilterEnv's clamp/apply/cache/persist/publish
+// body. Callers hold applyMu and have passed the native-patch gate.
 func (c *Controls) applyFilterEnv(patch string, in FilterEnv) FilterEnv {
 	fe := FilterEnv{
 		Attack:  clampRange(in.Attack, minEnvTime, maxEnvTime),
@@ -425,6 +585,7 @@ func (c *Controls) applyFilterEnv(patch string, in FilterEnv) FilterEnv {
 	c.synth.FilterEnv = fe
 	c.mu.Unlock()
 	c.audio.SetNativeFilterEnv(fe.Attack, fe.Decay, fe.Sustain, fe.Release, fe.Amount)
+	c.persistSynth(patch)
 	c.publishSynth(patch, map[string]any{
 		"field": "filter_env",
 		"filter_env": map[string]any{
@@ -468,9 +629,9 @@ func (c *Controls) SetSynthOsc(idx int, wave string, octave int, detuneCents, le
 	return c.applyOsc(cur.Name, idx, OscParams{Wave: wave, Octave: octave, DetuneCents: detuneCents, Level: level})
 }
 
-// applyOsc is SetSynthOsc's clamp/apply/cache/publish body. Callers hold
-// applyMu, have passed the native-patch gate, and have validated
-// idx/in.Wave.
+// applyOsc is SetSynthOsc's clamp/apply/cache/persist/publish body.
+// Callers hold applyMu, have passed the native-patch gate, and have
+// validated idx/in.Wave.
 func (c *Controls) applyOsc(patch string, idx int, in OscParams) (OscParams, error) {
 	octave := in.Octave
 	if octave < -2 {
@@ -492,6 +653,7 @@ func (c *Controls) applyOsc(patch string, idx int, in OscParams) (OscParams, err
 	c.mu.Lock()
 	c.synth.Oscs[idx] = op
 	c.mu.Unlock()
+	c.persistSynth(patch)
 	c.publishSynth(patch, map[string]any{
 		"field":        "osc",
 		"index":        idx,
@@ -515,14 +677,15 @@ func (c *Controls) SetSynthNoise(level float32) (float32, error) {
 	return c.applyNoise(cur.Name, level), nil
 }
 
-// applyNoise is SetSynthNoise's clamp/apply/cache/publish body. Callers
-// hold applyMu and have passed the native-patch gate.
+// applyNoise is SetSynthNoise's clamp/apply/cache/persist/publish body.
+// Callers hold applyMu and have passed the native-patch gate.
 func (c *Controls) applyNoise(patch string, level float32) float32 {
 	level = clamp01(level)
 	c.mu.Lock()
 	c.synth.Noise = level
 	c.mu.Unlock()
 	c.audio.SetNativeNoise(level)
+	c.persistSynth(patch)
 	c.publishSynth(patch, map[string]any{"field": "noise", "noise": level})
 	return level
 }
@@ -539,14 +702,15 @@ func (c *Controls) SetSynthGlide(seconds float32) (float32, error) {
 	return c.applyGlide(cur.Name, seconds), nil
 }
 
-// applyGlide is SetSynthGlide's clamp/apply/cache/publish body. Callers
-// hold applyMu and have passed the native-patch gate.
+// applyGlide is SetSynthGlide's clamp/apply/cache/persist/publish body.
+// Callers hold applyMu and have passed the native-patch gate.
 func (c *Controls) applyGlide(patch string, seconds float32) float32 {
 	seconds = clampRange(seconds, 0, maxGlide)
 	c.mu.Lock()
 	c.synth.Glide = seconds
 	c.mu.Unlock()
 	c.audio.SetNativeGlide(seconds)
+	c.persistSynth(patch)
 	c.publishSynth(patch, map[string]any{"field": "glide", "glide": seconds})
 	return seconds
 }
@@ -583,7 +747,7 @@ type OscPartial struct {
 // MergeSynth merges p over the current synth params and applies the
 // result, all under the writer lock, so two concurrent partial updates
 // to different fields both survive. Each touched section runs the same
-// clamp/apply/cache/publish sequence (and emits the same "synth"
+// clamp/apply/cache/persist/publish sequence (and emits the same "synth"
 // change) as its SetSynth* counterpart, in a fixed order: resonance,
 // filter_env, noise, glide, then oscs. Osc index/wave are validated up
 // front so an invalid entry applies nothing. Returns the resulting
@@ -652,8 +816,8 @@ func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
 		}
 		if _, err := c.applyOsc(cur.Name, o.Index, m); err != nil {
 			// Engine rejection mid-sequence: earlier sections stay
-			// applied (cache/engine/publishes agree on them); this osc's
-			// cache is untouched.
+			// applied and persisted (cache/engine/state/publishes agree
+			// on them); this osc's cache is untouched.
 			return SynthSnapshot{}, err
 		}
 	}
@@ -670,8 +834,9 @@ func (c *Controls) Synth() SynthSnapshot {
 }
 
 // SelectPatch switches to the named patch: registry select, restore that
-// patch's saved knob values into the audio engine, record it as current
-// in the state store, publish a "patch" change. Identical to a pad press.
+// patch's saved knob values (and, for native patches, its saved synth
+// block) into the audio engine, record it as current in the state store,
+// publish a "patch" change. Identical to a pad press.
 // The whole sequence runs under the writer lock, so a concurrent select
 // (web vs pad) can never leave the engine on one patch while the
 // registry/state/SSE say another.
@@ -730,6 +895,18 @@ func (c *Controls) afterSelect() {
 		// patches have no cutoff and omit both keys.
 		data["cutoff_pos"] = float32(defaultCutoffPos)
 		data["cutoff_hz"] = hz
+		// Per-patch synth restore (ROADMAP §3): the patch's persisted
+		// block, or factory defaults for a patch never tweaked. The whole
+		// snapshot goes to the engine and cache, and the resulting block
+		// rides in this "patch" change so SSE clients switch atomically.
+		// Non-native selects skip all of this: the synth params are
+		// inaudible there, and the engine keeps whatever the last native
+		// patch applied until the next native select overwrites it.
+		syn := defaultSynth()
+		if st, ok := c.st.PatchSynth(cur.Name); ok {
+			syn = synthFromState(st)
+		}
+		data["synth"] = synthData(c.applySynthAll(syn))
 	}
 	c.logger.Debug("patch selected via controls", "name", cur.Name)
 	c.hub.Publish(Change{Type: "patch", Data: data})

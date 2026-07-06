@@ -131,6 +131,90 @@ func TestResolveVelocity(t *testing.T) {
 			patch:      nil,
 			wantPrefix: "soft (γ=0.60, out 1..127)",
 		},
+		{
+			name: "global points nil patch",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {64, 90}, {127, 127}},
+			}}},
+			patch:      nil,
+			wantPrefix: "points[3] (out 1..127)",
+		},
+		{
+			name: "global points carry global clamps",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {127, 127}}, OutMin: 10, OutMax: 100,
+			}}},
+			patch:      nil,
+			wantPrefix: "points[2] (out 10..100)",
+		},
+		{
+			name: "patch with no override inherits global points",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {64, 90}, {127, 127}},
+			}}},
+			patch:      &patches.Patch{Name: "p"},
+			wantPrefix: "points[3] (out 1..127)",
+		},
+		{
+			// Full precedence chain, top rung: per-patch points beat the
+			// patch's own curve/gamma AND everything global. (Both in one
+			// scope is a Load error, but resolveVelocity stays deterministic
+			// for code-built configs.)
+			name: "patch points win over patch curve and global points",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {127, 127}},
+			}}},
+			patch: &patches.Patch{Name: "p", VelocityCurve: "hard",
+				VelocityPoints: [][]int{{0, 0}, {32, 40}, {64, 90}, {127, 127}}},
+			// Per-patch overrides carry no clamp fields: defaults 1..127.
+			wantPrefix: "points[4] (out 1..127)",
+		},
+		{
+			name: "patch curve wins over global points",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {64, 90}, {127, 127}},
+			}}},
+			patch:      &patches.Patch{Name: "p", VelocityCurve: "hard"},
+			wantPrefix: "hard (γ=1.60, out 1..127)",
+		},
+		{
+			name: "patch gamma wins over global points",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {64, 90}, {127, 127}},
+			}}},
+			patch:      &patches.Patch{Name: "p", VelocityGamma: 2.5},
+			wantPrefix: "custom (γ=2.50, out 1..127)",
+		},
+		{
+			// resolveVelocity mirrors the doc'd within-scope precedence:
+			// global points sit above global curve/gamma.
+			name: "global points win over global curve",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Curve: "soft", Points: [][]int{{0, 0}, {127, 127}},
+			}}},
+			patch:      nil,
+			wantPrefix: "points[2] (out 1..127)",
+		},
+		{
+			name:    "patch malformed point pair errors",
+			cfg:     config.Defaults(),
+			patch:   &patches.Patch{Name: "p", VelocityPoints: [][]int{{0, 0}, {64}, {127, 127}}},
+			wantErr: true,
+		},
+		{
+			name: "global point value out of range errors",
+			cfg: &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+				Points: [][]int{{0, 0}, {64, 200}, {127, 127}},
+			}}},
+			patch:   nil,
+			wantErr: true,
+		},
+		{
+			name:    "patch non-monotonic points error",
+			cfg:     config.Defaults(),
+			patch:   &patches.Patch{Name: "p", VelocityPoints: [][]int{{0, 0}, {64, 90}, {127, 80}}},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -254,5 +338,33 @@ func TestResolveVelocityClamp(t *testing.T) {
 	}
 	if got := curve.Apply(1); got != 20 {
 		t.Errorf("Apply(1) = %d, want 20 (out_min clamp)", got)
+	}
+}
+
+// TestResolveVelocityPointsApply checks the resolved point curve actually
+// interpolates — the config ints reach the velocity package as a working
+// mapping, not just a label.
+func TestResolveVelocityPointsApply(t *testing.T) {
+	cfg := &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
+		Points: [][]int{{0, 0}, {64, 90}, {127, 127}},
+	}}}
+	curve, err := resolveVelocity(cfg, nil)
+	if err != nil {
+		t.Fatalf("resolveVelocity() error = %v", err)
+	}
+	for in, want := range map[uint8]uint8{0: 0, 32: 45, 64: 90, 127: 127} {
+		if got := curve.Apply(in); got != want {
+			t.Errorf("Apply(%d) = %d, want %d", in, got, want)
+		}
+	}
+
+	// Per-patch points replace — not compose with — the global set.
+	p := &patches.Patch{Name: "p", VelocityPoints: [][]int{{0, 0}, {127, 127}}}
+	curve, err = resolveVelocity(cfg, p)
+	if err != nil {
+		t.Fatalf("resolveVelocity(patch) error = %v", err)
+	}
+	if got := curve.Apply(64); got != 64 {
+		t.Errorf("patch identity points: Apply(64) = %d, want 64", got)
 	}
 }
