@@ -286,10 +286,11 @@ func SetNativePulseWidth(w float32) {
 
 // SetNativeDrive pushes the active native synth's pre-filter tanh drive
 // amount. Clamped to [0, 1] in Rust; default 0 = bit-exact bypass. When
-// > 0 the post-mixer signal is shaped by
-// tanh(x*(1+drive*4)) / (1+drive*4) before the ladder filter — unity
-// gain at small signals, peaks compressed toward +/-1/(1+drive*4). Same
-// lifecycle as SetNativeCutoffHz (no-op for other backends).
+// > 0 the post-mixer signal is shaped by tanh(x*g) / tanh(g) with
+// g = 1+drive*4 before the ladder filter — peak-referenced
+// normalization: unity at |x| = 1, small-signal gain g/tanh(g) >= 1
+// (drive adds loudness + compression instead of dropping the level).
+// Same lifecycle as SetNativeCutoffHz (no-op for other backends).
 func SetNativeDrive(drive float32) {
 	C.polyclav_dsp_set_native_drive(C.float(drive))
 }
@@ -380,8 +381,9 @@ func SetNativeBendRange(st float32) {
 //   - "mono_retrig": 1 voice, last-note priority, envelopes ALWAYS
 //     retrigger on note-on.
 //   - "poly": 8 voices. A note-on takes a free voice (amp envelope
-//     idle) or, when all are sounding, steals the oldest-fired voice; a
-//     note-off releases exactly the voice(s) sounding that note.
+//     idle), else steals the oldest voice already in its release tail,
+//     else the oldest held voice; a note-off releases exactly the
+//     voice(s) sounding that note.
 //
 // Switching modes while notes sound releases every voice and clears the
 // held-notes bookkeeping (no stuck notes — keys already down fade out

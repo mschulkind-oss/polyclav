@@ -280,8 +280,12 @@ You can also run the binary directly: `./bin/polyclav`.
 The 8 encoders drive the native synth through five pages. **Scene ▲**
 goes to the previous page, **Scene ▼** to the next; the page name
 flashes on the screen and the **bottom pad row lights the active page**
-(pads 1–5 as indicators). Turning a knob pops the parameter name and
-value on the screen for 800 ms, then the patch name returns.
+(pads 1–5 as indicators). The bottom row is split: columns 0–4 (notes
+112–116) are reserved for these page indicators, while columns 5–7
+(notes 117–119) stay free for your own `[[osc.xr18.bindings]]` — the
+example config's mute pads live there. Turning a knob pops the
+parameter name and value on the screen for 800 ms, then the patch name
+returns.
 
 | # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
 |---|------|--------|--------|--------|--------|--------|--------|--------|--------|

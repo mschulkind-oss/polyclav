@@ -199,17 +199,22 @@ transform   = "scalar"
 # `1` on note-on (mute on) and nothing on note-off. To unmute, re-press
 # and the XR18 will receive `1` again — XR18 doesn't toggle by itself.
 # (Real toggle is on the v1 roadmap; for now treat as "tap to mute".)
+#
+# NOTE: the daemon reserves the bottom row's first five pads (columns
+# 0-4, notes 112-116) as knob-page indicator LEDs — see "Launchkey knob
+# pages" in docs/USER_GUIDE.md. Bind only columns 5-7 (notes 117-119),
+# or a pad will both mute a mixer channel AND light as a page indicator.
 [[osc.xr18.bindings]]
 source_kind = "note"
 channel     = 1
-controller  = 112         # Pad bottom-row position 0
+controller  = 118         # Pad bottom-row position 6
 osc         = "/ch/01/mix/on"
 transform   = "press"
 
 [[osc.xr18.bindings]]
 source_kind = "note"
 channel     = 1
-controller  = 113         # Pad bottom-row position 1
+controller  = 119         # Pad bottom-row position 7
 osc         = "/ch/02/mix/on"
 transform   = "press"
 

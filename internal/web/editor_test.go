@@ -2,11 +2,13 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -376,6 +378,127 @@ func TestVelocitySaveNoConfigPath(t *testing.T) {
 	wantStatus(t, rec, http.StatusNotFound)
 	if got := f.ctrl.VelocityLabel(); got != "" {
 		t.Errorf("failed save must not install a curve, got %q", got)
+	}
+}
+
+// ---- Deps.SetGlobalVelocity ---------------------------------------------------
+
+// TestVelocitySaveUpdatesGlobalSpec pins the save path's daemon-sync
+// contract: a successful save=true PUT pushes the spec through
+// Deps.SetGlobalVelocity (so patch-change re-resolves see the saved
+// curve), while session-only applies and FAILED saves never touch it.
+func TestVelocitySaveUpdatesGlobalSpec(t *testing.T) {
+	var got []config.VelocityConfig
+	path := filepath.Join(t.TempDir(), "polyclav.toml")
+	if err := os.WriteFile(path, []byte(baseConfig), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	f := newFixture(t, func(d *Deps) {
+		d.ConfigPath = path
+		d.SetGlobalVelocity = func(v config.VelocityConfig) { got = append(got, v) }
+	})
+
+	// Session-only apply: no call.
+	wantStatus(t, f.do(t, "PUT", "/api/velocity", map[string]any{"curve": "soft"}), http.StatusOK)
+	if len(got) != 0 {
+		t.Fatalf("session-only apply must not update the global spec, got %+v", got)
+	}
+
+	// Saved preset: one call carrying the preset.
+	wantStatus(t, f.do(t, "PUT", "/api/velocity", map[string]any{"curve": "hard", "save": true}), http.StatusOK)
+	if len(got) != 1 || got[0].Curve != "hard" || got[0].Gamma != 0 || got[0].Points != nil {
+		t.Fatalf("saved preset: want one call with curve=hard, got %+v", got)
+	}
+
+	// Saved points + clamp: the spec mirrors what the managed block (and
+	// thus a restart) would produce.
+	wantStatus(t, f.do(t, "PUT", "/api/velocity", map[string]any{
+		"points": [][]int{{0, 0}, {64, 90}, {127, 127}}, "out_min": 5, "save": true,
+	}), http.StatusOK)
+	if len(got) != 2 {
+		t.Fatalf("saved points: want a second call, got %+v", got)
+	}
+	if len(got[1].Points) != 3 || got[1].OutMin != 5 || got[1].Curve != "" {
+		t.Errorf("saved points spec: unexpected %+v", got[1])
+	}
+	// The pushed spec must resolve exactly like the saved file reloaded.
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload saved config: %v", err)
+	}
+	if fmt.Sprintf("%+v", cfg.MIDI.Velocity) != fmt.Sprintf("%+v", got[1]) {
+		t.Errorf("pushed spec diverges from the saved file:\nfile %+v\npush %+v", cfg.MIDI.Velocity, got[1])
+	}
+
+	// Saved custom gamma carries the gamma.
+	wantStatus(t, f.do(t, "PUT", "/api/velocity", map[string]any{"gamma": 1.25, "save": true}), http.StatusOK)
+	if len(got) != 3 || got[2].Curve != "custom" || !approxEq(float64(got[2].Gamma), 1.25) {
+		t.Fatalf("saved gamma: want custom/1.25, got %+v", got)
+	}
+}
+
+func TestVelocitySaveFailureLeavesGlobalSpecAlone(t *testing.T) {
+	calls := 0
+	handWritten := "[midi.velocity]\ncurve = \"soft\"\n"
+	path := filepath.Join(t.TempDir(), "polyclav.toml")
+	if err := os.WriteFile(path, []byte(handWritten), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	f := newFixture(t, func(d *Deps) {
+		d.ConfigPath = path
+		d.SetGlobalVelocity = func(config.VelocityConfig) { calls++ }
+	})
+	rec := f.do(t, "PUT", "/api/velocity", map[string]any{"curve": "hard", "save": true})
+	wantStatus(t, rec, http.StatusConflict) // unmanaged hand-written section
+	if calls != 0 {
+		t.Errorf("failed save must not update the global spec (%d calls)", calls)
+	}
+}
+
+// ---- config-writer mutual exclusion ------------------------------------------
+
+// TestConfigWritersMutuallyExcluded is the W2 regression test: PUT
+// /api/config and the velocity managed-block save race on the same
+// file. With cfgMu serializing read→merge→rename, the final file is
+// always a coherent one-then-the-other result — the config PUT's
+// sentinel content can never be silently dropped by a velocity save
+// that read the file before the PUT renamed it.
+func TestConfigWritersMutuallyExcluded(t *testing.T) {
+	f, path := newConfigFixture(t, baseConfig)
+	sentinel := baseConfig + "# sentinel — must survive a concurrent velocity save\n"
+
+	for round := 0; round < 25; round++ {
+		if err := os.WriteFile(path, []byte(baseConfig), 0o644); err != nil {
+			t.Fatalf("reset config: %v", err)
+		}
+		var wg sync.WaitGroup
+		var recCfg, recVel *httptest.ResponseRecorder
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			recCfg = f.do(t, "PUT", "/api/config", sentinel)
+		}()
+		go func() {
+			defer wg.Done()
+			recVel = f.do(t, "PUT", "/api/velocity", map[string]any{"curve": "hard", "save": true})
+		}()
+		wg.Wait()
+		if recCfg.Code != http.StatusOK || recVel.Code != http.StatusOK {
+			t.Fatalf("round %d: statuses %d/%d (bodies %s / %s)",
+				round, recCfg.Code, recVel.Code, recCfg.Body.String(), recVel.Body.String())
+		}
+
+		final := readConfigFile(t, path)
+		// Either order is fine; a lost update is not:
+		//   config-then-velocity → sentinel + managed block
+		//   velocity-then-config → sentinel exactly
+		//   LOST UPDATE          → baseConfig + managed block (no sentinel)
+		if !strings.Contains(final, "# sentinel") {
+			t.Fatalf("round %d: config PUT dropped by concurrent velocity save:\n%s", round, final)
+		}
+		if _, err := config.Load(path); err != nil {
+			t.Fatalf("round %d: final file does not Load: %v\n%s", round, err, final)
+		}
 	}
 }
 

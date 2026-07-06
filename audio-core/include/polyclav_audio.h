@@ -140,9 +140,11 @@ void polyclav_dsp_set_native_pulse_width(float width);
 
 /* Native synth pre-filter tanh drive amount, clamped to [0, 1] in
  * Rust. Default 0.0 = bit-exact bypass. When > 0 the post-mixer signal
- * is shaped by tanh(x * (1 + drive*4)) / (1 + drive*4) before the
- * ladder filter — unity gain at small signals, peaks compressed toward
- * +/-1/(1 + drive*4). Same lifecycle as the cutoff setter. */
+ * is shaped by tanh(x * g) / tanh(g) with g = 1 + drive*4 before the
+ * ladder filter — peak-referenced normalization: unity at |x| = 1,
+ * small-signal gain g/tanh(g) >= 1 (drive adds loudness + compression
+ * instead of dropping the level). Same lifecycle as the cutoff
+ * setter. */
 void polyclav_dsp_set_native_drive(float drive);
 
 /* Native synth velocity routing, both amounts clamped to [0, 1] in
@@ -199,9 +201,9 @@ void polyclav_dsp_set_native_bend_range(float st);
  * 1 voice, last-note priority, envelopes only retrigger when no other
  * key is held; bit-identical to the pre-poly engine), 1 = mono_retrig
  * (1 voice, envelopes ALWAYS retrigger on note-on), 2 = poly (8
- * voices; a note-on takes a free voice or steals the oldest-fired
- * sounding one; a note-off releases exactly the voice(s) sounding that
- * note). Out-of-range codes are ignored (with an eprintln on the Rust
+ * voices; a note-on takes a free voice, else steals the oldest voice
+ * already in its release tail, else the oldest held voice; a note-off
+ * releases exactly the voice(s) sounding that note). Out-of-range codes are ignored (with an eprintln on the Rust
  * side). Switching modes while notes sound releases every voice (no
  * stuck notes — held keys fade out and must be re-pressed). Same
  * lifecycle as the cutoff setter (no-op for other backends). */

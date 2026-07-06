@@ -3,7 +3,9 @@ package pages
 import (
 	"fmt"
 	"math"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
@@ -20,6 +22,10 @@ import (
 // writer lock.
 type fakeAudio struct {
 	calls map[string]int
+
+	// oscHook, when set, runs at SetNativeOsc entry — the gate the C1
+	// concurrency regression uses to hold a MergeSynth mid-apply.
+	oscHook func()
 
 	volume, reverb, compressor, cutoffHz       float32
 	masteringComp, limiterDB                   float32
@@ -63,6 +69,9 @@ func (f *fakeAudio) SetNativeFilterEnv(a, d, s, r, amount float32) {
 	f.feA, f.feD, f.feS, f.feR, f.feAmt = a, d, s, r, amount
 }
 func (f *fakeAudio) SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error {
+	if f.oscHook != nil {
+		f.oscHook()
+	}
 	f.rec("SetNativeOsc")
 	f.oscIdx, f.oscWave, f.oscOctave, f.oscDetune, f.oscLevel = idx, wave, octave, detuneCents, level
 	return nil
@@ -178,9 +187,17 @@ func (f *fakeStore) SetCurrentPatch(name string) { f.currentPatch = name }
 // fakeScreen records SetDisplayText writes.
 type screenWrite struct{ line1, line2 string }
 
-type fakeScreen struct{ writes []screenWrite }
+type fakeScreen struct {
+	// hook, when set, runs at SetDisplayText entry — the gate the C2
+	// regression uses to hold a cycle() between its paint and its flash.
+	hook   func()
+	writes []screenWrite
+}
 
 func (s *fakeScreen) SetDisplayText(line1, line2 string) error {
+	if s.hook != nil {
+		s.hook()
+	}
 	s.writes = append(s.writes, screenWrite{line1, line2})
 	return nil
 }
@@ -858,5 +875,115 @@ func TestKnobPersistsSynthBlock(t *testing.T) {
 	}
 	if !approxEq(syn.Resonance, 0.3075) {
 		t.Errorf("persisted resonance = %v, want 0.3075", syn.Resonance)
+	}
+}
+
+// TestKnobComposesWithConcurrentMergeSynth is the C1 regression: a web
+// PATCH (MergeSynth) holding the writer lock mid-apply must not have
+// its sibling-field edit reverted by a knob tick that snapshotted the
+// synth block before the PATCH landed. The knob's read-modify-write now
+// runs inside the writer lock (controls.AdjustSynth reads current
+// INSIDE the closure), so under any interleaving the final state —
+// cache, engine, and the persisted block — carries BOTH edits. Run
+// under -race: the unsynchronized fakes flag any apply that escapes the
+// writer lock.
+func TestKnobComposesWithConcurrentMergeSynth(t *testing.T) {
+	f := newNativeFixture(t)
+	f.pg.NextPage() // OSC page: knob 1 = Osc1 Level, knob 2 = Osc1 Detune
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var gate sync.Once
+	f.audio.oscHook = func() {
+		gate.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+
+	level := float32(0.5)
+	mergeDone := make(chan struct{})
+	go func() {
+		defer close(mergeDone)
+		if _, err := f.ctl.MergeSynth(controls.SynthPartial{
+			Oscs: []controls.OscPartial{{Index: 0, Level: &level}},
+		}); err != nil {
+			t.Errorf("MergeSynth: %v", err)
+		}
+	}()
+	<-entered // MergeSynth holds the writer lock, blocked in the engine apply
+
+	knobDone := make(chan struct{})
+	go func() {
+		defer close(knobDone)
+		f.pg.HandleKnob(2, 1) // Osc1 Detune: +1 cent
+	}()
+	// Let the knob goroutine run up to the writer lock while the merge
+	// still holds it. The pre-fix adjuster read its snapshot HERE — before
+	// the merge's level landed — and pushed the stale level back with the
+	// detune, silently reverting the PATCH.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	<-mergeDone
+	<-knobDone
+
+	syn := f.ctl.Synth()
+	if !approxEq(syn.Oscs[0].Level, 0.5) || !approxEq(syn.Oscs[0].DetuneCents, 1) {
+		t.Errorf("osc0 = %+v, want BOTH the merge's level 0.5 and the knob's detune +1", syn.Oscs[0])
+	}
+	if !approxEq(f.audio.oscLevel, 0.5) || !approxEq(f.audio.oscDetune, 1) {
+		t.Errorf("engine osc = level %v detune %v, want 0.5 / +1", f.audio.oscLevel, f.audio.oscDetune)
+	}
+	st, ok := f.st.synths["moog"]
+	if !ok {
+		t.Fatal("no synth block persisted for moog")
+	}
+	if !approxEq(st.Oscs[0].Level, 0.5) || !approxEq(st.Oscs[0].DetuneCents, 1) {
+		t.Errorf("persisted osc0 = %+v, want the merged result (level 0.5, detune +1)", st.Oscs[0])
+	}
+}
+
+// TestCycleRepaintCannotRevertPatchGating is the C2 regression: a page
+// cycle that passed its native gate but has not finished its screen
+// flash must not repaint the pads with pre-change gating after an
+// OnPatchChange("soundfont") lands. The pads are painted from live
+// state INSIDE the lock (never from a hardcoded native=true), so the
+// gated palette painted by OnPatchChange is final.
+func TestCycleRepaintCannotRevertPatchGating(t *testing.T) {
+	f := newNativeFixture(t)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var gate sync.Once
+	f.screen.hook = func() {
+		gate.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+
+	cycleDone := make(chan struct{})
+	go func() {
+		defer close(cycleDone)
+		f.pg.NextPage() // native at gate time; paints, then blocks in the flash
+	}()
+	<-entered // cycle is past its critical section, stuck in the screen write
+
+	f.pg.OnPatchChange("soundfont") // snaps to page 0, paints the gated palette
+	close(release)
+	<-cycleDone
+
+	// The gated palette must survive: pre-fix, cycle painted
+	// paintPads(page, true) AFTER the flash and re-lit the synth pages.
+	if got := f.pads.colors[padKey{PageIndicatorRow, 0}]; got != padPageActive {
+		t.Errorf("pad (1,0) = %d, want active %d", got, padPageActive)
+	}
+	for col := 1; col < 5; col++ {
+		if got := f.pads.colors[padKey{PageIndicatorRow, col}]; got != padPageUnavailable {
+			t.Errorf("pad (1,%d) = %d, want unavailable %d", col, got, padPageUnavailable)
+		}
+	}
+	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "MAIN" {
+		t.Errorf("page = %d %q, want 0 MAIN after leaving native", idx, name)
 	}
 }

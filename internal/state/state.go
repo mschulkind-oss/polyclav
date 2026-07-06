@@ -171,12 +171,16 @@ func Load(path string) (Snapshot, error) {
 
 // fillSynthDefaults backfills ENGINE defaults into synth blocks whose
 // TOML keys are absent — the backward-compat path for state.toml files
-// written before the Phase 3/4 params existed. Only fields whose engine
-// default is non-zero need filling (an absent key already decodes to
-// the Go zero value, which IS the engine default for drive, kbd_track,
-// vel_routing.to_cutoff, the LFO depths, and oversample). Per-leaf on
-// purpose: a hand-edited file carrying a partial [synth.lfo] table must
-// keep its explicit values while the missing siblings default sanely.
+// written before newer params existed, and for hand-written partial
+// blocks. EVERY field whose engine default is non-zero is filled, Phase
+// 2 (resonance, filter_env times/levels, the oscillator bank) and Phase
+// 3/4 (amp_env, pulse_width, vel_routing.to_amp, lfo, bend_range,
+// voice_mode) alike; an absent key otherwise decodes to the Go zero
+// value, which IS the engine default only for drive, kbd_track, glide,
+// noise, filter_env.amount, vel_routing.to_cutoff, the LFO depths, and
+// oversample. Per-leaf on purpose: a hand-edited file carrying a
+// partial [synth.lfo] table must keep its explicit values while the
+// missing siblings default sanely.
 // The values mirror audio-core (synth/mod.rs, synth/voice.rs,
 // synth/lfo.rs) and controls.defaultSynth — keep all three in lockstep.
 func fillSynthDefaults(md toml.MetaData, snap *Snapshot) {
@@ -188,6 +192,23 @@ func fillSynthDefaults(md toml.MetaData, snap *Snapshot) {
 			return md.IsDefined(append([]string{"patches", name, "synth"}, key...)...)
 		}
 		s := p.Synth
+		if !defined("resonance") {
+			s.Resonance = 0.3
+		}
+		if !defined("filter_env", "attack") {
+			s.FilterEnv.Attack = 0.005
+		}
+		if !defined("filter_env", "decay") {
+			s.FilterEnv.Decay = 0.6
+		}
+		if !defined("filter_env", "sustain") {
+			s.FilterEnv.Sustain = 0.4
+		}
+		if !defined("filter_env", "release") {
+			s.FilterEnv.Release = 0.6
+		}
+		// filter_env.amount defaults to 0 — absent already decodes right.
+		fillOscDefaults(md, name, s)
 		if !defined("amp_env", "attack") {
 			s.AmpEnv.Attack = 0.005
 		}
@@ -219,6 +240,105 @@ func fillSynthDefaults(md toml.MetaData, snap *Snapshot) {
 			s.VoiceMode = "mono_legato"
 		}
 	}
+}
+
+// defaultOscs is the engine's oscillator bank (controls.defaultSynth /
+// audio-core oscillator.rs default_bank()): osc 1 sounding, oscs 2/3
+// pre-dialed Moog-ish but silent.
+func defaultOscs() [3]OscState {
+	return [3]OscState{
+		{Wave: "saw", Octave: 0, DetuneCents: 0, Level: 1.0},
+		{Wave: "saw", Octave: 0, DetuneCents: -7, Level: 0},
+		{Wave: "saw", Octave: -1, DetuneCents: 5, Level: 0},
+	}
+}
+
+// fillOscDefaults backfills the oscillator bank for one patch's synth
+// block. Three cases:
+//
+//   - no oscs key at all (a partial hand-written synth block): the whole
+//     default bank — decode left it zero-filled (wave "", osc1 level 0),
+//     which would be an invalid, silent voice.
+//   - the standard [[...oscs]] array-of-tables form (what the store's
+//     encoder writes): per-leaf backfill, attributing keys to elements
+//     via oscDefinedKeys.
+//   - the inline `oscs = [{...}, ...]` form: BurntSushi's metadata
+//     flattens all element keys under one header, so per-element
+//     attribution is impossible. Backfill only wave — "" is never a
+//     valid wave, so it can only mean "absent" — and keep every numeric
+//     leaf as decoded (an explicit 0 must survive).
+func fillOscDefaults(md toml.MetaData, patch string, s *SynthState) {
+	defaults := defaultOscs()
+	if !md.IsDefined("patches", patch, "synth", "oscs") {
+		s.Oscs = defaults
+		return
+	}
+	perElem, ok := oscDefinedKeys(md, patch)
+	if !ok {
+		for i := range s.Oscs {
+			if s.Oscs[i].Wave == "" {
+				s.Oscs[i].Wave = defaults[i].Wave
+			}
+		}
+		return
+	}
+	for i := range s.Oscs {
+		if !perElem[i]["wave"] {
+			s.Oscs[i].Wave = defaults[i].Wave
+		}
+		if !perElem[i]["octave"] {
+			s.Oscs[i].Octave = defaults[i].Octave
+		}
+		if !perElem[i]["detune_cents"] {
+			s.Oscs[i].DetuneCents = defaults[i].DetuneCents
+		}
+		if !perElem[i]["level"] {
+			s.Oscs[i].Level = defaults[i].Level
+		}
+	}
+}
+
+// oscDefinedKeys attributes [[patches.<patch>.synth.oscs]] leaf keys to
+// their array element. MetaData.IsDefined cannot see inside arrays of
+// tables, but MetaData.Keys() emits each [[...]] element as its header
+// key followed by that element's own leaves, in file order — so counting
+// header occurrences recovers the element index. ok is false when the
+// array wasn't written as exactly three [[...]] tables (e.g. the inline
+// array form emits ONE header with all leaves flattened after it), i.e.
+// per-element attribution is impossible; the decoder has already
+// enforced the array length, so a well-formed array-of-tables file
+// always yields ok — callers fall back to value-based filling otherwise.
+func oscDefinedKeys(md toml.MetaData, patch string) (defined [3]map[string]bool, ok bool) {
+	header := toml.Key{"patches", patch, "synth", "oscs"}
+	idx := -1
+	for _, k := range md.Keys() {
+		switch {
+		case keyEqual(k, header):
+			idx++
+			if idx >= len(defined) {
+				return defined, false
+			}
+			defined[idx] = map[string]bool{}
+		case len(k) == len(header)+1 && keyEqual(k[:len(header)], header):
+			if idx < 0 {
+				return defined, false
+			}
+			defined[idx][k[len(header)]] = true
+		}
+	}
+	return defined, idx == len(defined)-1
+}
+
+func keyEqual(a, b toml.Key) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NewStore constructs a Store with the given initial snapshot.

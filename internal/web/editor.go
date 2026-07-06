@@ -46,7 +46,10 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
-	if err := s.saveValidatedConfig(body, true); err != nil {
+	s.cfgMu.Lock()
+	err = s.saveValidatedConfig(body, true)
+	s.cfgMu.Unlock()
+	if err != nil {
 		var ve *configValidationError
 		if errors.As(err, &ve) {
 			writeErr(w, http.StatusUnprocessableEntity, ve.msg)
@@ -64,7 +67,8 @@ func (s *Server) handleConfigPut(w http.ResponseWriter, r *http.Request) {
 // runValidate additionally runs the config.Validate dependency check
 // (the PUT /api/config path); the velocity save path skips it because a
 // curve edit never touches [[patches]] and must not be blocked by a
-// soundfont that was already missing at boot.
+// soundfont that was already missing at boot. Callers must hold s.cfgMu
+// (across any read-merge step of their own too) — see the field comment.
 func (s *Server) saveValidatedConfig(data []byte, runValidate bool) error {
 	path := s.deps.ConfigPath
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".polyclav-*.toml")
@@ -176,6 +180,24 @@ func velocitySpecFromBody(b *velocityPutBody) (velocitySpec, string) {
 	return sp, ""
 }
 
+// toConfig renders sp as the config.VelocityConfig the daemon would
+// load back from the managed block renderVelocityBlock writes — the
+// shape handed to Deps.SetGlobalVelocity after a successful save. Gamma
+// is carried only for "custom", mirroring the block (presets ignore a
+// stray gamma anyway).
+func (sp velocitySpec) toConfig() config.VelocityConfig {
+	vc := config.VelocityConfig{OutMin: sp.outMin, OutMax: sp.outMax}
+	if sp.points != nil {
+		vc.Points = sp.points
+		return vc
+	}
+	vc.Curve = sp.curve
+	if sp.curve == "custom" {
+		vc.Gamma = float32(sp.gamma)
+	}
+	return vc
+}
+
 // build constructs the velocity.Curve for sp; errors map to 400.
 func (sp velocitySpec) build() (velocity.Curve, error) {
 	if sp.points != nil {
@@ -217,6 +239,19 @@ func (s *Server) handleVelocityGet(w http.ResponseWriter, _ *http.Request) {
 // docs/VELOCITY_CURVES.md: no silent config mutation), and installs it
 // live at the MIDI funnel via the controls layer. Save-then-apply order:
 // a request that fails to save must not leave a half-applied state.
+//
+// A successful save also pushes the spec into the daemon's in-memory
+// GLOBAL velocity spec (Deps.SetGlobalVelocity), so patch changes —
+// which re-resolve the curve — keep the saved curve instead of
+// reverting to the boot-time config for the rest of the session.
+// Session-only applies (save=false) skip that on purpose: they are
+// session-scoped and the next patch change reverts them to config.
+//
+// Known limit: PER-PATCH velocity overrides (velocity_curve /
+// velocity_gamma / velocity_points on a [[patches]] entry) are still
+// resolved from the boot-time config — editing those (by hand or via
+// PUT /api/config) requires a restart. Only the global [midi.velocity]
+// spec is live-updatable through this endpoint.
 func (s *Server) handleVelocityPut(w http.ResponseWriter, r *http.Request) {
 	var body velocityPutBody
 	if err := decodeJSON(w, r, &body); err != nil {
@@ -250,6 +285,12 @@ func (s *Server) handleVelocityPut(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusInternalServerError, err.Error())
 			}
 			return
+		}
+		// The file write succeeded — keep the daemon's global spec in
+		// lockstep so the next patch-change re-resolve uses the SAVED
+		// curve (see the handler comment; nil in tests/minimal wiring).
+		if s.deps.SetGlobalVelocity != nil {
+			s.deps.SetGlobalVelocity(sp.toConfig())
 		}
 	}
 
@@ -345,7 +386,12 @@ func upsertManagedVelocity(orig, block string) (string, error) {
 // saveVelocityBlock persists sp into ConfigPath's managed block, going
 // through the same temp-validate-rename path as PUT /api/config (Load
 // only — see saveValidatedConfig on why Validate is skipped here).
+// cfgMu is held across the whole read → merge → rename so a concurrent
+// PUT /api/config can't slip a write in between our read and our rename
+// (which would silently discard it).
 func (s *Server) saveVelocityBlock(sp velocitySpec) error {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
 	orig, err := os.ReadFile(s.deps.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)

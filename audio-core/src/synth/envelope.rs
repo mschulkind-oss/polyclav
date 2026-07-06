@@ -159,6 +159,14 @@ impl Adsr {
         self.stage != Stage::Idle
     }
 
+    /// `true` while the envelope is in its release stage (gate lifted,
+    /// still ramping to zero). The poly steal policy prefers cutting a
+    /// releasing voice over a held one — see
+    /// `NativeSynth::poly_voice_index`.
+    pub fn is_releasing(&self) -> bool {
+        self.stage == Stage::Release
+    }
+
     /// Current stage as a string — for tests / debug only. Hidden behind
     /// a `cfg(test)` to keep the public surface narrow.
     #[cfg(test)]

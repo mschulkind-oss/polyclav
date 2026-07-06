@@ -37,9 +37,10 @@
 //! - **mono_retrig** (1): 1 voice, last-note priority, envelopes ALWAYS
 //!   retrigger on note-on.
 //! - **poly** (2): a note-on takes a free voice (amp env idle) or, when
-//!   all 8 sound, steals the voice with the LOWEST `fired_at` (the
-//!   "oldest" v1 policy of §1.2); a note-off releases exactly the
-//!   voice(s) sounding that note.
+//!   all 8 sound, steals by priority: the oldest voice already in its
+//!   amp release tail first (§1.5 "oldest *released* voice first"),
+//!   else the oldest held voice (lowest `fired_at`); a note-off
+//!   releases exactly the voice(s) sounding that note.
 //!
 //! Switching modes while notes sound releases every voice and clears
 //! the held-notes stack (documented on `set_voice_mode` — no stuck
@@ -50,11 +51,13 @@ mod envelope;
 mod filter;
 mod lfo;
 mod oscillator;
+mod smoother;
 mod voice;
 
 use crate::MidiEvent;
 use lfo::{Lfo, LfoWave};
 use oscillator::{OscParams, Waveform, DEFAULT_PULSE_WIDTH};
+use smoother::Smoothed;
 use voice::{AmpEnvParams, FilterEnvParams, Voice};
 
 /// Maximum voices held in the allocator's pool — the §1.5 poly cap.
@@ -77,9 +80,10 @@ pub enum VoiceMode {
     /// value — an audible swell toward peak, no click).
     MonoRetrig,
     /// Up to [`MAX_VOICES`] voices. Note-on takes a free voice (amp env
-    /// idle) or steals the oldest-fired sounding voice (lowest
-    /// `fired_at`); note-off releases exactly the voice(s) sounding
-    /// that note.
+    /// idle), else steals the oldest voice already in its release tail,
+    /// else the oldest held voice (lowest `fired_at` — see
+    /// [`NativeSynth::poly_voice_index`]); note-off releases exactly
+    /// the voice(s) sounding that note.
     Poly,
 }
 
@@ -193,12 +197,14 @@ pub struct NativeSynth {
     /// `2^(lfo * lfo_to_cutoff_oct)` (composed into the canonical
     /// formula in `Voice::tick`).
     lfo_to_cutoff_oct: f32,
-    /// LFO → amp (tremolo) depth in [0, 1], same lifecycle. Default
-    /// 0.0 — bit-transparent. The summed voice output is multiplied by
-    /// `1 - depth * (lfo * 0.5 + 0.5)` — a unipolar dip from unity, so
-    /// depth 1 swings between full level (LFO trough) and silence (LFO
-    /// peak).
-    lfo_to_amp: f32,
+    /// LFO → amp (tremolo) depth in [0, 1], smoothed per sample (~2 ms
+    /// one-pole — see `smoother`) so live depth sweeps don't zipper the
+    /// output level. Default target 0.0 — a converged smoother is a
+    /// pure read, so the modulation stays bit-transparent. The summed
+    /// voice output is multiplied by `1 - depth * (lfo * 0.5 + 0.5)` —
+    /// a unipolar dip from unity, so depth 1 swings between full level
+    /// (LFO trough) and silence (LFO peak).
+    lfo_to_amp: Smoothed,
     /// Mod wheel position in [0, 1], updated live from MIDI CC 1 by
     /// `handle_event`. **Boots at 1.0** so a configured vibrato depth
     /// works without a wheel; the first CC 1 event takes over (see the
@@ -223,7 +229,12 @@ impl NativeSynth {
     /// Build a synth for the given engine name. `sample_rate` is in Hz.
     pub fn new(engine_name: &str, sample_rate: f32) -> Result<Self, String> {
         let engine = Engine::parse(engine_name)?;
-        let voices = (0..MAX_VOICES).map(|_| Voice::new(sample_rate)).collect();
+        // Each voice is seeded from its pool index so simultaneously
+        // sounding poly voices carry decorrelated noise (index 0 keeps
+        // the historic seed — bit-exact mono default render).
+        let voices = (0..MAX_VOICES)
+            .map(|idx| Voice::new(sample_rate, idx as u32))
+            .collect();
         let mut synth = Self {
             engine,
             sample_rate,
@@ -250,7 +261,7 @@ impl NativeSynth {
             lfo: Lfo::new(sample_rate),
             lfo_to_pitch_cents: 0.0,
             lfo_to_cutoff_oct: 0.0,
-            lfo_to_amp: 0.0,
+            lfo_to_amp: Smoothed::resting_at(0.0, sample_rate),
             // Boot value 1.0 — configured vibrato depth is audible
             // without a mod wheel; the first CC 1 takes over. See the
             // module docs.
@@ -360,9 +371,11 @@ impl NativeSynth {
     /// Set the pre-filter tanh drive amount, same lifecycle as
     /// `set_cutoff_hz`. Clamped to [0, 1]; 0 (the default) bypasses the
     /// saturator bit-exactly. When > 0 the mixed signal is shaped by
-    /// `tanh(x * (1 + drive*4)) / (1 + drive*4)` before the ladder —
-    /// unity gain at small signals, peaks compressed toward
-    /// ±1/(1 + drive*4) (ROADMAP §1.1 "TANH/SOFTCLIP DRIVE").
+    /// `tanh(x * g) / tanh(g)` with `g = 1 + drive*4` before the ladder
+    /// — peak-referenced normalization: unity at |x| = 1, small-signal
+    /// gain `g/tanh(g)` ≥ 1, so the knob adds loudness + compression
+    /// ("grit", ROADMAP §1.1 "TANH/SOFTCLIP DRIVE" / §1.4 "0..+24 dB
+    /// pre-filter") instead of dropping the level.
     pub fn set_drive(&mut self, drive: f32) {
         self.drive = drive.clamp(0.0, 1.0);
     }
@@ -436,7 +449,9 @@ impl NativeSynth {
         self.lfo.set_rate_hz(rate_hz);
         self.lfo_to_pitch_cents = to_pitch_cents.clamp(0.0, 100.0);
         self.lfo_to_cutoff_oct = to_cutoff_oct.clamp(0.0, 2.0);
-        self.lfo_to_amp = to_amp.clamp(0.0, 1.0);
+        // Amp (tremolo) depth is smoothed per sample in `render` (see
+        // `smoother`) — this only retargets the one-pole.
+        self.lfo_to_amp.set_target(to_amp.clamp(0.0, 1.0));
     }
 
     /// Set the voice-allocation mode (wire encoding 0 = mono_legato,
@@ -551,12 +566,15 @@ impl NativeSynth {
             VoiceMode::MonoLegato | VoiceMode::MonoRetrig => 0,
             VoiceMode::Poly => self.poly_voice_index(),
         };
-        // The velocity-routing amounts feed state CAPTURED at note fire
-        // time (`Voice::set_velocity`). Push the freshest knob values
-        // into the voice being fired BEFORE the capture — the per-block
-        // render push may not have run yet for a note arriving in the
-        // same block as a knob turn.
-        self.voices[idx].set_vel_routing(self.vel_to_cutoff, self.vel_to_amp);
+        // Push the freshest knob values into the voice being fired
+        // BEFORE it captures note state — the per-block render push may
+        // not have run yet for a note arriving in the same block as a
+        // knob turn. This matters twice: the velocity-routing amounts
+        // feed state CAPTURED at fire time (`Voice::set_velocity`), and
+        // a voice firing from silence SNAPS its parameter smoothers to
+        // their targets (`Voice::note_on`) — the targets must be
+        // current for the snap to land on the right values.
+        self.push_params_to_voice(idx);
         match self.voice_mode {
             VoiceMode::MonoLegato | VoiceMode::MonoRetrig => {
                 // MonoLegato suppresses envelope retrigger only when
@@ -580,22 +598,33 @@ impl NativeSynth {
         }
     }
 
-    /// Poly allocation (§1.2 / §1.5): the first free voice (amp env
-    /// idle), else steal the sounding voice with the LOWEST `fired_at`
-    /// — the "oldest" v1 policy. A possible refinement (left open, per
-    /// ROADMAP §1.5's "oldest *released* voice first, fall back to
-    /// oldest *playing*"): prefer the oldest voice already in its
-    /// release tail — "oldest-quietest" — so a fading tail is cut
-    /// before a held note. `fired_at` already carries everything that
-    /// policy needs.
+    /// Poly allocation (§1.2 / §1.5), in priority order:
+    ///
+    /// 1. the first free voice (amp env idle);
+    /// 2. else steal the OLDEST voice already in its amp-envelope
+    ///    release tail (lowest `fired_at` among releasing voices) — a
+    ///    fading tail nobody is holding is cut before any held note
+    ///    (ROADMAP §1.5: "oldest *released* voice first");
+    /// 3. else (every voice held) steal the oldest held voice (lowest
+    ///    `fired_at` — the v1 "oldest" fallback).
     fn poly_voice_index(&self) -> usize {
         if let Some(idx) = self.voices.iter().position(|v| !v.is_active()) {
+            return idx;
+        }
+        if let Some(idx) = self
+            .voices
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_releasing())
+            .min_by_key(|&(_, v)| v.fired_at)
+            .map(|(idx, _)| idx)
+        {
             return idx;
         }
         self.voices
             .iter()
             .enumerate()
-            .min_by_key(|(_, v)| v.fired_at)
+            .min_by_key(|&(_, v)| v.fired_at)
             .map(|(idx, _)| idx)
             .expect("voice pool is never empty (MAX_VOICES > 0)")
     }
@@ -635,25 +664,36 @@ impl NativeSynth {
         }
     }
 
+    /// Push every per-block parameter into one voice. Change detection
+    /// inside the voice makes redundant pushes free (no spurious Moog
+    /// retunes); smoothed parameters are only retargeted (see
+    /// `smoother`). Called per voice at the top of `render` and — so
+    /// note-time state capture and smoother snaps see fresh targets —
+    /// on the voice being fired in `note_on`.
+    fn push_params_to_voice(&mut self, idx: usize) {
+        let voice = &mut self.voices[idx];
+        voice.set_filter(self.cutoff_hz, self.resonance);
+        voice.set_amp_env(self.amp_env);
+        voice.set_filter_env(self.filter_env);
+        for (osc_idx, params) in self.osc_params.iter().enumerate() {
+            voice.set_osc(osc_idx, *params);
+        }
+        voice.set_noise_level(self.noise_level);
+        voice.set_glide(self.glide_s);
+        voice.set_pulse_width(self.pulse_width);
+        voice.set_drive(self.drive);
+        voice.set_vel_routing(self.vel_to_cutoff, self.vel_to_amp);
+        voice.set_kbd_track(self.kbd_track);
+        voice.set_oversample(self.oversample);
+    }
+
     /// Render `samples` (interleaved stereo, length divisible by 2).
     /// Called from the audio thread.
     pub fn render(&mut self, samples: &mut [f32]) {
         // Apply the per-block parameter updates once. Per-voice
         // change-detection guards against redundant Moog retunes.
-        for voice in &mut self.voices {
-            voice.set_filter(self.cutoff_hz, self.resonance);
-            voice.set_amp_env(self.amp_env);
-            voice.set_filter_env(self.filter_env);
-            for (idx, params) in self.osc_params.iter().enumerate() {
-                voice.set_osc(idx, *params);
-            }
-            voice.set_noise_level(self.noise_level);
-            voice.set_glide(self.glide_s);
-            voice.set_pulse_width(self.pulse_width);
-            voice.set_drive(self.drive);
-            voice.set_vel_routing(self.vel_to_cutoff, self.vel_to_amp);
-            voice.set_kbd_track(self.kbd_track);
-            voice.set_oversample(self.oversample);
+        for idx in 0..self.voices.len() {
+            self.push_params_to_voice(idx);
         }
 
         // Effective vibrato depth in cents: mod wheel × configured
@@ -686,9 +726,12 @@ impl NativeSynth {
             };
             // Tremolo: output × (1 - depth * (lfo*0.5 + 0.5)) — a
             // unipolar dip from unity (silent at the LFO peak when
-            // depth = 1).
-            let amp_mul = if self.lfo_to_amp > 0.0 {
-                1.0 - self.lfo_to_amp * (lfo * 0.5 + 0.5)
+            // depth = 1). The depth is smoothed per sample (see
+            // `smoother`); converged at the default 0 the smoother is a
+            // pure read and the whole branch is skipped (bit-exact).
+            let amp_depth = self.lfo_to_amp.tick();
+            let amp_mul = if amp_depth > 0.0 {
+                1.0 - amp_depth * (lfo * 0.5 + 0.5)
             } else {
                 1.0
             };
@@ -2285,21 +2328,21 @@ mod tests {
         assert_eq!(synth.lfo.rate_hz(), 20.0);
         assert_eq!(synth.lfo_to_pitch_cents, 100.0);
         assert_eq!(synth.lfo_to_cutoff_oct, 2.0);
-        assert_eq!(synth.lfo_to_amp, 1.0);
+        assert_eq!(synth.lfo_to_amp.target(), 1.0);
 
         synth.set_lfo(2, 0.0, -5.0, -1.0, -1.0);
         assert_eq!(synth.lfo.wave(), LfoWave::Square);
         assert_eq!(synth.lfo.rate_hz(), 0.05);
         assert_eq!(synth.lfo_to_pitch_cents, 0.0);
         assert_eq!(synth.lfo_to_cutoff_oct, 0.0);
-        assert_eq!(synth.lfo_to_amp, 0.0);
+        assert_eq!(synth.lfo_to_amp.target(), 0.0);
 
         synth.set_lfo(1, 4.0, 30.0, 0.5, 0.25);
         assert_eq!(synth.lfo.wave(), LfoWave::Saw);
         assert_eq!(synth.lfo.rate_hz(), 4.0);
         assert_eq!(synth.lfo_to_pitch_cents, 30.0);
         assert_eq!(synth.lfo_to_cutoff_oct, 0.5);
-        assert_eq!(synth.lfo_to_amp, 0.25);
+        assert_eq!(synth.lfo_to_amp.target(), 0.25);
     }
 
     /// `set_bend_range` clamps to [0, 12] semitones and retunes the
@@ -2490,6 +2533,233 @@ mod tests {
                 assert_eq!(a, b, "voice {i} must be untouched by the steal");
             }
         }
+    }
+
+    /// Steal priority (§1.5 "oldest *released* voice first"): with all
+    /// 8 voices active but one in its amp-release tail, the next note
+    /// steals the RELEASING voice — every held chord tone keeps
+    /// sounding. (The old policy took the lowest `fired_at` among ALL
+    /// active voices, cutting held note 48 here.) With two voices
+    /// releasing, the older-fired one is taken first. The all-held
+    /// fallback is pinned by `poly_ninth_note_steals_oldest_fired_voice`.
+    #[test]
+    fn poly_steal_prefers_releasing_voice_over_held() {
+        let mut synth = NativeSynth::new("minimoog", 48_000.0).unwrap();
+        synth.set_voice_mode(2);
+        let notes: [u8; 8] = [48, 50, 52, 53, 55, 57, 59, 60];
+        for &n in &notes {
+            press(&mut synth, n);
+        }
+        render_ms(&mut synth, 50);
+        // Release a MIDDLE chord tone (not the oldest-fired), then run
+        // 50 ms into its 400 ms release tail — still active, releasing.
+        release(&mut synth, 55);
+        render_ms(&mut synth, 50);
+        let before = synth.voice_notes();
+        let releasing = before
+            .iter()
+            .position(|&n| n == Some(55))
+            .expect("released note still in its tail");
+        assert!(
+            synth.voices[releasing].is_active() && synth.voices[releasing].is_releasing(),
+            "voice sounding note 55 should be in its release tail"
+        );
+
+        press(&mut synth, 62); // pool full — must steal the releasing voice
+        let after = synth.voice_notes();
+        assert_eq!(
+            after[releasing],
+            Some(62),
+            "9th note must steal the releasing voice, not a held one: {after:?}"
+        );
+        for &n in &notes {
+            if n != 55 {
+                assert!(
+                    after.contains(&Some(n)),
+                    "held note {n} must keep sounding through the steal: {after:?}"
+                );
+            }
+        }
+        assert!(
+            !synth.voices[releasing].is_releasing(),
+            "stolen voice must be re-gated, not still releasing"
+        );
+
+        // Two releasing voices: the OLDER-fired one (50, pressed before
+        // 57) is taken first; the newer tail survives.
+        release(&mut synth, 50);
+        release(&mut synth, 57);
+        render_ms(&mut synth, 50);
+        let idx50 = synth
+            .voice_notes()
+            .iter()
+            .position(|&n| n == Some(50))
+            .expect("note 50 still in its tail");
+        press(&mut synth, 64);
+        let after = synth.voice_notes();
+        assert_eq!(
+            after[idx50],
+            Some(64),
+            "oldest releasing voice must be stolen first: {after:?}"
+        );
+        assert!(
+            after.contains(&Some(57)),
+            "newer releasing tail must survive while an older one exists: {after:?}"
+        );
+    }
+
+    /// R3 level regression: the drive knob must never act as a
+    /// volume-down. The old `tanh(x·g)/g` normalization dropped
+    /// −4.3 dB RMS at drive 0.3 (−9.8 dB at 1.0); the peak-referenced
+    /// `tanh(x·g)/tanh(g)` keeps unity peak and gives small signals
+    /// `g/tanh(g)` ≥ 1. On the full-scale default saw (open filter)
+    /// this measures +2.4 dB at drive 0.3 (compression packs RMS
+    /// toward the peak) — asserted no lower than −1.5 dB (the cliff is
+    /// gone) and no higher than +4 dB (still a drive, not a boost
+    /// pedal) — and RMS is monotonically non-decreasing from drive 0
+    /// to 0.5.
+    #[test]
+    fn drive_keeps_level_and_grows_monotonically() {
+        let rms_at = |drive: f32| {
+            let mut s = NativeSynth::new("minimoog", 48_000.0).unwrap();
+            s.set_cutoff_hz(20_000.0); // open — the ladder hides nothing
+            s.set_drive(drive);
+            let buf = render_note_ms(&mut s, 500);
+            rms(&buf[100 * 96..]) // steady sustain window (post-decay)
+        };
+        let base = rms_at(0.0);
+        assert!(base > 0.05, "baseline render audible, rms={base}");
+        let at_03 = rms_at(0.3);
+        let db = 20.0 * (at_03 / base).log10();
+        assert!(
+            (-1.5..=4.0).contains(&db),
+            "drive 0.3 must hold the level (old code: −4.3 dB), got {db:+.2} dB"
+        );
+        let mut prev = base;
+        for d in [0.1f32, 0.2, 0.3, 0.4, 0.5] {
+            let r = rms_at(d);
+            assert!(
+                r >= prev * 0.999,
+                "RMS must not fall as drive rises: drive {d} rms={r} vs previous {prev}"
+            );
+            prev = r;
+        }
+    }
+
+    /// R4 zipper regression: a mid-note osc-1 level step 1.0 → 0.25
+    /// must be SMOOTHED (~2 ms one-pole — see `smoother`), not applied
+    /// as a per-block jump. Method: two identical synths (open filter
+    /// so the ladder can't mask a pre-filter step) rendered in lockstep
+    /// to a saw peak; one gets the level step. The first sample of the
+    /// difference signal (|d[0]| — d was exactly 0 before the step)
+    /// plus its per-sample jumps over the next 0.25 ms isolate the
+    /// discontinuity the step injects from the saw's own edges.
+    /// Reproduced pre-fix: 0.146 peak-aligned (0.75 × the ~0.20 peak
+    /// sample), 0.227 unaligned over 20 ms; smoothed it must stay
+    /// under 0.05.
+    #[test]
+    fn osc_level_step_mid_note_is_smoothed() {
+        let mk = || {
+            let mut s = NativeSynth::new("minimoog", 48_000.0).unwrap();
+            s.set_cutoff_hz(20_000.0);
+            press(&mut s, 60);
+            render_ms(&mut s, 400); // settle at sustain
+            s
+        };
+        // Find the saw-peak offset within >1 period (C4 @ 48 kHz ≈
+        // 183.5 frames) on a probe clone — the renders are
+        // deterministic, so the twins hit the same sample.
+        let mut probe = mk();
+        let win = mono(&render_ms(&mut probe, 5));
+        let peak_at = win
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
+            .map(|(i, _)| i)
+            .expect("probe window nonempty");
+        assert!(
+            win[peak_at].abs() > 0.15,
+            "saw peak should be full-scale, got {}",
+            win[peak_at]
+        );
+        let mut stepped = mk();
+        let mut steady = mk();
+        let mut frame = [0.0f32; 2];
+        for _ in 0..peak_at {
+            stepped.render(&mut frame);
+            steady.render(&mut frame);
+        }
+        stepped.set_osc(0, 0, 0, 0.0, 0.25); // the mid-note step
+        let sa = mono(&render_ms(&mut stepped, 20));
+        let sb = mono(&render_ms(&mut steady, 20));
+        let d: Vec<f32> = sa.iter().zip(&sb).map(|(x, y)| x - y).collect();
+        let mut jump = d[0].abs();
+        for w in d[..12].windows(2) {
+            jump = jump.max((w[1] - w[0]).abs());
+        }
+        assert!(
+            jump < 0.05,
+            "mid-note osc-level step must be smoothed: max jump {jump} (pre-fix ≈ 0.15–0.23)"
+        );
+        // And the step still lands: by 20 ms the stepped synth's level
+        // has audibly dropped relative to its twin (mono samples: 48
+        // per ms — the 10..20 ms window).
+        let (ra, rb) = (rms(&sa[48 * 10..]), rms(&sb[48 * 10..]));
+        assert!(
+            ra < rb * 0.5,
+            "level step must take effect: stepped rms={ra} vs steady rms={rb}"
+        );
+    }
+
+    /// R4 landing: smoothed params reach their targets fast and
+    /// exactly — within 1% of the step 10 ms after a mid-note change
+    /// (~5 time constants of the 2 ms one-pole), and bit-exactly on
+    /// target (snap) well before 100 ms.
+    #[test]
+    fn smoothed_params_land_on_target() {
+        let mut synth = NativeSynth::new("minimoog", 48_000.0).unwrap();
+        press(&mut synth, 60);
+        render_ms(&mut synth, 400);
+        synth.set_osc(0, 0, 0, 0.0, 0.25); // level step 1.0 -> 0.25
+        synth.set_drive(0.5); // gain step 1.0 -> 3.0
+        synth.set_noise_level(0.8); // step 0.0 -> 0.8
+        synth.set_pulse_width(0.5); // step 0.25 -> 0.5
+        synth.set_lfo(0, 5.0, 0.0, 0.0, 1.0); // tremolo depth 0.0 -> 1.0
+        render_ms(&mut synth, 10);
+        let within = |value: f32, target: f32, step: f32, what: &str| {
+            assert!(
+                (value - target).abs() < 0.01 * step,
+                "{what} must land within 1% of its step after 10 ms, got {value} (target {target})"
+            );
+        };
+        within(
+            synth.voices[0].osc_level_smoothed(0),
+            0.25,
+            0.75,
+            "osc level",
+        );
+        within(synth.voices[0].drive_gain_applied(), 3.0, 2.0, "drive gain");
+        within(
+            synth.voices[0].noise_level_smoothed(),
+            0.8,
+            0.8,
+            "noise level",
+        );
+        within(synth.voices[0].osc_pulse_width(0), 0.5, 0.25, "pulse width");
+        within(synth.lfo_to_amp.get(), 1.0, 1.0, "tremolo depth");
+        render_ms(&mut synth, 90);
+        let exact = |value: f32, target: f32, what: &str| {
+            assert_eq!(
+                value.to_bits(),
+                target.to_bits(),
+                "{what} smoother must converge exactly onto its target"
+            );
+        };
+        exact(synth.voices[0].osc_level_smoothed(0), 0.25, "osc level");
+        exact(synth.voices[0].drive_gain_applied(), 3.0, "drive gain");
+        exact(synth.voices[0].noise_level_smoothed(), 0.8, "noise level");
+        exact(synth.voices[0].osc_pulse_width(0), 0.5, "pulse width");
+        exact(synth.lfo_to_amp.get(), 1.0, "tremolo depth");
     }
 
     /// mono_retrig re-fires the amp envelope on every note-on where

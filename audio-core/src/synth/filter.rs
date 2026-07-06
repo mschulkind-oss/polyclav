@@ -95,8 +95,10 @@ impl MoogFilter {
 /// sample rate (see the module docs for why fundsp's wrapper was chosen
 /// over a hand-rolled halfband). The drive model is identical to the
 /// voice's inline stage: `y = tanh(x * gain) * norm` with
-/// `gain = 1 + drive*4`, `norm = 1/gain`, bypassed while `gain <= 1`
-/// (drive 0). Parameters are plain fields pushed through
+/// `gain = 1 + drive*4`, `norm = 1/tanh(gain)` (peak-referenced —
+/// unity at |x| = 1, small-signal gain gain/tanh(gain); see
+/// `Voice::set_drive`), bypassed while `gain <= 1` (drive 0).
+/// Parameters are plain fields pushed through
 /// [`OversampledDriveLadder`]'s setters — never through fundsp's
 /// `Setting` machinery.
 #[derive(Clone)]
@@ -164,9 +166,10 @@ impl OversampledDriveLadder {
         self.inner.node_mut().moog.set_cutoff_q(cutoff_hz, q);
     }
 
-    /// Push the drive pre-gain and its cached reciprocal (the voice
-    /// already computes both — see `Voice::set_drive`). `gain <= 1`
-    /// (drive 0) bypasses the tanh stage inside the wrapper.
+    /// Push the drive pre-gain and its cached normalization (the voice
+    /// already computes both from the smoothed gain — see
+    /// `Voice::apply_drive_gain`). `gain <= 1` (drive 0) bypasses the
+    /// tanh stage inside the wrapper.
     pub fn set_drive_gain(&mut self, gain: f32, norm: f32) {
         let node = self.inner.node_mut();
         node.drive_gain = gain;

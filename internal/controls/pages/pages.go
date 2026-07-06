@@ -159,9 +159,9 @@ func (p *Pages) cycle(dir int) {
 	n := len(p.defs)
 	p.page = (p.page + dir + n) % n
 	page := p.page
+	p.paintPadsLocked()
 	p.mu.Unlock()
 	_ = p.screen.SetDisplayText(p.defs[page].Name, fmt.Sprintf("Page %d/%d", page+1, n))
-	p.paintPads(page, true)
 }
 
 // CurrentPage reports the active page's index and name.
@@ -183,27 +183,32 @@ func (p *Pages) OnPatchChange(patchType string) {
 	if !native {
 		p.page = 0
 	}
-	page := p.page
+	p.paintPadsLocked()
 	p.mu.Unlock()
-	p.paintPads(page, native)
 }
 
 // RefreshPads repaints the page-indicator row from current state — the
 // reconnect hook (pad LEDs reset when the device power-cycles).
 func (p *Pages) RefreshPads() {
 	p.mu.Lock()
-	page, native := p.page, p.native
+	p.paintPadsLocked()
 	p.mu.Unlock()
-	p.paintPads(page, native)
 }
 
-func (p *Pages) paintPads(active int, native bool) {
+// paintPadsLocked repaints the page-indicator row from the LIVE state;
+// callers hold p.mu. Painting inside the lock (instead of from values
+// captured before releasing it) serializes paints with state changes,
+// so the last paint always reflects the last cycle/OnPatchChange and a
+// racing repaint can never overwrite fresh gating with stale colors.
+// The PadWriter therefore must not call back into Pages (the reconciler
+// adapter in cmd/polyclav does not).
+func (p *Pages) paintPadsLocked() {
 	for i := range p.defs {
 		c := padPageAvailable
-		if !native && i != 0 {
+		if !p.native && i != 0 {
 			c = padPageUnavailable
 		}
-		if i == active {
+		if i == p.page {
 			c = padPageActive
 		}
 		_ = p.pads.SetPadColor(PageIndicatorRow, i, c)

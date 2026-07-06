@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/state"
@@ -44,9 +45,10 @@ type fakeAudio struct {
 	voiceMode                        string
 	oversample                       bool
 	lastOsc                          oscCall
-	oscErr                           error // forced SetNativeOsc failure
-	lfoErr                           error // forced SetNativeLFO failure
-	voiceModeErr                     error // forced SetNativeVoiceMode failure
+	oscHook                          func() // optional: runs at SetNativeOsc entry (gate for concurrency tests)
+	oscErr                           error  // forced SetNativeOsc failure
+	lfoErr                           error  // forced SetNativeLFO failure
+	voiceModeErr                     error  // forced SetNativeVoiceMode failure
 	volumeCalls, reverbCalls         int
 	compressorCalls, cutoffCalls     int
 	masteringCalls, limiterCalls     int
@@ -116,6 +118,9 @@ func (f *fakeAudio) SetNativeFilterEnv(a, d, s, r, amount float32) {
 }
 
 func (f *fakeAudio) SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error {
+	if f.oscHook != nil {
+		f.oscHook() // outside f.mu so a blocked apply doesn't wedge readers
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.oscErr != nil {
@@ -2117,6 +2122,223 @@ func TestMergeSynthLFOAndVoiceModeEngineErrorsPropagate(t *testing.T) {
 			t.Errorf("earlier section must stay applied: audio=%v cache=%v", f.audio.resonance, f.c.Synth().Resonance)
 		}
 	})
+}
+
+// TestMergeSynthDuplicateOscEntriesCompose: two entries for the same osc
+// index in one body fold over the evolving result — the second entry
+// merges over what the first actually applied, not over the pre-merge
+// base (which silently reverted the first entry's other fields).
+func TestMergeSynthDuplicateOscEntriesCompose(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	syn, err := f.c.MergeSynth(SynthPartial{Oscs: []OscPartial{
+		{Index: 0, Level: fp(0.5)},
+		{Index: 0, DetuneCents: fp(10)},
+	}})
+	if err != nil {
+		t.Fatalf("MergeSynth: %v", err)
+	}
+	want := defaultSynthWant.Oscs[0]
+	want.Level = 0.5
+	want.DetuneCents = 10
+	if syn.Oscs[0] != want {
+		t.Errorf("osc0 = %+v, want BOTH edits composed: %+v", syn.Oscs[0], want)
+	}
+	if f.audio.lastOsc != (oscCall{idx: 0, wave: "saw", octave: 0, detune: 10, level: 0.5}) {
+		t.Errorf("audio last osc = %+v, want composed detune 10 + level 0.5", f.audio.lastOsc)
+	}
+	if got := synthFromState(f.st.synths["moog"]).Oscs[0]; got != want {
+		t.Errorf("persisted osc0 = %+v, want %+v", got, want)
+	}
+	// The second entry starts from the first's post-clamp result too: an
+	// out-of-range level clamps, and the follow-up detune keeps the clamp.
+	syn, err = f.c.MergeSynth(SynthPartial{Oscs: []OscPartial{
+		{Index: 1, Level: fp(2.0)}, // clamps to 1
+		{Index: 1, DetuneCents: fp(3)},
+	}})
+	if err != nil {
+		t.Fatalf("MergeSynth: %v", err)
+	}
+	if syn.Oscs[1].Level != 1 || syn.Oscs[1].DetuneCents != 3 {
+		t.Errorf("osc1 = %+v, want clamped level 1 with detune 3", syn.Oscs[1])
+	}
+}
+
+// ---- AdjustSynth (atomic knob read-modify-write) -----------------------------
+
+// TestAdjustSynth pins the atomic read-modify-write primitive: mutate
+// runs on the live snapshot inside the writer lock, and each changed
+// section runs the standard clamp/apply/cache/persist/publish sequence
+// with the same wire shapes as its SetSynth* counterpart — untouched
+// sections are not re-pushed.
+func TestAdjustSynth(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	syn, err := f.c.AdjustSynth(func(s *SynthSnapshot) {
+		s.Resonance += 1 // 1.3, clamps to 0.95
+		s.FilterEnv.Attack = 0.05
+	})
+	if err != nil {
+		t.Fatalf("AdjustSynth: %v", err)
+	}
+	if !approxEq(syn.Resonance, 0.95) || !approxEq(syn.FilterEnv.Attack, 0.05) {
+		t.Errorf("snapshot = res %v / attack %v, want 0.95 / 0.05", syn.Resonance, syn.FilterEnv.Attack)
+	}
+	if syn.FilterEnv.Decay != 0.6 || syn.AmpEnv != defaultSynthWant.AmpEnv {
+		t.Errorf("untouched fields drifted: %+v", syn)
+	}
+	if !approxEq(f.audio.resonance, 0.95) || !approxEq(f.audio.feA, 0.05) {
+		t.Errorf("audio = res %v / attack %v, want 0.95 / 0.05", f.audio.resonance, f.audio.feA)
+	}
+	if got := f.audio.synthCalls(); got != 2 {
+		t.Errorf("synth applies = %d, want 2 (only the changed sections)", got)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "resonance" {
+		t.Errorf("first change = %q/%v, want synth/resonance", ch.Type, ch.Data["field"])
+	}
+	ch = recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "filter_env" {
+		t.Errorf("second change = %q/%v, want synth/filter_env", ch.Type, ch.Data["field"])
+	}
+	assertNoChange(t, f.ch)
+	if got := synthFromState(f.st.synths["moog"]); got != syn {
+		t.Errorf("persisted = %+v, want %+v", got, syn)
+	}
+	if f.c.Synth() != syn {
+		t.Errorf("returned snapshot must match the cache: %+v vs %+v", syn, f.c.Synth())
+	}
+}
+
+func TestAdjustSynthGatedOnPatchType(t *testing.T) {
+	t.Run("no patch", func(t *testing.T) {
+		f := newFixture(t, nativePatch) // nothing selected
+		ran := false
+		if _, err := f.c.AdjustSynth(func(s *SynthSnapshot) { ran = true }); !errors.Is(err, ErrNoNativePatch) {
+			t.Errorf("expected ErrNoNativePatch, got %v", err)
+		}
+		if ran {
+			t.Error("mutate must not run when gated")
+		}
+		if f.audio.synthCalls() != 0 {
+			t.Error("audio must not be touched when gated")
+		}
+		assertNoChange(t, f.ch)
+	})
+	t.Run("non-native patch", func(t *testing.T) {
+		f := newFixture(t, sfPatch)
+		if err := f.reg.Select("salamander"); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		if _, err := f.c.AdjustSynth(func(s *SynthSnapshot) { s.Noise = 0.5 }); !errors.Is(err, ErrNoNativePatch) {
+			t.Errorf("expected ErrNoNativePatch, got %v", err)
+		}
+		if got := f.c.Synth(); got != defaultSynthWant {
+			t.Errorf("cache must not change when gated, got %+v", got)
+		}
+		assertNoChange(t, f.ch)
+	})
+}
+
+func TestAdjustSynthValidatesEnumsBeforeApplyingAnything(t *testing.T) {
+	for name, mutate := range map[string]func(*SynthSnapshot){
+		"bad osc wave":   func(s *SynthSnapshot) { s.Resonance = 0.5; s.Oscs[0].Wave = "sine" },
+		"bad lfo wave":   func(s *SynthSnapshot) { s.Resonance = 0.5; s.LFO.Wave = "sine" },
+		"bad voice mode": func(s *SynthSnapshot) { s.Resonance = 0.5; s.VoiceMode = "duophonic" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, nativePatch)
+			selectNative(t, f)
+			if _, err := f.c.AdjustSynth(mutate); err == nil {
+				t.Fatal("expected a validation error")
+			}
+			// Validation runs up front, so nothing — not even the valid
+			// resonance edit — may have been applied.
+			if f.audio.synthCalls() != 0 {
+				t.Error("audio must not be touched on a validation error")
+			}
+			if got := f.c.Synth(); got != defaultSynthWant {
+				t.Errorf("cache must not change on a validation error, got %+v", got)
+			}
+			assertNoChange(t, f.ch)
+		})
+	}
+}
+
+func TestAdjustSynthEngineErrorPropagates(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+	f.audio.oscErr = errors.New("boom")
+
+	before := f.c.Synth()
+	if _, err := f.c.AdjustSynth(func(s *SynthSnapshot) { s.Oscs[0].Level = 0.5 }); err == nil {
+		t.Fatal("expected engine error to propagate")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on engine error")
+	}
+	assertNoChange(t, f.ch)
+}
+
+// TestAdjustSynthComposesWithConcurrentMerge is the C1 primitive probe:
+// a MergeSynth blocked mid-apply inside the writer lock (slow engine)
+// while AdjustSynth edits a sibling field of the same osc. Because the
+// adjust's read happens INSIDE the lock, it starts from the merge's
+// result and the final state carries BOTH edits — cache, engine, and
+// the persisted block. Run under -race (the unsynchronized fakeStore
+// flags any apply escaping the writer lock).
+func TestAdjustSynthComposesWithConcurrentMerge(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var gate sync.Once
+	f.audio.oscHook = func() {
+		gate.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+
+	mergeDone := make(chan struct{})
+	go func() {
+		defer close(mergeDone)
+		if _, err := f.c.MergeSynth(SynthPartial{Oscs: []OscPartial{{Index: 0, Level: fp(0.5)}}}); err != nil {
+			t.Errorf("MergeSynth: %v", err)
+		}
+	}()
+	<-entered // MergeSynth holds applyMu, blocked in the engine apply
+
+	adjustDone := make(chan struct{})
+	go func() {
+		defer close(adjustDone)
+		if _, err := f.c.AdjustSynth(func(s *SynthSnapshot) { s.Oscs[0].DetuneCents += 10 }); err != nil {
+			t.Errorf("AdjustSynth: %v", err)
+		}
+	}()
+	// Let the adjuster reach the writer lock while the merge still holds
+	// it — the pre-fix knob path snapshotted the synth block here and
+	// pushed the stale osc level back over the merge's edit.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	<-mergeDone
+	<-adjustDone
+
+	want := defaultSynthWant.Oscs[0]
+	want.Level = 0.5
+	want.DetuneCents = 10
+	if got := f.c.Synth().Oscs[0]; got != want {
+		t.Errorf("osc0 = %+v, want BOTH edits: %+v", got, want)
+	}
+	if f.audio.lastOsc != (oscCall{idx: 0, wave: "saw", octave: 0, detune: 10, level: 0.5}) {
+		t.Errorf("audio last osc = %+v, want composed detune 10 + level 0.5", f.audio.lastOsc)
+	}
+	if got := synthFromState(f.st.synths["moog"]).Oscs[0]; got != want {
+		t.Errorf("persisted osc0 = %+v, want %+v", got, want)
+	}
 }
 
 // ---- writer-serialization probes (C2/C3) ------------------------------------

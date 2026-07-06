@@ -19,6 +19,7 @@
 use super::envelope::Adsr;
 use super::filter::{MoogFilter, OversampledDriveLadder};
 use super::oscillator::{OscParams, Oscillator};
+use super::smoother::Smoothed;
 
 /// Convert a MIDI note number to frequency in Hz (A4 = 69 = 440 Hz).
 pub fn midi_to_hz(note: u8) -> f32 {
@@ -96,10 +97,33 @@ struct NoiseGen {
     state: u32,
 }
 
+/// The historic (pre-per-voice-seeding) xorshift32 seed. Voice 0 MUST
+/// keep exactly this seed so the mono default render stays bit-identical
+/// (regression guarantee — the goldens were captured with it).
+const BASE_NOISE_SEED: u32 = 0x2545_F491;
+
 impl NoiseGen {
-    fn new() -> Self {
-        // Any nonzero seed works for xorshift32; this one is arbitrary.
-        Self { state: 0x2545_F491 }
+    /// Deterministic per-voice seed: the historic base seed mixed with
+    /// the voice's pool index via a Weyl increment (golden-ratio
+    /// constant). Index 0 XORs with 0 and reproduces [`BASE_NOISE_SEED`]
+    /// exactly; every other index gets a decorrelated nonzero seed, so
+    /// poly voices sounding in the same block produce independent noise
+    /// (summing ~+3 dB instead of the coherent +6 dB of shared state).
+    fn seed_for_voice(voice_index: u32) -> u32 {
+        let seed = BASE_NOISE_SEED ^ 0x9E37_79B9u32.wrapping_mul(voice_index);
+        // xorshift32 must never be seeded with 0 (it is a fixed point).
+        // Unreachable for any real pool size, but cheap to defend.
+        if seed == 0 {
+            BASE_NOISE_SEED
+        } else {
+            seed
+        }
+    }
+
+    fn new(voice_index: u32) -> Self {
+        Self {
+            state: Self::seed_for_voice(voice_index),
+        }
     }
 
     /// One white-noise sample in -1..1.
@@ -128,17 +152,34 @@ pub struct Voice {
     /// classic `velocity / 127` (regression guarantee).
     velocity_scale: f32,
     /// Monotonic counter set by the allocator when the voice fires —
-    /// the poly steal policy takes the sounding voice with the lowest
-    /// value ("oldest" — see `NativeSynth::poly_voice_index`).
+    /// the poly steal policy takes the lowest value ("oldest") within
+    /// its priority tiers (releasing before held — see
+    /// `NativeSynth::poly_voice_index`).
     pub fired_at: u64,
     /// The §1.1 source section: three oscillators, each with its own
     /// waveform / octave / detune / mixer level (see `OscParams`).
     oscs: [Oscillator; 3],
-    /// White-noise source; mixed in at `noise_level`.
+    /// White-noise source; mixed in at `noise_level`. Seeded per pool
+    /// index (`NoiseGen::seed_for_voice`) so simultaneously-sounding
+    /// poly voices carry decorrelated noise.
     noise: NoiseGen,
-    /// Noise mixer level in 0..=1. 0 (the default) keeps the noise path
-    /// silent — regression-safe.
-    noise_level: f32,
+    /// Noise mixer level in 0..=1, smoothed per sample (~2 ms one-pole
+    /// — see `smoother`). Target 0 (the default) keeps the noise path
+    /// silent and bit-transparent (a converged smoother is a pure
+    /// read).
+    noise_level: Smoothed,
+    /// Per-oscillator mixer levels in 0..=1, smoothed per sample
+    /// (~2 ms one-pole) so live level sweeps don't zipper. Targets are
+    /// pushed by `set_osc`; the smoothed values feed both the mix and
+    /// the renormalization sum in `tick`. Converged defaults
+    /// ([1, 0, 0]) are bit-transparent.
+    osc_level: [Smoothed; 3],
+    /// Pulse-wave duty cycle in [0.05, 0.95], smoothed per sample
+    /// (~2 ms one-pole). While the smoother is moving, `tick` pushes
+    /// the smoothed width into all three oscillators each sample; once
+    /// converged the oscillators hold the exact target. Default 0.25 —
+    /// bit-transparent (regression guarantee).
+    pulse_width: Smoothed,
     filter: MoogFilter,
     amp_env: Adsr,
     /// Last `AmpEnvParams` pushed by `set_amp_env` — change detection so
@@ -189,20 +230,31 @@ pub struct Voice {
     /// pre-drive engine (regression guarantee). When > 0:
     ///
     /// ```text
-    /// g = 1 + drive * 4          (pre-gain, 1..5)
-    /// y = tanh(x * g) * (1 / g)  (tanh_norm = g)
+    /// g = 1 + drive * 4              (pre-gain, 1..5)
+    /// y = tanh(x * g) / tanh(g)      (peak-referenced normalization)
     /// ```
     ///
-    /// Normalizing by the same `g` used as pre-gain keeps unity gain
-    /// for small signals (tanh(x·g) ≈ x·g when |x·g| ≪ 1, so y ≈ x)
-    /// while peaks compress toward ±1/g — more drive squashes the
-    /// waveform harder without pumping the level into the ladder.
+    /// Normalizing by `tanh(g)` keeps UNITY PEAK (|x| = 1 maps to
+    /// |y| = 1 for every drive setting) and gives small signals the
+    /// gain `g / tanh(g)` ≥ 1 — the loudness-plus-compression a drive
+    /// knob should have (§1.4: "0..+24 dB pre-filter" grit). The
+    /// previous `tanh(x·g)/g` normalization dropped the level with
+    /// drive (−4.3 dB RMS at 0.3, −9.8 dB at 1.0), turning the knob
+    /// into a volume-down.
     drive: f32,
-    /// Cached pre-gain `1 + drive * 4`, recomputed only when `drive`
-    /// changes.
-    drive_gain: f32,
-    /// Cached `1 / drive_gain` (the tanh_norm reciprocal) so the
-    /// per-sample path is a multiply, not a divide.
+    /// Pre-gain `1 + drive * 4`, smoothed per sample (~2 ms one-pole —
+    /// see `smoother`) so live drive sweeps don't zipper. `set_drive`
+    /// pushes the target; `tick` derives the normalization from the
+    /// smoothed gain whenever it moves.
+    drive_gain: Smoothed,
+    /// The smoothed pre-gain currently applied to the signal path (and
+    /// mirrored into `over_ladder`). `tick` recomputes `drive_norm`
+    /// only when the smoothed gain moves off this value.
+    drive_gain_applied: f32,
+    /// Cached `1 / tanh(drive_gain_applied)` (the peak-referenced
+    /// normalization) so the per-sample path is a multiply, not a
+    /// divide + tanh. 1.0 (unused) while the drive is bypassed
+    /// (`drive_gain_applied <= 1`).
     drive_norm: f32,
     /// Velocity → amp routing amount in [0, 1] (ROADMAP §1.1 mod input
     /// "vel"). 1.0 (the default) reproduces the classic
@@ -258,7 +310,10 @@ pub struct Voice {
 impl Voice {
     /// Build a voice configured with the Minimoog defaults from doc 14
     /// §4.4 (amp ADSR 5/200/0.7/400, cutoff 2 kHz, resonance 0.3).
-    pub fn new(sample_rate: f32) -> Self {
+    /// `voice_index` is the allocator pool index — it seeds the voice's
+    /// noise source (index 0 reproduces the historic seed bit for bit;
+    /// see `NoiseGen::seed_for_voice`).
+    pub fn new(sample_rate: f32, voice_index: u32) -> Self {
         let cutoff = 2_000.0;
         let resonance = 0.3;
         let aenv = AmpEnvParams::default_minimoog();
@@ -269,8 +324,10 @@ impl Voice {
             velocity_scale: 0.0,
             fired_at: 0,
             oscs: osc_defaults.map(|p| Oscillator::new(sample_rate, p)),
-            noise: NoiseGen::new(),
-            noise_level: 0.0,
+            noise: NoiseGen::new(voice_index),
+            noise_level: Smoothed::resting_at(0.0, sample_rate),
+            osc_level: osc_defaults.map(|p| Smoothed::resting_at(p.level, sample_rate)),
+            pulse_width: Smoothed::resting_at(super::oscillator::DEFAULT_PULSE_WIDTH, sample_rate),
             filter: MoogFilter::new(sample_rate, cutoff, resonance),
             amp_env: Adsr::new(
                 sample_rate,
@@ -300,7 +357,8 @@ impl Voice {
             // this to the note's pitch before the first `tick`.
             current_freq_hz: 440.0,
             drive: 0.0,
-            drive_gain: 1.0,
+            drive_gain: Smoothed::resting_at(1.0, sample_rate),
+            drive_gain_applied: 1.0,
             drive_norm: 1.0,
             vel_to_amp: 1.0,
             vel_to_cutoff: 0.0,
@@ -333,6 +391,13 @@ impl Voice {
     pub fn note_on(&mut self, note: u8, velocity: u8, fired_at: u64) {
         if !self.amp_env.is_active() {
             self.current_freq_hz = midi_to_hz(note);
+            // A voice firing from silence starts EXACTLY at its target
+            // parameters — smoothing only spans changes made while the
+            // voice sounds (see `smoother`). This keeps note starts
+            // deterministic (params set between phrases take full
+            // effect from the first sample) and preserves the
+            // bit-exact-default goldens.
+            self.snap_smoothed_params();
         }
         self.note = Some(note);
         self.set_velocity(velocity);
@@ -377,6 +442,14 @@ impl Voice {
     /// idle — see `NativeSynth::poly_voice_index`).
     pub fn is_active(&self) -> bool {
         self.amp_env.is_active()
+    }
+
+    /// `true` while the voice is sounding its amp-envelope release tail
+    /// (gate lifted, still active). The poly steal policy prefers
+    /// cutting a releasing voice over a held one — see
+    /// `NativeSynth::poly_voice_index`.
+    pub fn is_releasing(&self) -> bool {
+        self.amp_env.is_releasing()
     }
 
     /// Per-block setup. Cheap when nothing changed (compares against the
@@ -434,10 +507,10 @@ impl Voice {
         self.oversample = on;
         if on {
             self.over_ladder.reset();
-            // Drive gain is mirrored into the wrapper on every
-            // `set_drive` change, so only the tuning needs syncing
-            // here (the inactive path skips retunes — see
-            // `retune_active_ladder`).
+            // Drive gain is mirrored into the wrapper whenever the
+            // applied (smoothed) gain moves (`apply_drive_gain`), so
+            // only the tuning needs syncing here (the inactive path
+            // skips retunes — see `retune_active_ladder`).
             self.over_ladder
                 .set_cutoff_q(self.applied_cutoff_hz, self.last_resonance);
         } else {
@@ -483,44 +556,78 @@ impl Voice {
 
     /// Per-block oscillator parameter push, mirroring `set_filter_env`.
     /// Change-detected inside the oscillator so it's free while knobs
-    /// are idle. `idx` out of range is ignored (callers validate at the
-    /// FFI boundary).
+    /// are idle; the mixer level is retargeted on the per-sample
+    /// smoother (see `smoother`). `idx` out of range is ignored
+    /// (callers validate at the FFI boundary).
     pub fn set_osc(&mut self, idx: usize, params: OscParams) {
         if let Some(osc) = self.oscs.get_mut(idx) {
             osc.set_params(params);
+            self.osc_level[idx].set_target(params.level.clamp(0.0, 1.0));
         }
     }
 
-    /// Per-block noise-level push. Clamped to [0, 1].
+    /// Per-block noise-level push. Clamped to [0, 1]; retargets the
+    /// per-sample smoother (see `smoother`).
     pub fn set_noise_level(&mut self, level: f32) {
-        self.noise_level = level.clamp(0.0, 1.0);
+        self.noise_level.set_target(level.clamp(0.0, 1.0));
     }
 
-    /// Per-block pulse-width push, fanned out to all three oscillators
-    /// (the width is a single global knob, Minimoog-style). Clamped to
-    /// [0.05, 0.95] inside each oscillator; only audible while a pulse
-    /// waveform is selected.
+    /// Per-block pulse-width push (the width is a single global knob
+    /// fanned out to all three oscillators, Minimoog-style). Clamped to
+    /// [0.05, 0.95]; retargets the per-sample smoother — `tick` pushes
+    /// the smoothed width into the oscillators while it moves. Only
+    /// audible while a pulse waveform is selected.
     pub fn set_pulse_width(&mut self, width: f32) {
-        for osc in &mut self.oscs {
-            osc.set_pulse_width(width);
-        }
+        self.pulse_width.set_target(width.clamp(0.05, 0.95));
     }
 
     /// Per-block pre-filter drive push. Clamped to [0, 1];
-    /// change-detected so the gain/norm recompute (one divide) only
-    /// runs when the knob moves. 0 (the default) bypasses the tanh
-    /// stage exactly — see the `drive` field docs for the formula.
+    /// change-detected so the smoother retarget only runs when the knob
+    /// moves. The pre-gain `1 + drive*4` is smoothed per sample in
+    /// `tick`, which derives the peak-referenced normalization
+    /// `1/tanh(g)` from the smoothed gain (see the `drive` field docs
+    /// for the formula). 0 (the default) bypasses the tanh stage
+    /// exactly once the smoothed gain rests at 1.
     pub fn set_drive(&mut self, drive: f32) {
         let drive = drive.clamp(0.0, 1.0);
         if drive != self.drive {
             self.drive = drive;
-            self.drive_gain = 1.0 + drive * 4.0;
-            self.drive_norm = 1.0 / self.drive_gain;
-            // Mirror into the oversampled wrapper (its tanh runs at 2×
-            // when that path is engaged) so the two paths always agree
-            // on the drive model — cheap, only on knob movement.
-            self.over_ladder
-                .set_drive_gain(self.drive_gain, self.drive_norm);
+            self.drive_gain.set_target(1.0 + drive * 4.0);
+        }
+    }
+
+    /// Apply a (smoothed) drive pre-gain to the signal path: cache it,
+    /// derive the peak-referenced normalization `1/tanh(g)`, and mirror
+    /// both into the oversampled wrapper (its tanh runs at 2× when that
+    /// path is engaged) so the two paths always agree on the drive
+    /// model. Called from `tick` only while the smoothed gain moves.
+    fn apply_drive_gain(&mut self, gain: f32) {
+        self.drive_gain_applied = gain;
+        self.drive_norm = if gain > 1.0 { 1.0 / gain.tanh() } else { 1.0 };
+        self.over_ladder.set_drive_gain(gain, self.drive_norm);
+    }
+
+    /// Snap every per-sample-smoothed parameter to its target and apply
+    /// the results (oscillator pulse widths, drive gain/norm). Called
+    /// when the voice fires from silence — see `note_on`.
+    fn snap_smoothed_params(&mut self) {
+        for s in &mut self.osc_level {
+            s.snap_to_target();
+        }
+        self.noise_level.snap_to_target();
+        if !self.pulse_width.converged() {
+            self.pulse_width.snap_to_target();
+            let width = self.pulse_width.get();
+            for osc in &mut self.oscs {
+                osc.set_pulse_width(width);
+            }
+        }
+        if !self.drive_gain.converged() {
+            self.drive_gain.snap_to_target();
+        }
+        let gain = self.drive_gain.get();
+        if gain != self.drive_gain_applied {
+            self.apply_drive_gain(gain);
         }
     }
 
@@ -661,30 +768,54 @@ impl Voice {
         // mid-glide still acts instantly. Exactly 1.0 (bit-exact) while
         // no bend/vibrato is active.
         let base_freq = base_freq * pitch_mul;
+        // Pulse-width smoothing (see `smoother`): while the knob's
+        // one-pole is still moving, push the smoothed width into the
+        // oscillators each sample; once converged the oscillators hold
+        // the exact target and this branch is skipped (bit-transparent
+        // at the default).
+        if !self.pulse_width.converged() {
+            let width = self.pulse_width.tick();
+            for osc in &mut self.oscs {
+                osc.set_pulse_width(width);
+            }
+        }
         // Source section (§1.1): three oscillators + noise into the
         // mixer. All sources always tick (phase/state continuity), so
-        // turning a level knob doesn't jump the others' phases. The mix
-        // is renormalized by 1/max(1, Σlevels) so cranking every source
+        // turning a level knob doesn't jump the others' phases. Mixer
+        // levels are smoothed per sample (~2 ms one-pole — see
+        // `smoother`) so live level sweeps don't zipper; converged
+        // smoothers return their targets bit-exactly. The mix is
+        // renormalized by 1/max(1, Σlevels) so cranking every source
         // to 1 doesn't quadruple the drive into the filter; with the
         // default single-osc levels (Σ = 1) the factor is exactly 1.0
         // and the path is bit-transparent (regression guarantee).
         let mut mix = 0.0f32;
         let mut level_sum = 0.0f32;
-        for osc in &mut self.oscs {
-            let level = osc.level();
+        for (osc, level_smooth) in self.oscs.iter_mut().zip(&mut self.osc_level) {
+            let level = level_smooth.tick();
             mix += osc.tick(base_freq) * level;
             level_sum += level;
         }
-        mix += self.noise.tick() * self.noise_level;
-        level_sum += self.noise_level;
+        let noise_level = self.noise_level.tick();
+        mix += self.noise.tick() * noise_level;
+        level_sum += noise_level;
         mix *= 1.0 / level_sum.max(1.0);
+        // Drive-gain smoothing: advance the one-pole and, only while it
+        // moves, re-derive the normalization (one tanh) and mirror both
+        // into the oversampled wrapper. Converged at the default gain 1
+        // this is a pure read (bit-transparent).
+        let gain = self.drive_gain.tick();
+        if gain != self.drive_gain_applied {
+            self.apply_drive_gain(gain);
+        }
         // Pre-filter tanh drive (§1.1 "TANH/SOFTCLIP DRIVE" block):
-        //   g = 1 + drive*4;  y = tanh(x*g) * (1/g)
-        // — unity gain for small signals (tanh_norm = g), peaks
-        // compressed toward ±1/g. drive == 0 skips the stage entirely
-        // so the bypass is bit-exact (regression guarantee); note the
-        // deliberate hard boundary at 0: drive = ε engages tanh at
-        // pre-gain ≈ 1, a barely-audible softening.
+        //   g = 1 + drive*4;  y = tanh(x*g) / tanh(g)
+        // — peak-referenced normalization: |x| = 1 maps to |y| = 1 for
+        // every drive setting, small signals get the gain g/tanh(g) ≥ 1
+        // (drive adds loudness + compression instead of dropping the
+        // level; see the `drive` field docs). gain == 1 (drive 0,
+        // smoother at rest) skips the stage entirely so the bypass is
+        // bit-exact (regression guarantee).
         //
         // With the 2× oversampled path engaged, the whole nonlinear
         // section (that same tanh + the ladder) runs inside the
@@ -695,8 +826,8 @@ impl Voice {
         let filtered = if self.oversample {
             self.over_ladder.tick(mix)
         } else {
-            if self.drive > 0.0 {
-                mix = (mix * self.drive_gain).tanh() * self.drive_norm;
+            if self.drive_gain_applied > 1.0 {
+                mix = (mix * self.drive_gain_applied).tanh() * self.drive_norm;
             }
             self.filter.tick(mix)
         };
@@ -730,6 +861,35 @@ impl Voice {
     pub(crate) fn applied_cutoff_hz(&self) -> f32 {
         self.applied_cutoff_hz
     }
+
+    /// Current smoothed mixer level of oscillator `idx` (test probe for
+    /// the parameter smoother).
+    #[cfg(test)]
+    pub(crate) fn osc_level_smoothed(&self, idx: usize) -> f32 {
+        self.osc_level[idx].get()
+    }
+
+    /// Drive pre-gain currently applied to the signal path (test probe
+    /// for the parameter smoother).
+    #[cfg(test)]
+    pub(crate) fn drive_gain_applied(&self) -> f32 {
+        self.drive_gain_applied
+    }
+
+    /// Current smoothed noise level (test probe for the parameter
+    /// smoother).
+    #[cfg(test)]
+    pub(crate) fn noise_level_smoothed(&self) -> f32 {
+        self.noise_level.get()
+    }
+
+    /// Pulse width currently programmed into oscillator `idx` (test
+    /// probe: the per-sample smoothing must actually reach the
+    /// generators).
+    #[cfg(test)]
+    pub(crate) fn osc_pulse_width(&self, idx: usize) -> f32 {
+        self.oscs[idx].pulse_width()
+    }
 }
 
 #[cfg(test)]
@@ -754,7 +914,7 @@ mod tests {
     #[test]
     fn voice_adsr_contour() {
         let sr = 48_000.0_f32;
-        let mut v = Voice::new(sr);
+        let mut v = Voice::new(sr, 0);
         v.note_on(60, 100, 0);
 
         // Peak amplitude during attack window (5 ms = 240 samples).
@@ -796,5 +956,62 @@ mod tests {
             let s = v.tick(1.0, 1.0);
             assert!(s == 0.0, "expected silence after release, got {s}");
         }
+    }
+
+    /// REGRESSION GUARANTEE (per-voice noise seeding): pool index 0
+    /// reproduces the historic fixed seed bit for bit, so the mono
+    /// default render (voice 0) is unchanged — the goldens in
+    /// `synth::tests` pin the render itself; this pins the seed.
+    #[test]
+    fn voice_zero_noise_seed_matches_historic_value() {
+        assert_eq!(NoiseGen::seed_for_voice(0), 0x2545_F491);
+        // And the mixing constant actually decorrelates the rest of the
+        // pool: all 8 seeds distinct, none zero.
+        let seeds: Vec<u32> = (0..8).map(NoiseGen::seed_for_voice).collect();
+        for (i, &a) in seeds.iter().enumerate() {
+            assert_ne!(a, 0, "seed for voice {i} must be nonzero");
+            for (j, &b) in seeds.iter().enumerate().skip(i + 1) {
+                assert_ne!(a, b, "voices {i} and {j} share a noise seed");
+            }
+        }
+    }
+
+    /// Two pool voices sounding noise in the same block must produce
+    /// DIFFERENT sample sequences (per-voice seeds), and their sum must
+    /// grow like decorrelated sources (≈ +3 dB), not like the coherent
+    /// doubling (+6 dB) the shared-seed bug produced.
+    #[test]
+    fn poly_voices_have_decorrelated_noise() {
+        let build = |idx: u32| {
+            let mut v = Voice::new(48_000.0, idx);
+            // Noise-only patch: every oscillator level to 0, noise to 1.
+            for (i, mut p) in OscParams::default_bank().into_iter().enumerate() {
+                p.level = 0.0;
+                v.set_osc(i, p);
+            }
+            v.set_noise_level(1.0);
+            v.note_on(60, 100, 1);
+            v
+        };
+        let mut a = build(0);
+        let mut b = build(1);
+        let n = 4_800; // 100 ms @ 48 kHz
+        let xs: Vec<f32> = (0..n).map(|_| a.tick(1.0, 1.0)).collect();
+        let ys: Vec<f32> = (0..n).map(|_| b.tick(1.0, 1.0)).collect();
+        let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
+        assert!(rms(&xs) > 0.01 && rms(&ys) > 0.01, "noise audible");
+        assert!(
+            xs.iter().zip(&ys).any(|(x, y)| x.to_bits() != y.to_bits()),
+            "voices 0 and 1 must not produce bit-identical noise"
+        );
+        // Coherent (identical) sequences sum to exactly rms(a) + rms(b);
+        // decorrelated ones sum to ≈ sqrt(rms(a)² + rms(b)²) ≈ 0.71×.
+        let sum: Vec<f32> = xs.iter().zip(&ys).map(|(x, y)| x + y).collect();
+        let (ra, rb, rs) = (rms(&xs), rms(&ys), rms(&sum));
+        assert!(
+            rs < 0.9 * (ra + rb),
+            "summed voice noise should be decorrelated: rms(a+b)={rs} vs rms(a)+rms(b)={}",
+            ra + rb
+        );
     }
 }

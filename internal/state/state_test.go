@@ -532,6 +532,139 @@ rate_hz = 0.5
 	}
 }
 
+// TestLoadPartialPhase2SynthBlock pins the Phase-2 half of the backfill
+// contract: a hand-written synth block carrying ONLY one key must load
+// with every OTHER nonzero-default Phase-2 field at the engine default —
+// not zero-filled (resonance 0 kills the filter character, filter env
+// times 0 click, osc waves "" are invalid, osc1 level 0 is silence).
+func TestLoadPartialPhase2SynthBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	body := `[patches.moog.synth]
+drive = 0.5
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load partial: %v", err)
+	}
+	s := snap.Patches["moog"].Synth
+	if s == nil {
+		t.Fatal("moog synth block missing")
+	}
+	// The one explicit key survives.
+	if s.Drive != 0.5 {
+		t.Errorf("drive: want 0.5, got %v", s.Drive)
+	}
+	// Phase-2 defaults.
+	if s.Resonance != 0.3 {
+		t.Errorf("resonance: want 0.3, got %v", s.Resonance)
+	}
+	if want := (FilterEnvState{Attack: 0.005, Decay: 0.6, Sustain: 0.4, Release: 0.6, Amount: 0}); s.FilterEnv != want {
+		t.Errorf("filter_env: want engine defaults %+v, got %+v", want, s.FilterEnv)
+	}
+	if s.Oscs != defaultOscs() {
+		t.Errorf("oscs: want default bank %+v, got %+v", defaultOscs(), s.Oscs)
+	}
+	// Zero-default Phase-2 fields stay zero.
+	if s.Noise != 0 || s.Glide != 0 {
+		t.Errorf("noise/glide: want 0/0, got %v/%v", s.Noise, s.Glide)
+	}
+	// The Phase 3/4 fill still applies alongside.
+	if want := (AmpEnvState{Attack: 0.005, Decay: 0.2, Sustain: 0.7, Release: 0.4}); s.AmpEnv != want {
+		t.Errorf("amp_env: want engine defaults %+v, got %+v", want, s.AmpEnv)
+	}
+	if s.VelRouting.ToAmp != 1 || s.PulseWidth != 0.25 || s.VoiceMode != "mono_legato" {
+		t.Errorf("phase 3/4 defaults regressed: %+v", *s)
+	}
+}
+
+// TestLoadPartialOscElements pins per-element osc backfill for the
+// standard [[...oscs]] array-of-tables form: keys present in an element
+// keep their explicit values (including explicit zeros), absent leaves
+// take that element's engine default.
+func TestLoadPartialOscElements(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	body := `[patches.moog.synth]
+resonance = 0.5
+
+[[patches.moog.synth.oscs]]
+level = 0.5
+
+[[patches.moog.synth.oscs]]
+wave = "square"
+detune_cents = 0.0
+
+[[patches.moog.synth.oscs]]
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load partial oscs: %v", err)
+	}
+	s := snap.Patches["moog"].Synth
+	if s == nil {
+		t.Fatal("moog synth block missing")
+	}
+	if s.Resonance != 0.5 {
+		t.Errorf("resonance: want explicit 0.5, got %v", s.Resonance)
+	}
+	// Osc 1: explicit level 0.5 survives; absent wave defaults.
+	if want := (OscState{Wave: "saw", Octave: 0, DetuneCents: 0, Level: 0.5}); s.Oscs[0] != want {
+		t.Errorf("osc 1: want %+v, got %+v", want, s.Oscs[0])
+	}
+	// Osc 2: explicit wave and EXPLICIT detune 0 survive (default is -7);
+	// absent level stays at its 0 default.
+	if want := (OscState{Wave: "square", Octave: 0, DetuneCents: 0, Level: 0}); s.Oscs[1] != want {
+		t.Errorf("osc 2: want %+v, got %+v", want, s.Oscs[1])
+	}
+	// Osc 3: empty element takes the full per-element default.
+	if want := (OscState{Wave: "saw", Octave: -1, DetuneCents: 5, Level: 0}); s.Oscs[2] != want {
+		t.Errorf("osc 3: want %+v, got %+v", want, s.Oscs[2])
+	}
+}
+
+// TestLoadInlineOscArrayConservative: the inline `oscs = [...]` form
+// flattens element keys in the TOML metadata, so per-element
+// attribution is impossible — only invalid empty waves are repaired and
+// every numeric leaf is kept exactly as decoded.
+func TestLoadInlineOscArrayConservative(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	body := `[patches.moog.synth]
+oscs = [{level = 0.5}, {wave = "square"}, {}]
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load inline oscs: %v", err)
+	}
+	s := snap.Patches["moog"].Synth
+	if s == nil {
+		t.Fatal("moog synth block missing")
+	}
+	if want := (OscState{Wave: "saw", Level: 0.5}); s.Oscs[0] != want {
+		t.Errorf("osc 1: want %+v, got %+v", want, s.Oscs[0])
+	}
+	// The explicit square must NOT be clobbered back to saw.
+	if want := (OscState{Wave: "square"}); s.Oscs[1] != want {
+		t.Errorf("osc 2: want %+v, got %+v", want, s.Oscs[1])
+	}
+	if want := (OscState{Wave: "saw"}); s.Oscs[2] != want {
+		t.Errorf("osc 3: want %+v, got %+v", want, s.Oscs[2])
+	}
+}
+
 // TestSynthNewFieldsRoundTripVerbatim: a store flush writes every new
 // field, and a reload does NOT re-default them (the fill only fires on
 // truly absent keys — a saved non-default must never be clobbered).

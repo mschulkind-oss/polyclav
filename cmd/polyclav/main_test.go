@@ -1,6 +1,11 @@
 package main
 
 import (
+	"io"
+	"log/slog"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +16,7 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
+	"github.com/mschulkind-oss/polyclav/internal/web"
 )
 
 // TestNewRateGate pins the velocity monitor's throttle contract: extra
@@ -246,7 +252,7 @@ func TestResolveVelocity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			curve, err := resolveVelocity(tt.cfg, tt.patch)
+			curve, err := resolveVelocity(tt.cfg.MIDI.Velocity, tt.patch)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("resolveVelocity() error = nil, want error")
@@ -418,7 +424,7 @@ func TestResolveVelocityClamp(t *testing.T) {
 	cfg := &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
 		Curve: "linear", OutMin: 20, OutMax: 90,
 	}}}
-	curve, err := resolveVelocity(cfg, nil)
+	curve, err := resolveVelocity(cfg.MIDI.Velocity, nil)
 	if err != nil {
 		t.Fatalf("resolveVelocity() error = %v", err)
 	}
@@ -430,6 +436,84 @@ func TestResolveVelocityClamp(t *testing.T) {
 	}
 }
 
+// TestVelocitySaveSurvivesPatchChange is the regression test for the
+// "saved curve silently reverts" bug: PUT /api/velocity {save:true}
+// wrote the config FILE, but the patch follower re-resolved curves from
+// the BOOT-TIME config, so the next patch change reinstalled the boot
+// curve for the rest of the session. With the mutable globalVelocity
+// holder wired through web.Deps.SetGlobalVelocity, the follower must
+// install the SAVED global curve after a patch change — while a
+// session-only apply (save:false) still reverts to config, its
+// documented behavior.
+func TestVelocitySaveSurvivesPatchChange(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctl := controls.New(logger, nil, nil, nil, nil)
+
+	// Boot wiring, exactly as main does it: holder seeded from the boot
+	// config (linear), the install closure over it, and the follower.
+	gvel := newGlobalVelocity(config.VelocityConfig{})
+	installVelocity := makeInstallVelocity(logger, ctl, gvel)
+	cur := &patches.Patch{Name: "a"}
+	if !installVelocity(cur) {
+		t.Fatal("boot install failed")
+	}
+	bootLabel := ctl.VelocityLabel()
+	if !strings.HasPrefix(bootLabel, "linear") {
+		t.Fatalf("boot curve: expected linear, got %q", bootLabel)
+	}
+	follow := newPatchFollower(cur.Name, func() *patches.Patch { return cur }, installVelocity)
+
+	// A web server over the same controls + holder, like main's Deps.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "polyclav.toml")
+	if err := os.WriteFile(path, []byte("[web]\nenabled = false\n"), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	srv := web.New(web.Deps{
+		Logger:            logger,
+		Controls:          ctl,
+		ConfigPath:        path,
+		SetGlobalVelocity: gvel.Set,
+	})
+	put := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest("PUT", "/api/velocity", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("PUT /api/velocity: status %d (body %s)", rec.Code, rec.Body.String())
+		}
+	}
+
+	// Save a curve to the config file, then change patches: the follower
+	// must re-install the SAVED curve, not the boot-time one.
+	put(`{"curve": "soft", "save": true}`)
+	cur = &patches.Patch{Name: "b"}
+	follow()
+	if got := ctl.VelocityLabel(); !strings.HasPrefix(got, "soft") {
+		t.Fatalf("after save + patch change: curve %q, want the saved soft curve", got)
+	}
+
+	// Session-only apply: a patch change reverts to the config-resolved
+	// curve (which is now the saved soft, NOT boot linear).
+	put(`{"curve": "hard"}`)
+	if got := ctl.VelocityLabel(); !strings.HasPrefix(got, "hard") {
+		t.Fatalf("session apply: curve %q, want hard", got)
+	}
+	cur = &patches.Patch{Name: "c"}
+	follow()
+	if got := ctl.VelocityLabel(); !strings.HasPrefix(got, "soft") {
+		t.Fatalf("after session apply + patch change: curve %q, want config-resolved soft", got)
+	}
+
+	// A per-patch override still wins over the (updated) global rung.
+	cur = &patches.Patch{Name: "d", VelocityCurve: "hard"}
+	follow()
+	if got := ctl.VelocityLabel(); !strings.HasPrefix(got, "hard") {
+		t.Fatalf("per-patch override: curve %q, want hard", got)
+	}
+}
+
 // TestResolveVelocityPointsApply checks the resolved point curve actually
 // interpolates — the config ints reach the velocity package as a working
 // mapping, not just a label.
@@ -437,7 +521,7 @@ func TestResolveVelocityPointsApply(t *testing.T) {
 	cfg := &config.Config{MIDI: config.MIDIConfig{Velocity: config.VelocityConfig{
 		Points: [][]int{{0, 0}, {64, 90}, {127, 127}},
 	}}}
-	curve, err := resolveVelocity(cfg, nil)
+	curve, err := resolveVelocity(cfg.MIDI.Velocity, nil)
 	if err != nil {
 		t.Fatalf("resolveVelocity() error = %v", err)
 	}
@@ -449,7 +533,7 @@ func TestResolveVelocityPointsApply(t *testing.T) {
 
 	// Per-patch points replace — not compose with — the global set.
 	p := &patches.Patch{Name: "p", VelocityPoints: [][]int{{0, 0}, {127, 127}}}
-	curve, err = resolveVelocity(cfg, p)
+	curve, err = resolveVelocity(cfg.MIDI.Velocity, p)
 	if err != nil {
 		t.Fatalf("resolveVelocity(patch) error = %v", err)
 	}

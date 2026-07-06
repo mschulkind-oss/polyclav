@@ -1367,8 +1367,13 @@ func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
 	if p.Oversample != nil {
 		c.applyOversample(cur.Name, *p.Oversample)
 	}
+	// Osc entries fold over an evolving working copy of the bank so
+	// duplicate indexes in one body compose: entry 2 merges over what
+	// entry 1 actually applied (post-clamp), instead of over the
+	// pre-merge base (which silently reverted entry 1's other fields).
+	oscs := base.Oscs
 	for _, o := range p.Oscs {
-		m := base.Oscs[o.Index]
+		m := oscs[o.Index]
 		if o.Wave != nil {
 			m.Wave = *o.Wave
 		}
@@ -1381,11 +1386,113 @@ func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
 		if o.Level != nil {
 			m.Level = *o.Level
 		}
-		if _, err := c.applyOsc(cur.Name, o.Index, m); err != nil {
+		applied, err := c.applyOsc(cur.Name, o.Index, m)
+		if err != nil {
 			// Engine rejection mid-sequence: earlier sections stay
 			// applied and persisted (cache/engine/state/publishes agree
 			// on them); this osc's cache is untouched.
 			return SynthSnapshot{}, err
+		}
+		oscs[o.Index] = applied
+	}
+	return c.Synth(), nil
+}
+
+// AdjustSynth is the atomic read-modify-write primitive for the native
+// synth block: it snapshots the current params, runs mutate on that
+// snapshot, and applies every section mutate changed — all inside the
+// writer lock, so the read and the write are one step with respect to
+// every other surface. A caller doing its own read-modify-write over
+// Synth() (the pre-AdjustSynth knob-page code) races concurrent writers:
+// a MergeSynth landing between the read and the write gets its
+// sibling-field edit silently reverted by the stale block pushed back.
+//
+// Each changed section runs the same clamp/apply/cache/persist/publish
+// sequence (and emits the same "synth" change) as its SetSynth*
+// counterpart, in MergeSynth's fixed order. Enum fields mutate touched
+// (osc waves, the LFO wave, the voice mode) are validated up front so an
+// invalid mutation applies nothing; an engine rejection mid-sequence
+// leaves earlier sections applied and that section's cache untouched
+// (the MergeSynth contract). Gated like every other synth setter:
+// errors unless a native patch is selected (mutate does not run).
+// Returns the resulting snapshot.
+func (c *Controls) AdjustSynth(mutate func(*SynthSnapshot)) (SynthSnapshot, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return SynthSnapshot{}, err
+	}
+	base := c.Synth() // stable while applyMu is held
+	next := base
+	mutate(&next)
+
+	for i := range next.Oscs {
+		if next.Oscs[i] != base.Oscs[i] {
+			if err := validateOsc(i, next.Oscs[i].Wave); err != nil {
+				return SynthSnapshot{}, err
+			}
+		}
+	}
+	if next.LFO != base.LFO {
+		if err := validateLFOWave(next.LFO.Wave); err != nil {
+			return SynthSnapshot{}, err
+		}
+	}
+	if next.VoiceMode != base.VoiceMode {
+		if err := validateVoiceMode(next.VoiceMode); err != nil {
+			return SynthSnapshot{}, err
+		}
+	}
+
+	if next.Resonance != base.Resonance {
+		c.applyResonance(cur.Name, next.Resonance)
+	}
+	if next.FilterEnv != base.FilterEnv {
+		c.applyFilterEnv(cur.Name, next.FilterEnv)
+	}
+	if next.AmpEnv != base.AmpEnv {
+		c.applyAmpEnv(cur.Name, next.AmpEnv)
+	}
+	if next.Noise != base.Noise {
+		c.applyNoise(cur.Name, next.Noise)
+	}
+	if next.Glide != base.Glide {
+		c.applyGlide(cur.Name, next.Glide)
+	}
+	if next.PulseWidth != base.PulseWidth {
+		c.applyPulseWidth(cur.Name, next.PulseWidth)
+	}
+	if next.Drive != base.Drive {
+		c.applyDrive(cur.Name, next.Drive)
+	}
+	if next.VelRouting != base.VelRouting {
+		c.applyVelRouting(cur.Name, next.VelRouting)
+	}
+	if next.KbdTrack != base.KbdTrack {
+		c.applyKbdTrack(cur.Name, next.KbdTrack)
+	}
+	if next.LFO != base.LFO {
+		if _, err := c.applyLFO(cur.Name, next.LFO); err != nil {
+			return SynthSnapshot{}, err
+		}
+	}
+	if next.BendRange != base.BendRange {
+		c.applyBendRange(cur.Name, next.BendRange)
+	}
+	if next.VoiceMode != base.VoiceMode {
+		if _, err := c.applyVoiceMode(cur.Name, next.VoiceMode); err != nil {
+			return SynthSnapshot{}, err
+		}
+	}
+	if next.Oversample != base.Oversample {
+		c.applyOversample(cur.Name, next.Oversample)
+	}
+	for i := range next.Oscs {
+		if next.Oscs[i] != base.Oscs[i] {
+			if _, err := c.applyOsc(cur.Name, i, next.Oscs[i]); err != nil {
+				return SynthSnapshot{}, err
+			}
 		}
 	}
 	return c.Synth(), nil

@@ -183,43 +183,43 @@ func pageDefs() []PageDef {
 	}
 }
 
-// adjust builds the shared read-modify-write AdjustFunc shape: read the
-// current block T from the synth snapshot, nudge one field by the
-// step-scaled delta, push the whole block back through its absolute
-// controls setter (the only mutation path), and format the field as
-// actually applied (post-clamp). The snapshot read and the setter call
-// are not one atomic step with respect to other surfaces — the web UI's
-// PATCH path does the same read-modify-write — but knob events arrive
-// on a single goroutine and every setter clamps, so a cross-surface
-// race costs at most one tick.
+// adjust builds the shared AdjustFunc shape over Controls.AdjustSynth,
+// the atomic read-modify-write primitive: INSIDE the writer lock, pick
+// the block T off the live snapshot, nudge one field by the step-scaled
+// delta, and write it back; the changed section then runs the standard
+// clamp/apply/cache/persist/publish sequence. Reading the current value
+// inside the critical section (rather than pre-reading Synth() and
+// pushing a whole block through an absolute setter) means a concurrent
+// web PATCH can never have a sibling-field edit silently reverted by a
+// knob tick's stale snapshot. The display shows the field as actually
+// applied (post-clamp).
 func adjust[T any](
-	read func(controls.SynthSnapshot) T,
+	sel func(*controls.SynthSnapshot) *T,
 	get func(T) float32,
 	with func(T, float32) T,
-	apply func(*controls.Controls, T) (T, error),
 	format func(float32) string,
 ) AdjustFunc {
 	return func(ctl *controls.Controls, delta float32) (string, bool) {
-		cur := read(ctl.Synth())
-		applied, err := apply(ctl, with(cur, get(cur)+delta))
+		applied, err := ctl.AdjustSynth(func(s *controls.SynthSnapshot) {
+			blk := sel(s)
+			*blk = with(*blk, get(*blk)+delta)
+		})
 		if err != nil {
 			return "", false
 		}
-		return format(get(applied)), true
+		return format(get(*sel(&applied))), true
 	}
 }
 
 // adjustScalar is adjust for single-float parameters.
 func adjustScalar(
-	get func(controls.SynthSnapshot) float32,
-	apply func(*controls.Controls, float32) (float32, error),
+	sel func(*controls.SynthSnapshot) *float32,
 	format func(float32) string,
 ) AdjustFunc {
 	return adjust(
-		get,
+		sel,
 		func(v float32) float32 { return v },
 		func(_, v float32) float32 { return v },
-		apply,
 		format,
 	)
 }
@@ -264,65 +264,53 @@ func adjCutoff(ctl *controls.Controls, delta float32) (string, bool) {
 
 func adjResonance() AdjustFunc {
 	return adjustScalar(
-		func(s controls.SynthSnapshot) float32 { return s.Resonance },
-		(*controls.Controls).SetSynthResonance,
+		func(s *controls.SynthSnapshot) *float32 { return &s.Resonance },
 		formatPercent)
 }
 
 func adjGlide() AdjustFunc {
 	return adjustScalar(
-		func(s controls.SynthSnapshot) float32 { return s.Glide },
-		(*controls.Controls).SetSynthGlide,
+		func(s *controls.SynthSnapshot) *float32 { return &s.Glide },
 		formatSeconds)
 }
 
 func adjDrive() AdjustFunc {
 	return adjustScalar(
-		func(s controls.SynthSnapshot) float32 { return s.Drive },
-		(*controls.Controls).SetSynthDrive,
+		func(s *controls.SynthSnapshot) *float32 { return &s.Drive },
 		formatPercent)
 }
 
 func adjNoise() AdjustFunc {
 	return adjustScalar(
-		func(s controls.SynthSnapshot) float32 { return s.Noise },
-		(*controls.Controls).SetSynthNoise,
+		func(s *controls.SynthSnapshot) *float32 { return &s.Noise },
 		formatPercent)
 }
 
 func adjPulseWidth() AdjustFunc {
 	return adjustScalar(
-		func(s controls.SynthSnapshot) float32 { return s.PulseWidth },
-		(*controls.Controls).SetSynthPulseWidth,
+		func(s *controls.SynthSnapshot) *float32 { return &s.PulseWidth },
 		formatPercent)
 }
 
 func adjKbdTrack() AdjustFunc {
 	return adjustScalar(
-		func(s controls.SynthSnapshot) float32 { return s.KbdTrack },
-		(*controls.Controls).SetSynthKbdTrack,
+		func(s *controls.SynthSnapshot) *float32 { return &s.KbdTrack },
 		formatPercent)
 }
 
 func adjOscLevel(idx int) AdjustFunc {
 	return adjust(
-		func(s controls.SynthSnapshot) controls.OscParams { return s.Oscs[idx] },
+		func(s *controls.SynthSnapshot) *controls.OscParams { return &s.Oscs[idx] },
 		func(o controls.OscParams) float32 { return o.Level },
 		func(o controls.OscParams, v float32) controls.OscParams { o.Level = v; return o },
-		func(ctl *controls.Controls, o controls.OscParams) (controls.OscParams, error) {
-			return ctl.SetSynthOsc(idx, o.Wave, o.Octave, o.DetuneCents, o.Level)
-		},
 		formatPercent)
 }
 
 func adjOscDetune(idx int) AdjustFunc {
 	return adjust(
-		func(s controls.SynthSnapshot) controls.OscParams { return s.Oscs[idx] },
+		func(s *controls.SynthSnapshot) *controls.OscParams { return &s.Oscs[idx] },
 		func(o controls.OscParams) float32 { return o.DetuneCents },
 		func(o controls.OscParams, v float32) controls.OscParams { o.DetuneCents = v; return o },
-		func(ctl *controls.Controls, o controls.OscParams) (controls.OscParams, error) {
-			return ctl.SetSynthOsc(idx, o.Wave, o.Octave, o.DetuneCents, o.Level)
-		},
 		formatSignedCents)
 }
 
@@ -332,12 +320,8 @@ func adjFilterEnv(
 	format func(float32) string,
 ) AdjustFunc {
 	return adjust(
-		func(s controls.SynthSnapshot) controls.FilterEnv { return s.FilterEnv },
-		get, with,
-		func(ctl *controls.Controls, fe controls.FilterEnv) (controls.FilterEnv, error) {
-			return ctl.SetSynthFilterEnv(fe.Attack, fe.Decay, fe.Sustain, fe.Release, fe.Amount)
-		},
-		format)
+		func(s *controls.SynthSnapshot) *controls.FilterEnv { return &s.FilterEnv },
+		get, with, format)
 }
 
 func adjAmpEnv(
@@ -346,12 +330,8 @@ func adjAmpEnv(
 	format func(float32) string,
 ) AdjustFunc {
 	return adjust(
-		func(s controls.SynthSnapshot) controls.AmpEnv { return s.AmpEnv },
-		get, with,
-		func(ctl *controls.Controls, ae controls.AmpEnv) (controls.AmpEnv, error) {
-			return ctl.SetSynthAmpEnv(ae.Attack, ae.Decay, ae.Sustain, ae.Release)
-		},
-		format)
+		func(s *controls.SynthSnapshot) *controls.AmpEnv { return &s.AmpEnv },
+		get, with, format)
 }
 
 func adjVelRouting(
@@ -360,12 +340,8 @@ func adjVelRouting(
 	format func(float32) string,
 ) AdjustFunc {
 	return adjust(
-		func(s controls.SynthSnapshot) controls.VelRouting { return s.VelRouting },
-		get, with,
-		func(ctl *controls.Controls, vr controls.VelRouting) (controls.VelRouting, error) {
-			return ctl.SetSynthVelRouting(vr.ToCutoff, vr.ToAmp)
-		},
-		format)
+		func(s *controls.SynthSnapshot) *controls.VelRouting { return &s.VelRouting },
+		get, with, format)
 }
 
 func adjLFO(
@@ -374,24 +350,21 @@ func adjLFO(
 	format func(float32) string,
 ) AdjustFunc {
 	return adjust(
-		func(s controls.SynthSnapshot) controls.LFO { return s.LFO },
-		get, with,
-		func(ctl *controls.Controls, l controls.LFO) (controls.LFO, error) {
-			return ctl.SetSynthLFO(l.Wave, l.RateHz, l.ToPitchCents, l.ToCutoffOct, l.ToAmp)
-		},
-		format)
+		func(s *controls.SynthSnapshot) *controls.LFO { return &s.LFO },
+		get, with, format)
 }
 
 // adjBendRange moves in whole semitones: the current value is rounded
 // onto the integer grid first so a fractional web-set value snaps into
 // step on the first detent.
 func adjBendRange(ctl *controls.Controls, delta float32) (string, bool) {
-	cur := float32(math.Round(float64(ctl.Synth().BendRange)))
-	st, err := ctl.SetSynthBendRange(cur + delta)
+	applied, err := ctl.AdjustSynth(func(s *controls.SynthSnapshot) {
+		s.BendRange = float32(math.Round(float64(s.BendRange))) + delta
+	})
 	if err != nil {
 		return "", false
 	}
-	return formatSemitones(st), true
+	return formatSemitones(applied.BendRange), true
 }
 
 // voiceModes is the cycle order for the Voice Mode slot — the engine's
@@ -415,28 +388,29 @@ func voiceModeLabel(mode string) string {
 // (only delta's sign is used): skipping states on a 3-way selector
 // would make it unlandable at speed.
 func adjVoiceMode(ctl *controls.Controls, delta float32) (string, bool) {
-	cur := ctl.Synth().VoiceMode
-	i := 0
-	for j, m := range voiceModes {
-		if m == cur {
-			i = j
-			break
-		}
-	}
-	n := len(voiceModes)
-	switch {
-	case delta > 0:
-		i = (i + 1) % n
-	case delta < 0:
-		i = (i + n - 1) % n
-	default:
+	if delta == 0 {
 		return "", false
 	}
-	mode, err := ctl.SetSynthVoiceMode(voiceModes[i])
+	applied, err := ctl.AdjustSynth(func(s *controls.SynthSnapshot) {
+		i := 0
+		for j, m := range voiceModes {
+			if m == s.VoiceMode {
+				i = j
+				break
+			}
+		}
+		n := len(voiceModes)
+		if delta > 0 {
+			i = (i + 1) % n
+		} else {
+			i = (i + n - 1) % n
+		}
+		s.VoiceMode = voiceModes[i]
+	})
 	if err != nil {
 		return "", false
 	}
-	return voiceModeLabel(mode), true
+	return voiceModeLabel(applied.VoiceMode), true
 }
 
 // Screen value formatters. The display is 16 ASCII chars per line

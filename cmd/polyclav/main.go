@@ -123,7 +123,7 @@ func main() {
 		webListen = cfg.Web.Listen
 	}
 	velLabel := "linear"
-	if curve, verr := resolveVelocity(cfg, nil); verr != nil {
+	if curve, verr := resolveVelocity(cfg.MIDI.Velocity, nil); verr != nil {
 		logger.Warn("resolve global velocity curve", "err", verr)
 	} else {
 		velLabel = curve.Describe()
@@ -259,21 +259,21 @@ func main() {
 		}
 	}
 
+	// The global [midi.velocity] spec lives in a mutable holder rather
+	// than being read off the boot-time cfg: the web UI's velocity save
+	// (PUT /api/velocity {save:true}) rewrites the config FILE, and the
+	// patch follower below re-resolves the curve on every patch change —
+	// resolving from boot-time config would silently revert the saved
+	// curve for the rest of the session. web.Deps.SetGlobalVelocity
+	// updates the holder after each successful file write, keeping file
+	// and daemon in agreement. Session-only applies (save=false) leave
+	// the holder alone on purpose — they are deliberately session-scoped
+	// and a patch change reverts them to config.
+	gvel := newGlobalVelocity(cfg.MIDI.Velocity)
+
 	// installVelocity resolves the curve for the given patch (per-patch
 	// override or global default) and installs it at the funnel point.
-	// Config was validated at Load, so an error here is unexpected: warn
-	// and keep the previous curve rather than silently going linear.
-	// Returns whether a curve was installed (false = resolve failed, so
-	// the patch follower below retries on the next hub event).
-	installVelocity := func(p *patches.Patch) bool {
-		curve, err := resolveVelocity(cfg, p)
-		if err != nil {
-			logger.Warn("velocity curve resolve", "err", err)
-			return false
-		}
-		ctl.SetVelocityRemap(curve.Apply, curve.Describe())
-		return true
-	}
+	installVelocity := makeInstallVelocity(logger, ctl, gvel)
 	installVelocity(registry.Current())
 	logger.Info("velocity curve installed", "curve", ctl.VelocityLabel())
 
@@ -545,7 +545,12 @@ func main() {
 			Devices:    sup,
 			ConfigTOML: func() ([]byte, error) { return os.ReadFile(path) },
 			ConfigPath: path,
-			Version:    buildVersion(),
+			// Keeps the daemon's global velocity spec in sync with a
+			// velocity curve SAVED to the config file, so the patch
+			// follower's re-resolve installs the saved curve instead of
+			// the boot-time one (see gvel above).
+			SetGlobalVelocity: gvel.Set,
+			Version:           buildVersion(),
 		})
 		logger.Info("web ui starting", "url", "http://"+cfg.Web.Listen+"/")
 		go func() {
@@ -720,21 +725,6 @@ func newPatchFollower(last string, current func() *patches.Patch, apply func(*pa
 	}
 }
 
-// resolveVelocity picks the velocity curve for patch p, most specific
-// override first (docs/VELOCITY_CURVES.md):
-//
-//	per-patch points > per-patch curve/gamma > global points > global curve/gamma
-//
-// Within one scope points vs curve/gamma is a config.Load error, so the
-// two same-scope rungs only both exist for configs built in code — the
-// order still matters there so tests and future callers get one
-// deterministic answer. For the patch fields and the global block
-// alike, Gamma > 0 with no curve name is the "custom" shorthand. p ==
-// nil (no patch selected) resolves the global curve. config.Load
-// normalizes the global shorthand too; it is re-applied here so configs
-// built in code (tests, Defaults()) behave identically. The global
-// OutMin/OutMax were range-checked (0..127) at config.Load, so the
-// uint8 conversions are lossless.
 // applyWebFlag overlays the --web CLI flag onto the loaded config. An
 // empty value leaves the config untouched. "on" (or "true") enables the
 // server on the config's listen address; anything else is taken as the
@@ -753,7 +743,72 @@ func applyWebFlag(cfg *config.Config, val string) {
 	}
 }
 
-func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, error) {
+// globalVelocity is a goroutine-safe holder for the daemon's global
+// [midi.velocity] spec. It is seeded from the boot-time config and
+// REPLACED when the web UI saves a velocity curve into polyclav.toml
+// (web.Deps.SetGlobalVelocity), so the file on disk and the spec the
+// patch follower re-resolves from can never disagree. atomic.Pointer
+// because Set runs on web request goroutines while Get runs on the hub
+// follower goroutine.
+type globalVelocity struct {
+	p atomic.Pointer[config.VelocityConfig]
+}
+
+func newGlobalVelocity(seed config.VelocityConfig) *globalVelocity {
+	g := &globalVelocity{}
+	g.Set(seed)
+	return g
+}
+
+// Set replaces the global velocity spec (stores a copy).
+func (g *globalVelocity) Set(v config.VelocityConfig) { g.p.Store(&v) }
+
+// Get returns the current global velocity spec by value.
+func (g *globalVelocity) Get() config.VelocityConfig { return *g.p.Load() }
+
+// makeInstallVelocity returns the follower apply func: it resolves the
+// curve for the given patch (per-patch override, or the CURRENT global
+// spec from gvel) and installs it at the MIDI funnel. Config was
+// validated at Load, so an error is unexpected: warn and keep the
+// previous curve rather than silently going linear. Returns whether a
+// curve was installed (false = resolve failed, so the patch follower
+// retries on the next hub event).
+//
+// Known limit: per-patch velocity overrides come from the boot-time
+// patch registry (config is read once at startup), so a config-file
+// edit to a patch's velocity_* fields — by hand or via PUT /api/config
+// — still needs a restart. Only the GLOBAL spec is live-updatable, via
+// the web UI's velocity save (gvel).
+func makeInstallVelocity(logger *slog.Logger, ctl *controls.Controls, gvel *globalVelocity) func(*patches.Patch) bool {
+	return func(p *patches.Patch) bool {
+		curve, err := resolveVelocity(gvel.Get(), p)
+		if err != nil {
+			logger.Warn("velocity curve resolve", "err", err)
+			return false
+		}
+		ctl.SetVelocityRemap(curve.Apply, curve.Describe())
+		return true
+	}
+}
+
+// resolveVelocity picks the velocity curve for patch p, most specific
+// override first (docs/VELOCITY_CURVES.md):
+//
+//	per-patch points > per-patch curve/gamma > global points > global curve/gamma
+//
+// global is the daemon's CURRENT [midi.velocity] spec (the boot config's
+// block, or whatever the web UI last saved — see globalVelocity). Within
+// one scope points vs curve/gamma is a config.Load error, so the two
+// same-scope rungs only both exist for configs built in code — the order
+// still matters there so tests and future callers get one deterministic
+// answer. For the patch fields and the global block alike, Gamma > 0
+// with no curve name is the "custom" shorthand. p == nil (no patch
+// selected) resolves the global curve. config.Load normalizes the global
+// shorthand too; it is re-applied here so configs built in code (tests,
+// Defaults()) behave identically. The global OutMin/OutMax were
+// range-checked (0..127) at config.Load, so the uint8 conversions are
+// lossless.
+func resolveVelocity(global config.VelocityConfig, p *patches.Patch) (velocity.Curve, error) {
 	if p != nil && len(p.VelocityPoints) > 0 {
 		// Per-patch overrides carry no clamp fields (same as the
 		// curve/gamma rung below): the velocity package defaults to 1..127.
@@ -766,7 +821,7 @@ func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, erro
 		}
 		return velocity.New(name, p.VelocityGamma, 0, 0)
 	}
-	v := cfg.MIDI.Velocity
+	v := global
 	if len(v.Points) > 0 {
 		return newPointCurve(v.Points, uint8(v.OutMin), uint8(v.OutMax))
 	}

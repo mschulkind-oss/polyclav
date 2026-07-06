@@ -140,18 +140,19 @@ impl Oscillator {
         }
     }
 
-    /// Mixer level in 0..=1 (used by the voice for mixing and
-    /// renormalization).
-    pub fn level(&self) -> f32 {
-        self.params.level
-    }
-
     /// Per-block pulse-width push, mirroring `set_params`. Clamped to
     /// [0.05, 0.95] (extreme widths collapse the pulse into DC-with-
     /// clicks territory). Only audible while the pulse waveform is
     /// selected; the saw/square paths never read it.
     pub fn set_pulse_width(&mut self, width: f32) {
         self.pulse_width = width.clamp(0.05, 0.95);
+    }
+
+    /// Pulse width currently programmed into the generator (test probe
+    /// for the voice's per-sample width smoothing).
+    #[cfg(test)]
+    pub(crate) fn pulse_width(&self) -> f32 {
+        self.pulse_width
     }
 
     /// Render one sample at `base_freq_hz * 2^(octave + cents/1200)`.

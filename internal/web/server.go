@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
@@ -44,7 +45,15 @@ type Deps struct {
 	Devices    DeviceStates           // may be nil → device states report "unknown"
 	ConfigTOML func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
 	ConfigPath string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
-	Version    string
+	// SetGlobalVelocity (may be nil) tells the daemon its global
+	// [midi.velocity] spec changed. The velocity save path calls it
+	// AFTER a successful config-file write — and ONLY then — so the
+	// daemon's in-memory global spec (which patch changes re-resolve
+	// curves from) tracks the file instead of staying frozen at its
+	// boot-time value. Session-only applies never call it: they are
+	// deliberately session-scoped and revert on the next patch change.
+	SetGlobalVelocity func(config.VelocityConfig)
+	Version           string
 }
 
 // Server serves the web UI and its API. Construct with New; it holds no
@@ -60,6 +69,14 @@ type Server struct {
 	velMu           sync.Mutex
 	sessionVelLabel string
 	sessionVelSaved bool
+
+	// cfgMu serializes the two config-file writers — PUT /api/config and
+	// the velocity managed-block save — each of which must hold it across
+	// its WHOLE read → merge → validate → rename sequence. Without it a
+	// velocity save could read the file, lose the CPU to a config PUT's
+	// rename, then rename its own merge of the STALE text over the top,
+	// silently dropping the config PUT.
+	cfgMu sync.Mutex
 }
 
 // New builds a Server over deps and registers all routes. A nil Logger
