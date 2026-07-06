@@ -101,11 +101,142 @@ then builds two Go binaries into `./bin/`: `polyclav` (the daemon) and
 
 ```sh
 just check            # full gate: rust build + clippy + go vet + tests
+just install          # copy both binaries to ~/.local/bin (PREFIX=... to override)
 just fetch-soundfont  # download a small free SF2 into ./soundfonts/
 ```
 
+The examples in this guide invoke `polyclav` bare, which assumes
+`just install` put it on your PATH (`~/.local/bin` by default). Straight
+after `just build`, use `./bin/polyclav` instead — same flags.
+
 For the full first-run sequence (writing the default config, downloading the
 soundfonts it expects), see `docs/INSTALL.md`.
+
+## Quick start — sound in sixty seconds, zero downloads
+
+The native synth needs no soundfont files, the audition player needs no
+keyboard, and the web flag needs no config edit — so the shortest path to
+sound is one config block and one command:
+
+```sh
+mkdir -p ~/.config/polyclav
+cat > ~/.config/polyclav/polyclav.toml <<'EOF'
+[[patches]]
+name    = "moog"
+display = "Moog"
+type    = "native"
+engine  = "minimoog"
+EOF
+
+polyclav --play arp --loop --web on
+```
+
+You should hear a looping arpeggio on a single-saw Moog voice, and
+`http://127.0.0.1:8666/` now serves the dashboard. Everything below
+builds on this: the clip keeps playing while you tweak, so every change
+is audible the moment you make it.
+
+(Prefer real pianos? That's the *other* first-run path: with **no**
+config file present, `polyclav` seeds the full example config — pianos,
+EPs, DX7s — and exits listing the soundfont files it needs;
+`polyclav bootstrap` then downloads them. See `docs/INSTALL.md`. If
+you've already written the one-block config above, move it aside first,
+or merge the `[[patches]]` entries you want from
+`polyclav.example.toml`. The tours below all work on the one-block
+config.)
+
+## Guided tours
+
+Each tour is a five-minute path through one part of the system. They
+assume the quick start above is running (clip looping, dashboard open).
+
+### Tour 1 — sculpt a Moog bass, no keyboard attached
+
+Switch the clip first: in the dashboard's **Audition** card pick
+`bass-riff`, loop on — or restart as `polyclav --play bass-riff --loop
+--web on`. Then, in the **Native synth** card:
+
+1. Raise **Osc 2 level** to ~0.5 — it's pre-detuned −7 cents, so the
+   riff instantly thickens.
+2. Raise **Osc 3 level** to ~0.4 — it sits an octave down (+5 cents):
+   there's your sub.
+3. **Drive** to ~0.4 for grit into the ladder.
+4. **Cutoff** down until the riff darkens, **resonance** up to ~0.6,
+   then **Filter env amount** to ~0.5 — the filter now *plucks* each
+   note open.
+5. Tighten **F.Decay** (~0.3 s) and drop **F.Sustain** (~0.2) to sharpen
+   that pluck; add a touch of **Glide** (~0.08 s) for the slides.
+
+There is no save button: every slider move persists to this patch
+automatically and comes back on the next boot — with one exception, the
+**cutoff knob position**, which is deliberately session-only and resets
+to ~632 Hz (see "Native synth: live parameters"). To A/B against where
+you started, add a second native patch block to the config — each patch
+keeps its own sound.
+
+### Tour 2 — turn it into a polysynth
+
+The native synth boots monophonic (faithful to the source material).
+Chords are one setting away:
+
+1. In **Native synth**, set **Voice mode** to `poly` (up to 8 voices).
+2. Switch the clip to `sustain-chord` or `burst` and hear it stack.
+3. Slow breathing pad: **LFO rate** ~0.5 Hz, **LFO→Cutoff** ~0.3.
+4. Vibrato lives on **LFO→Pitch**, but it's scaled by the mod wheel —
+   with no keyboard attached, wheel defaults to full, so the depth
+   slider is audible as-is.
+5. If you push **Drive** hard up here, flip on **Oversample** (2×) to
+   keep the top end clean.
+
+### Tour 3 — match the velocity curve to your keybed *(keyboard needed)*
+
+1. Open the **Velocity** card and play normally for ten seconds — every
+   note lands as an (in, out) dot on the curve, so you can *see* where
+   your touch actually sits.
+2. If you have to hammer to reach fortissimo, click **soft** (or drag
+   gamma below 1). If it's shouty, **hard**.
+3. Want full control? Switch to points mode and drag the curve — e.g.
+   pull the middle down but pin `[127,127]` so ff stays available.
+4. **Apply** installs it immediately for this session; **Save** writes
+   it into `polyclav.toml` (a tool-managed block), making it permanent
+   across patch changes and restarts.
+5. No keyboard handy? `polyclav --play vel-ramp --loop` sweeps velocity
+   1→127→1 through whatever curve is active — you'll hear layer
+   boundaries move as you drag.
+
+Per-patch overrides (`velocity_curve` / `velocity_points` on a
+`[[patches]]` entry) still win over anything saved globally — those stay
+a config-file edit.
+
+### Tour 4 — level-match your patch set
+
+Switch between your patches with a familiar phrase and trim each entry's
+`gain_db` until nothing jumps out — full workflow and typical values in
+"Mastering & level matching" below. The **Config** card lets you edit
+the TOML in the browser (validated on save; restart to apply).
+
+### Tour 5 — the same tour on the Launchkey *(pending hardware verification)*
+
+Everything in tours 1–2 maps to the five knob pages: **Scene ▼** to the
+OSC page for the mixer knobs (osc levels/detunes, noise, pulse width),
+FILTER for cutoff/resonance/env, AMP for the envelope and velocity
+routing, LFO/MOD for the LFO, bend range, and voice mode (knob 7 steps
+mono→retrig→poly). The bottom pad row shows which page you're on; the
+screen pops each value as you turn. Layouts in "Launchkey knob pages"
+below.
+
+### Tour 6 — loop your own music
+
+Drop any `.mid` file into `~/.local/share/polyclav/clips/` and restart —
+it appears in the clip picker as `file:<name>` and works everywhere the
+built-ins do:
+
+```sh
+polyclav --play file:mysong --loop --tempo 0.75
+```
+
+Practice-loop the intro of the piece you're learning through the exact
+patch you'll perform it on, and tweak the patch while it plays.
 
 ## Configuration
 
@@ -188,7 +319,9 @@ See `polyclav.example.toml` for a full set of fader and pad bindings.
 ### `[[patches]]` — schema
 
 Named presets surfaced on the Launchkey's top-row pads (8 max; extra entries
-stay in the registry without a pad slot). The first entry is loaded on startup.
+stay in the registry without a pad slot). On startup the last-used patch
+(recorded in `state.toml`) is restored; with no saved state — or if that
+patch no longer exists — the first entry is loaded.
 
 | Field         | Meaning                                                              |
 |---------------|----------------------------------------------------------------------|
@@ -261,13 +394,14 @@ You can also run the binary directly: `./bin/polyclav`.
 
 1. Connect your MIDI keyboard and audio interface.
 2. `overmind start -D` from the repo root.
-3. Play. The first `[[patches]]` entry (or `[soundfont].path` if you have
-   no patches block) is loaded and routed through the configured PipeWire
-   sink.
+3. Play. The last-used patch (from `state.toml`, falling back to the
+   first `[[patches]]` entry) is loaded and routed through the
+   configured PipeWire sink.
 4. Tap a top-row pad to switch patches live; the screen and the lit pad
    follow the selection. To make a permanent change, edit
-   `~/.config/polyclav/polyclav.toml` and `overmind restart polyclav` — the
-   daemon reads config only at startup.
+   `~/.config/polyclav/polyclav.toml` (by hand, or in the dashboard's
+   Config card, which validates before writing) and
+   `overmind restart polyclav` — the daemon reads config only at startup.
 
 ## Launchkey knob pages
 
@@ -282,7 +416,7 @@ goes to the previous page, **Scene ▼** to the next; the page name
 flashes on the screen and the **bottom pad row lights the active page**
 (pads 1–5 as indicators). The bottom row is split: columns 0–4 (notes
 112–116) are reserved for these page indicators, while columns 5–7
-(notes 117–119) stay free for your own `[[osc.xr18.bindings]]` — the
+(notes 117–119) stay free for your own `[[osc.mixer.bindings]]` — the
 example config's mute pads live there. Turning a knob pops the
 parameter name and value on the screen for 800 ms, then the patch name
 returns.
@@ -486,9 +620,11 @@ so you can see exactly where your keybed lands. When it feels right,
 **Save** writes the curve into a clearly-marked, tool-managed
 `[midi.velocity]` block in `polyclav.toml` (a hand-written
 `[midi.velocity]` section is never overwritten — saving refuses
-instead). Session-applied curves last until the next patch change
-re-resolves the curve from config. Per-patch overrides still win and
-remain a config-file edit.
+instead). The difference matters on patch changes: an **Apply**-only
+(session) curve is replaced the next time a patch change re-resolves
+curves from config, while a **Saved** curve becomes the global default
+immediately — it survives patch changes and restarts. Per-patch
+overrides still win over either and remain a config-file edit.
 
 **Timbre note for layered soundfonts:** remapping velocity changes
 *which sample layers trigger* in multi-layer instruments, not just
@@ -592,6 +728,8 @@ Subcommands:
 ```sh
 polyclav-components encode <toml-path> [--out FILE] [--product VARIANT]
 polyclav-components decode <hex-bytes> [--file PATH]
+polyclav-components upload --slot <0..7> --type pots|pads|faders \
+    [--port <name>] [--activate] <file.syx>
 polyclav-components help
 ```
 
@@ -615,8 +753,15 @@ polyclav-components encode my-mode.toml --out my-mode.syx
 See `cmd/polyclav-components/testdata/example.toml` for the full TOML schema
 (surface, slot, name, palette colors, control kinds, behaviours).
 
-Once you have a `.syx` file, send it to the keyboard with any SysEx tool
-(e.g. `amidi -p <port> -s my-mode.syx`).
+Once you have a `.syx` file, `upload` sends it to the keyboard directly
+(`--port` matches the MIDI port name, default `"Launchkey"`; add
+`--activate` to switch the device onto the freshly-uploaded mode):
+
+```sh
+polyclav-components upload --slot 0 --type pots --activate my-mode.syx
+```
+
+Any generic SysEx tool works too (e.g. `amidi -p <port> -s my-mode.syx`).
 
 ## XR18 mixer integration
 
@@ -638,11 +783,13 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 
 | Symptom | Fix |
 |---------|-----|
-| **No audio.** | Confirm your sink is visible (`pw-cli ls Node | grep -i sink`) and that PipeWire is the running audio server. A missing `[soundfont]` file falls back to a 440 Hz sine, not silence. |
+| **No audio.** | Confirm your sink is visible (`pw-cli ls Node \| grep -i sink`) and that PipeWire is the running audio server. Note polyclav *refuses to boot* when a patch's soundfont is missing (it lists the files and exits 1) — so if the daemon is running, the problem is routing, not files. |
 | **No MIDI.** | Run `aconnect -l` and confirm your keyboard is listed. Make sure `[midi].port_match` is a substring of the port name (case-insensitive); set it to `""` to grab the first available input. |
 | **Knobs/faders do nothing.** | The Launchkey exposes keys/pads on its MIDI port and knobs/faders on its DAW port. If you matched the MIDI port, the DAW-port CCs never arrive — see `[midi]` above. |
 | **Latency feels high.** | See `AGENTS.md` → "Latency tuning". For the XR18, the host-side WirePlumber rule pinning `period-size=128, period-num=3, headroom=0` is what gets you to ~8 ms round-trip. |
 | **Build fails on the Rust side.** | Check the env-var pins in `mise.toml` (`LIBCLANG_PATH`, `CPLUS_INCLUDE_PATH`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`, `C_INCLUDE_PATH`). See `AGENTS.md` → "Toolchain quirks pinned in mise.toml". |
 | **Daemon ignored my config change.** | Did you `overmind restart polyclav`? The daemon reads config only at startup. |
+| **Chords play only one note on the native synth.** | The voice boots `mono_legato` (faithful Minimoog). Set **Voice mode** to `poly` — dashboard Native-synth card, `PATCH /api/synth {"voice_mode":"poly"}`, or LFO/MOD page knob 7. The setting persists per patch. |
+| **A `.mid` file I dropped in doesn't show up.** | Clips are scanned only at startup — restart the daemon. Check the log: SMPTE-timed and unparseable files are skipped with a warning. IDs are `file:<name>` (extension stripped). |
 | **XR18 not responding.** | Confirm the mixer is reachable (`nc -uvz <host> 10024`), and that `[osc.mixer].host`/`port` (or the legacy `[osc.xr18]` block) match. |
 | **Web dashboard unreachable.** | Is `[web].enabled = true`? The default bind is loopback-only (`127.0.0.1:8666`) — from another machine you must opt in with `listen = "0.0.0.0:8666"` (no auth; trusted networks only). Check the log for a `web server` error if the port was taken. |
