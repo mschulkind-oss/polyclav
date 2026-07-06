@@ -12,6 +12,38 @@ import (
 // docs/VELOCITY_CURVES.md: per-patch override fields win over the global
 // [midi.velocity] block, and a patch gamma with no curve name means
 // "custom".
+func TestApplyWebFlag(t *testing.T) {
+	cases := []struct {
+		name       string
+		enabled    bool
+		listen     string
+		flag       string
+		wantOn     bool
+		wantListen string
+	}{
+		{"empty flag leaves config off", false, "127.0.0.1:8666", "", false, "127.0.0.1:8666"},
+		{"empty flag leaves config on", true, "127.0.0.1:9999", "", true, "127.0.0.1:9999"},
+		{"address enables and overrides", false, "127.0.0.1:8666", ":7777", true, ":7777"},
+		{"on keeps configured listen", false, "127.0.0.1:9999", "on", true, "127.0.0.1:9999"},
+		{"true keeps configured listen", false, "127.0.0.1:9999", "true", true, "127.0.0.1:9999"},
+		{"on backfills default when listen empty", false, "", "on", true, "127.0.0.1:8666"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.Web.Enabled = tc.enabled
+			cfg.Web.Listen = tc.listen
+			applyWebFlag(cfg, tc.flag)
+			if cfg.Web.Enabled != tc.wantOn {
+				t.Errorf("Enabled = %v, want %v", cfg.Web.Enabled, tc.wantOn)
+			}
+			if cfg.Web.Listen != tc.wantListen {
+				t.Errorf("Listen = %q, want %q", cfg.Web.Listen, tc.wantListen)
+			}
+		})
+	}
+}
+
 func TestResolveVelocity(t *testing.T) {
 	tests := []struct {
 		name       string

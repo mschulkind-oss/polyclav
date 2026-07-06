@@ -58,6 +58,7 @@ func main() {
 	playClip := flag.String("play", "", "audition clip id to play at startup (see docs/AUDITION.md; empty = none)")
 	playLoop := flag.Bool("loop", false, "loop the --play clip until shutdown")
 	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
+	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in polyclav.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
 	flag.Parse()
 
 	if *showVersion {
@@ -108,6 +109,7 @@ func main() {
 	if xr18Host == "" {
 		xr18Host = "(disabled)"
 	}
+	applyWebFlag(cfg, *webFlag)
 	// Same treatment for the web UI (off by default) and the global
 	// velocity curve. The curve resolved here is the [midi.velocity]
 	// default only — per-patch overrides are re-resolved on every patch
@@ -568,6 +570,24 @@ func newPatchFollower(last string, current func() *patches.Patch, apply func(*pa
 // code (tests, Defaults()) behave identically. The global OutMin/OutMax
 // were range-checked (0..127) at config.Load, so the uint8 conversions
 // are lossless.
+// applyWebFlag overlays the --web CLI flag onto the loaded config. An
+// empty value leaves the config untouched. "on" (or "true") enables the
+// server on the config's listen address; anything else is taken as the
+// listen address itself. The CLI always wins over [web] in polyclav.toml
+// so `polyclav --web :8666` works without editing the config.
+func applyWebFlag(cfg *config.Config, val string) {
+	if val == "" {
+		return
+	}
+	cfg.Web.Enabled = true
+	if val != "on" && val != "true" {
+		cfg.Web.Listen = val
+	}
+	if cfg.Web.Listen == "" {
+		cfg.Web.Listen = "127.0.0.1:8666"
+	}
+}
+
 func resolveVelocity(cfg *config.Config, p *patches.Patch) (velocity.Curve, error) {
 	if p != nil && (p.VelocityCurve != "" || p.VelocityGamma > 0) {
 		name := p.VelocityCurve

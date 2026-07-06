@@ -319,6 +319,7 @@ polyclav --play bass-riff --loop --tempo 0.5 # ... at half speed
 | `--play <id>` | Clip to play at startup. An unknown id exits 1 and prints the clip library. |
 | `--loop` | Repeat the clip until shutdown (otherwise it plays once and the daemon keeps running). |
 | `--tempo N` | Tempo **multiplier** (not BPM), clamped to 0.25..2.0; `0` means 1.0. |
+| `--web <addr>` | Enable the web UI without editing the config: an address (`127.0.0.1:8666`, `:8666`) or `on` for the configured/default address. Overrides `[web]`. |
 
 Seven clips ship built in, each purpose-built to expose one setting:
 
