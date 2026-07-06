@@ -124,6 +124,102 @@ void polyclav_dsp_set_native_noise(float level);
  * its target pitch. Same lifecycle as the cutoff setter. */
 void polyclav_dsp_set_native_glide(float seconds);
 
+/* Native synth amp-envelope (env 1) ADSR. Times clamped to [0.0001,
+ * 10] s, sustain to [0, 1] in Rust. Defaults 5 ms / 200 ms / 0.7 /
+ * 400 ms — exactly the previously-hardcoded values, so the default
+ * render is unchanged. Updating params does not disturb a running
+ * envelope. Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_amp_env(float attack_s, float decay_s, float sustain,
+                                     float release_s);
+
+/* Native synth pulse-wave duty cycle, clamped to [0.05, 0.95] in Rust.
+ * One global knob shared by all three oscillators; only audible while a
+ * pulse waveform is selected. Default 0.25 (the old fixed duty — render
+ * unchanged at the default). Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_pulse_width(float width);
+
+/* Native synth pre-filter tanh drive amount, clamped to [0, 1] in
+ * Rust. Default 0.0 = bit-exact bypass. When > 0 the post-mixer signal
+ * is shaped by tanh(x * (1 + drive*4)) / (1 + drive*4) before the
+ * ladder filter — unity gain at small signals, peaks compressed toward
+ * +/-1/(1 + drive*4). Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_drive(float drive);
+
+/* Native synth velocity routing, both amounts clamped to [0, 1] in
+ * Rust. to_amp scales the per-note amplitude:
+ * scale = lerp(1.0, vel/127, to_amp) — default 1.0 is exactly the
+ * classic vel/127 (render unchanged); 0 ignores velocity. to_cutoff
+ * modulates the effective filter cutoff by
+ * 2^(to_cutoff * (vel/127 - 0.5) * 2) — up to +/-1 octave around the
+ * knob cutoff, centered at velocity 64; default 0.0 = bypass. Both are
+ * captured per voice at note-on (knob turns mid-note affect the next
+ * note). Composes multiplicatively with the filter-env and
+ * keyboard-tracking cutoff modulation; the final effective cutoff is
+ * clamped to [20, 20000] Hz. Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_vel_routing(float to_cutoff, float to_amp);
+
+/* Native synth keyboard tracking of the filter cutoff, clamped to
+ * [0, 1] in Rust. The effective cutoff is multiplied by
+ * 2^(amt * (note - 60) / 12) — at 1.0 it tracks the keyboard 100%
+ * (2x per octave above middle C, /2 per octave below), following the
+ * sounding note (legato hand-offs included). Default 0.0 = bypass.
+ * Composes multiplicatively with the filter-env and velocity cutoff
+ * modulation; the final effective cutoff is clamped to [20, 20000] Hz.
+ * Same lifecycle as the cutoff setter. */
+void polyclav_dsp_set_native_kbd_track(float amt);
+
+/* Native synth GLOBAL LFO (one LFO shared across voices, advanced once
+ * per sample). wave is 0=triangle, 1=saw, 2=square, 3=sample-and-hold
+ * (deterministic xorshift stepped once per LFO cycle); out-of-range
+ * codes are ignored (with an eprintln on the Rust side). rate_hz is
+ * clamped to [0.05, 20] (default 5.0). Depths all default 0 =
+ * bit-transparent bypass:
+ *   to_pitch_cents [0, 100] — vibrato: voice freq * 2^(lfo*cents/1200).
+ *     The depth heard is scaled LIVE by MIDI CC 1 (mod wheel); the
+ *     synth boots with the wheel at 1.0 so a configured depth sounds
+ *     without a wheel, and the first CC 1 event takes over (wheel 0
+ *     silences vibrato — classic vibrato-on-wheel).
+ *   to_cutoff_oct [0, 2]   — effective cutoff * 2^(lfo*oct), composed
+ *     multiplicatively with the env/vel/kbd cutoff modulation (final
+ *     cutoff clamped to [20, 20000] Hz).
+ *   to_amp [0, 1]          — tremolo: output * (1 - depth*(lfo*0.5+0.5)).
+ * Same lifecycle as the cutoff setter (no-op for other backends). */
+void polyclav_dsp_set_native_lfo(uint32_t wave, float rate_hz, float to_pitch_cents,
+                                 float to_cutoff_oct, float to_amp);
+
+/* Native synth pitch-bend range in semitones at full deflection,
+ * clamped to [0, 12] in Rust; default 2.0 (the MIDI convention).
+ * polyclav_midi_pitch_bend events (14-bit value, 8192 = centre) scale
+ * the voice frequency by 2^(range * (bend-8192)/8192 / 12); with no
+ * bend event the factor is exactly 1.0 and the render is unchanged.
+ * Same lifecycle as the cutoff setter (no-op for other backends). */
+void polyclav_dsp_set_native_bend_range(float st);
+
+/* Native synth voice-allocation mode: 0 = mono_legato (default —
+ * 1 voice, last-note priority, envelopes only retrigger when no other
+ * key is held; bit-identical to the pre-poly engine), 1 = mono_retrig
+ * (1 voice, envelopes ALWAYS retrigger on note-on), 2 = poly (8
+ * voices; a note-on takes a free voice or steals the oldest-fired
+ * sounding one; a note-off releases exactly the voice(s) sounding that
+ * note). Out-of-range codes are ignored (with an eprintln on the Rust
+ * side). Switching modes while notes sound releases every voice (no
+ * stuck notes — held keys fade out and must be re-pressed). Same
+ * lifecycle as the cutoff setter (no-op for other backends). */
+void polyclav_dsp_set_native_voice_mode(uint32_t mode);
+
+/* Native synth 2x oversampling of the per-voice nonlinear section
+ * (tanh drive + Moog ladder): 0 = off (default — base-rate path,
+ * bit-identical to the pre-oversampling engine), 1 = on (mixer output
+ * is upsampled 2x through a minimum-phase halfband, drive + ladder run
+ * retuned at sample_rate * 2, then decimated back — removes the tanh
+ * stages' fold-back aliasing under hard drive). Out-of-range codes are
+ * ignored (with an eprintln on the Rust side). Toggling while notes
+ * sound swaps per-voice filter instances (reset + retuned) — a brief
+ * click may be audible; treat as a setup switch, not a performance
+ * control. Same lifecycle as the cutoff setter (no-op for other
+ * backends). */
+void polyclav_dsp_set_native_oversample(uint32_t on);
+
 #ifdef __cplusplus
 }
 #endif

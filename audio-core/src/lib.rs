@@ -185,6 +185,16 @@ pub(crate) struct DspParams {
     native_filter_env_sustain: AtomicU32,
     native_filter_env_release_s: AtomicU32,
     native_filter_env_amount: AtomicU32,
+    /// Native synth amp-envelope (env 1) ADSR, same read/push lifecycle
+    /// as `native_cutoff_hz`. Times in seconds clamped to [0.0001, 10];
+    /// sustain in [0, 1]. Defaults are the ROADMAP §1.4 amp ADSR (5 ms
+    /// / 200 ms / 0.7 / 400 ms) — exactly the values the voice
+    /// hardcoded before the amp env became a runtime parameter, so the
+    /// default render is bit-identical (regression guarantee).
+    native_amp_env_attack_s: AtomicU32,
+    native_amp_env_decay_s: AtomicU32,
+    native_amp_env_sustain: AtomicU32,
+    native_amp_env_release_s: AtomicU32,
     /// Native synth oscillator bank (stage 3), same read/push lifecycle
     /// as `native_cutoff_hz`. Per oscillator: waveform as its 0/1/2
     /// wire code (saw/square/pulse), octave shift as i32 bits (via `as
@@ -213,6 +223,83 @@ pub(crate) struct DspParams {
     /// behavior); a voice starting from silence begins at its target
     /// pitch.
     native_glide_s: AtomicU32,
+    /// Native synth pulse-wave duty cycle, f32 bits, clamped
+    /// [0.05, 0.95]. One global knob shared by all three oscillators;
+    /// only audible while a pulse waveform is selected. Default 0.25 —
+    /// exactly the old fixed stage-3 duty, so the default render is
+    /// bit-identical (regression guarantee).
+    native_pulse_width: AtomicU32,
+    /// Native synth pre-filter tanh drive amount, f32 bits, clamped
+    /// [0, 1]. Default 0.0 — the drive stage is bypassed bit-exactly
+    /// (regression guarantee). When > 0 the post-mixer signal is shaped
+    /// by `tanh(x * (1 + drive*4)) / (1 + drive*4)` before the ladder
+    /// (unity gain at small signals; ROADMAP §1.1 "TANH/SOFTCLIP
+    /// DRIVE"). §1.4's factory 0.3 is a patch value, applied when the
+    /// patch loader lands.
+    native_drive: AtomicU32,
+    /// Native synth velocity → cutoff routing amount, f32 bits, clamped
+    /// [0, 1]. Default 0.0 — bypass (bit-transparent). At 1 the
+    /// effective cutoff swings up to ±1 octave around the knob cutoff,
+    /// centered at velocity 64 (`2^(amt * (vel/127 - 0.5) * 2)`),
+    /// captured per voice at note_on. See `synth::voice::Voice::tick`
+    /// for the canonical effective-cutoff formula.
+    native_vel_to_cutoff: AtomicU32,
+    /// Native synth velocity → amp routing amount, f32 bits, clamped
+    /// [0, 1]. Default 1.0 — exactly the classic `velocity / 127` amp
+    /// scaling (regression guarantee); 0 ignores velocity (full
+    /// amplitude for every note). The scale is
+    /// `lerp(1.0, vel/127, amt)`, captured per voice at note_on.
+    native_vel_to_amp: AtomicU32,
+    /// Native synth keyboard-tracking amount, f32 bits, clamped [0, 1].
+    /// Default 0.0 — bypass (bit-transparent). At 1 the effective
+    /// cutoff tracks the keyboard at 100%
+    /// (`2^(amt * (note - 60) / 12)`), following the sounding note.
+    /// §1.4's factory 0.5 is a patch value, applied when the patch
+    /// loader lands.
+    native_kbd_track: AtomicU32,
+    /// Native synth GLOBAL LFO (ROADMAP §1.1 GLOBAL block), same
+    /// read/push lifecycle as `native_cutoff_hz`. `wave` is the raw
+    /// 0/1/2/3 wire code (triangle/saw/square/S&H — validated at the
+    /// FFI boundary); `rate_hz` is f32 bits clamped [0.05, 20]
+    /// (default 5.0); the three depths are f32 bits — `to_pitch` in
+    /// cents [0, 100] (vibrato, scaled live by MIDI CC 1; the synth
+    /// boots with the wheel at 1.0 so a configured depth is audible
+    /// without a wheel), `to_cutoff` in octaves [0, 2], `to_amp`
+    /// (tremolo) in [0, 1]. All depths default 0.0 — every modulation
+    /// factor is exactly 1.0 and the default render is bit-identical
+    /// to the LFO-free engine (regression guarantee).
+    native_lfo_wave: AtomicU32,
+    native_lfo_rate_hz: AtomicU32,
+    native_lfo_to_pitch_cents: AtomicU32,
+    native_lfo_to_cutoff_oct: AtomicU32,
+    native_lfo_to_amp: AtomicU32,
+    /// Native synth pitch-bend range in semitones at full deflection,
+    /// f32 bits, clamped [0, 12]. Default 2.0 (the MIDI convention).
+    /// The bend factor `2^(range * norm / 12)` is exactly 1.0 with no
+    /// bend event, so the default render is unchanged. Same read/push
+    /// lifecycle as `native_cutoff_hz`.
+    native_bend_range_semitones: AtomicU32,
+    /// Native synth voice-allocation mode (ROADMAP §1.2 / §1.5) as the
+    /// raw 0/1/2 wire code: 0 = mono_legato (DEFAULT — the historic
+    /// behavior, bit for bit), 1 = mono_retrig, 2 = poly (8 voices,
+    /// oldest-fired steal). Validated at the FFI boundary (capped as a
+    /// backstop here). Same read/push lifecycle as `native_cutoff_hz`;
+    /// the synth-side push is change-detected and releases all voices
+    /// on an actual switch (see `synth::NativeSynth::set_voice_mode`).
+    native_voice_mode: AtomicU32,
+    /// Native synth 2× oversampling of the per-voice nonlinear section
+    /// (tanh drive + Moog ladder) as a raw 0/1 wire code (ROADMAP §0.1
+    /// / §1.6 / Appendix A pivot item (a)). 0 (the DEFAULT) keeps the
+    /// base-rate path — bit-identical to the historic engine
+    /// (regression guarantee). 1 routes the mixer output through a
+    /// halfband up/down wrapper whose drive + ladder run (and are
+    /// retuned) at sample_rate × 2, taming the tanh stages' fold-back
+    /// aliasing when driven hard. Validated at the FFI boundary (capped
+    /// as a backstop here). Same read/push lifecycle as
+    /// `native_cutoff_hz`; the voice-side push is change-detected and
+    /// an actual toggle swaps filter instances with a brief documented
+    /// click risk (see `synth::voice::Voice::set_oversample`).
+    native_oversample: AtomicU32,
 }
 
 impl DspParams {
@@ -231,6 +318,10 @@ impl DspParams {
             native_filter_env_sustain: AtomicU32::new(0.4_f32.to_bits()),
             native_filter_env_release_s: AtomicU32::new(0.6_f32.to_bits()),
             native_filter_env_amount: AtomicU32::new(0.0_f32.to_bits()),
+            native_amp_env_attack_s: AtomicU32::new(0.005_f32.to_bits()),
+            native_amp_env_decay_s: AtomicU32::new(0.2_f32.to_bits()),
+            native_amp_env_sustain: AtomicU32::new(0.7_f32.to_bits()),
+            native_amp_env_release_s: AtomicU32::new(0.4_f32.to_bits()),
             native_osc_wave: [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)],
             native_osc_octave: [
                 AtomicU32::new(0i32 as u32),
@@ -249,6 +340,19 @@ impl DspParams {
             ],
             native_noise_level: AtomicU32::new(0.0_f32.to_bits()),
             native_glide_s: AtomicU32::new(0.0_f32.to_bits()),
+            native_pulse_width: AtomicU32::new(0.25_f32.to_bits()),
+            native_drive: AtomicU32::new(0.0_f32.to_bits()),
+            native_vel_to_cutoff: AtomicU32::new(0.0_f32.to_bits()),
+            native_vel_to_amp: AtomicU32::new(1.0_f32.to_bits()),
+            native_kbd_track: AtomicU32::new(0.0_f32.to_bits()),
+            native_lfo_wave: AtomicU32::new(0), // triangle
+            native_lfo_rate_hz: AtomicU32::new(5.0_f32.to_bits()),
+            native_lfo_to_pitch_cents: AtomicU32::new(0.0_f32.to_bits()),
+            native_lfo_to_cutoff_oct: AtomicU32::new(0.0_f32.to_bits()),
+            native_lfo_to_amp: AtomicU32::new(0.0_f32.to_bits()),
+            native_bend_range_semitones: AtomicU32::new(2.0_f32.to_bits()),
+            native_voice_mode: AtomicU32::new(0), // mono_legato
+            native_oversample: AtomicU32::new(0), // off (regression-safe)
         }
     }
 
@@ -315,6 +419,19 @@ impl DspParams {
         )
     }
 
+    /// Amp-envelope params as (attack_s, decay_s, sustain, release_s).
+    /// Read once per audio block. The four atomics are stored
+    /// individually, so a concurrent setter can tear across fields for
+    /// one block — harmless for advisory knob values.
+    pub fn native_amp_env(&self) -> (f32, f32, f32, f32) {
+        (
+            Self::load(&self.native_amp_env_attack_s),
+            Self::load(&self.native_amp_env_decay_s),
+            Self::load(&self.native_amp_env_sustain),
+            Self::load(&self.native_amp_env_release_s),
+        )
+    }
+
     /// One oscillator's params as (wave, octave, detune_cents, level).
     /// Read once per audio block. The four atomics are stored
     /// individually, so a concurrent setter can tear across fields for
@@ -334,6 +451,47 @@ impl DspParams {
     }
     pub fn native_glide_s(&self) -> f32 {
         Self::load(&self.native_glide_s)
+    }
+    pub fn native_pulse_width(&self) -> f32 {
+        Self::load(&self.native_pulse_width)
+    }
+    pub fn native_drive(&self) -> f32 {
+        Self::load(&self.native_drive)
+    }
+    /// Velocity-routing amounts as (to_cutoff, to_amp). Read once per
+    /// audio block. The two atomics are stored individually, so a
+    /// concurrent setter can tear across fields for one block —
+    /// harmless for advisory knob values.
+    pub fn native_vel_routing(&self) -> (f32, f32) {
+        (
+            Self::load(&self.native_vel_to_cutoff),
+            Self::load(&self.native_vel_to_amp),
+        )
+    }
+    pub fn native_kbd_track(&self) -> f32 {
+        Self::load(&self.native_kbd_track)
+    }
+    /// GLOBAL LFO params as (wave, rate_hz, to_pitch_cents,
+    /// to_cutoff_oct, to_amp). Read once per audio block. The five
+    /// atomics are stored individually, so a concurrent setter can tear
+    /// across fields for one block — harmless for advisory knob values.
+    pub fn native_lfo(&self) -> (u32, f32, f32, f32, f32) {
+        (
+            self.native_lfo_wave.load(Ordering::Relaxed),
+            Self::load(&self.native_lfo_rate_hz),
+            Self::load(&self.native_lfo_to_pitch_cents),
+            Self::load(&self.native_lfo_to_cutoff_oct),
+            Self::load(&self.native_lfo_to_amp),
+        )
+    }
+    pub fn native_bend_range_semitones(&self) -> f32 {
+        Self::load(&self.native_bend_range_semitones)
+    }
+    pub fn native_voice_mode(&self) -> u32 {
+        self.native_voice_mode.load(Ordering::Relaxed)
+    }
+    pub fn native_oversample(&self) -> u32 {
+        self.native_oversample.load(Ordering::Relaxed)
     }
 
     pub fn set_master_volume(&self, v: f32) {
@@ -374,6 +532,12 @@ impl DspParams {
         Self::store_clamped(&self.native_filter_env_release_s, release_s, 1.0e-4, 10.0);
         Self::store_clamped(&self.native_filter_env_amount, amount, 0.0, 1.0);
     }
+    pub fn set_native_amp_env(&self, attack_s: f32, decay_s: f32, sustain: f32, release_s: f32) {
+        Self::store_clamped(&self.native_amp_env_attack_s, attack_s, 1.0e-4, 10.0);
+        Self::store_clamped(&self.native_amp_env_decay_s, decay_s, 1.0e-4, 10.0);
+        Self::store_clamped(&self.native_amp_env_sustain, sustain, 0.0, 1.0);
+        Self::store_clamped(&self.native_amp_env_release_s, release_s, 1.0e-4, 10.0);
+    }
     /// Store one oscillator's params. `idx` must be 0..=2 and `wave`
     /// a valid 0/1/2 code (both validated at the FFI boundary); octave
     /// clamps to [-2, 2], detune to [-100, 100] cents, level to [0, 1].
@@ -400,6 +564,55 @@ impl DspParams {
     }
     pub fn set_native_glide_s(&self, seconds: f32) {
         Self::store_clamped(&self.native_glide_s, seconds, 0.0, 5.0);
+    }
+    pub fn set_native_pulse_width(&self, width: f32) {
+        Self::store_clamped(&self.native_pulse_width, width, 0.05, 0.95);
+    }
+    pub fn set_native_drive(&self, drive: f32) {
+        Self::store_clamped(&self.native_drive, drive, 0.0, 1.0);
+    }
+    /// Store the velocity-routing amounts, both clamped to [0, 1].
+    /// Non-finite rejection is per-field (see `store_clamped`).
+    pub fn set_native_vel_routing(&self, to_cutoff: f32, to_amp: f32) {
+        Self::store_clamped(&self.native_vel_to_cutoff, to_cutoff, 0.0, 1.0);
+        Self::store_clamped(&self.native_vel_to_amp, to_amp, 0.0, 1.0);
+    }
+    pub fn set_native_kbd_track(&self, amt: f32) {
+        Self::store_clamped(&self.native_kbd_track, amt, 0.0, 1.0);
+    }
+    /// Store the GLOBAL LFO params. `wave` must be a valid 0/1/2/3 code
+    /// (validated at the FFI boundary; clamped here as a backstop).
+    /// Rate clamps to [0.05, 20] Hz, pitch depth to [0, 100] cents,
+    /// cutoff depth to [0, 2] octaves, amp depth to [0, 1]. Non-finite
+    /// rejection is per-field (see `store_clamped`).
+    pub fn set_native_lfo(
+        &self,
+        wave: u32,
+        rate_hz: f32,
+        to_pitch_cents: f32,
+        to_cutoff_oct: f32,
+        to_amp: f32,
+    ) {
+        self.native_lfo_wave.store(wave.min(3), Ordering::Relaxed);
+        Self::store_clamped(&self.native_lfo_rate_hz, rate_hz, 0.05, 20.0);
+        Self::store_clamped(&self.native_lfo_to_pitch_cents, to_pitch_cents, 0.0, 100.0);
+        Self::store_clamped(&self.native_lfo_to_cutoff_oct, to_cutoff_oct, 0.0, 2.0);
+        Self::store_clamped(&self.native_lfo_to_amp, to_amp, 0.0, 1.0);
+    }
+    pub fn set_native_bend_range(&self, semitones: f32) {
+        Self::store_clamped(&self.native_bend_range_semitones, semitones, 0.0, 12.0);
+    }
+    /// Store the voice-mode wire code. Must be a valid 0/1/2 code
+    /// (validated at the FFI boundary; capped here as a backstop,
+    /// mirroring `set_native_lfo`'s wave handling).
+    pub fn set_native_voice_mode(&self, mode: u32) {
+        self.native_voice_mode.store(mode.min(2), Ordering::Relaxed);
+    }
+    /// Store the oversample wire code. Must be a valid 0/1 code
+    /// (validated at the FFI boundary; capped here as a backstop,
+    /// mirroring `set_native_voice_mode`).
+    pub fn set_native_oversample(&self, on: u32) {
+        self.native_oversample.store(on.min(1), Ordering::Relaxed);
     }
 }
 
@@ -871,6 +1084,190 @@ pub extern "C" fn polyclav_dsp_set_native_glide(seconds: f32) {
     dsp_params().set_native_glide_s(seconds);
 }
 
+/// Set the native synth's amp-envelope (env 1) ADSR. Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomics each block and applies them to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+/// Times clamped to [0.0001, 10] s, sustain to [0, 1] in Rust.
+/// Non-finite values (NaN, ±inf) are rejected per-field — that field
+/// keeps its previous value while finite arguments still apply (see
+/// `DspParams::store_clamped`). Updating params does not disturb a
+/// running envelope; the defaults (5 ms / 200 ms / 0.7 / 400 ms) are
+/// exactly the previously-hardcoded values, so the default render is
+/// identical to the pre-change engine.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_amp_env(
+    attack_s: f32,
+    decay_s: f32,
+    sustain: f32,
+    release_s: f32,
+) {
+    dsp_params().set_native_amp_env(attack_s, decay_s, sustain, release_s);
+}
+
+/// Set the native synth's pulse-wave duty cycle, clamped to
+/// [0.05, 0.95] in Rust. One global knob shared by all three
+/// oscillators; only audible while a pulse waveform is selected. The
+/// default 0.25 is exactly the old fixed stage-3 duty, so the default
+/// render is identical to the pre-change engine. Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_pulse_width(width: f32) {
+    dsp_params().set_native_pulse_width(width);
+}
+
+/// Set the native synth's pre-filter tanh drive amount, clamped to
+/// [0, 1] in Rust. 0 (the default) bypasses the saturator bit-exactly —
+/// the render is then identical to the pre-drive engine. When > 0 the
+/// post-mixer signal is shaped by `tanh(x * (1 + drive*4)) /
+/// (1 + drive*4)` before the ladder filter (ROADMAP §1.1
+/// "TANH/SOFTCLIP DRIVE"): normalizing by the pre-gain keeps unity gain
+/// for small signals while peaks compress toward ±1/(1 + drive*4). Same
+/// lifecycle as `polyclav_dsp_set_native_cutoff_hz`: the audio thread
+/// reads the atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_drive(drive: f32) {
+    dsp_params().set_native_drive(drive);
+}
+
+/// Set the native synth's velocity-routing amounts (ROADMAP §1.1 mod
+/// input "vel"), both clamped to [0, 1] in Rust. `to_amp` = 1 (the
+/// default) keeps the classic `velocity / 127` amp scaling — the render
+/// is then identical to the pre-routing engine; 0 ignores velocity
+/// (`scale = lerp(1.0, vel/127, to_amp)`). `to_cutoff` = 0 (the
+/// default) is bit-transparent; 1 swings the effective cutoff up to
+/// ±1 octave around the knob cutoff, centered at velocity 64
+/// (`× 2^(to_cutoff * (vel/127 - 0.5) * 2)`). Both are captured per
+/// voice at note-on — knob turns mid-note affect the next note.
+/// Non-finite values (NaN, ±inf) are rejected per-field (see
+/// `DspParams::store_clamped`). Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomics each block and applies them to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_vel_routing(to_cutoff: f32, to_amp: f32) {
+    dsp_params().set_native_vel_routing(to_cutoff, to_amp);
+}
+
+/// Set the native synth's keyboard-tracking amount (ROADMAP §1.1 mod
+/// input "kbd"), clamped to [0, 1] in Rust. 0 (the default) is
+/// bit-transparent; 1 makes the effective cutoff track the keyboard at
+/// 100% (`× 2^(amt * (note - 60) / 12)` — 2× per octave above middle C,
+/// ÷2 per octave below), following the sounding note (legato hand-offs
+/// included). The final effective cutoff is clamped to [20, 20000] Hz.
+/// Same lifecycle as `polyclav_dsp_set_native_cutoff_hz`: the audio
+/// thread reads the atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_kbd_track(amt: f32) {
+    dsp_params().set_native_kbd_track(amt);
+}
+
+/// Set the native synth's GLOBAL LFO (ROADMAP §1.1 GLOBAL block).
+/// `wave` is 0 = triangle, 1 = saw, 2 = square, 3 = sample-and-hold
+/// (deterministic xorshift stepped once per cycle) — out-of-range
+/// codes are ignored with an eprintln, mirroring the osc setter.
+/// `rate_hz` clamps to [0.05, 20] (default 5.0). Depths (all default
+/// 0 = bit-transparent): `to_pitch_cents` in [0, 100] — vibrato, the
+/// voice frequency is multiplied by `2^(lfo * cents / 1200)`, and the
+/// depth heard is scaled LIVE by MIDI CC 1 (mod wheel). The synth
+/// boots with the wheel at 1.0, so a configured depth is audible with
+/// no wheel attached; the first CC 1 event takes over (wheel 0 then
+/// silences vibrato — classic vibrato-on-wheel). `to_cutoff_oct` in
+/// [0, 2] — the effective cutoff is multiplied by `2^(lfo * oct)`.
+/// `to_amp` in [0, 1] — tremolo, the output is multiplied by
+/// `1 - depth * (lfo*0.5 + 0.5)`. Non-finite values (NaN, ±inf) are
+/// rejected per-field (see `DspParams::store_clamped`). Same lifecycle
+/// as `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomics each block and applies them to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_lfo(
+    wave: u32,
+    rate_hz: f32,
+    to_pitch_cents: f32,
+    to_cutoff_oct: f32,
+    to_amp: f32,
+) {
+    if wave > 3 {
+        eprintln!(
+            "audio-core: set_native_lfo: wave {wave} out of range 0..=3 \
+             (0=triangle 1=saw 2=square 3=sh); ignored"
+        );
+        return;
+    }
+    dsp_params().set_native_lfo(wave, rate_hz, to_pitch_cents, to_cutoff_oct, to_amp);
+}
+
+/// Set the native synth's pitch-bend range in semitones at full wheel
+/// deflection, clamped to [0, 12] in Rust. Default 2.0 (the MIDI
+/// convention). Incoming `polyclav_midi_pitch_bend` events (14-bit
+/// wire value, 8192 = center) scale the voice frequency by
+/// `2^(range * (bend - 8192)/8192 / 12)`; with no bend event the
+/// factor is exactly 1.0 — the default render is unchanged. Non-finite
+/// values are rejected (see `DspParams::store_clamped`). Same
+/// lifecycle as `polyclav_dsp_set_native_cutoff_hz`: the audio thread
+/// reads the atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_bend_range(st: f32) {
+    dsp_params().set_native_bend_range(st);
+}
+
+/// Set the native synth's voice-allocation mode (ROADMAP §1.2 / §1.5):
+/// 0 = mono_legato (the default — 1 voice, last-note priority,
+/// envelopes only retrigger when no other key is held; the render at
+/// this default is bit-identical to the pre-poly engine), 1 =
+/// mono_retrig (1 voice, envelopes ALWAYS retrigger on note-on), 2 =
+/// poly (8 voices; a note-on takes a free voice — amp env idle — or
+/// steals the oldest-fired sounding voice; a note-off releases exactly
+/// the voice(s) sounding that note). Out-of-range codes are ignored
+/// with an eprintln, mirroring the osc/LFO setters. Switching modes
+/// while notes sound releases every voice and clears the held-notes
+/// stack (no stuck notes — keys already down fade through their
+/// release tails and must be re-pressed). Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_voice_mode(mode: u32) {
+    if mode > 2 {
+        eprintln!(
+            "audio-core: set_native_voice_mode: mode {mode} out of range 0..=2 \
+             (0=mono_legato 1=mono_retrig 2=poly); ignored"
+        );
+        return;
+    }
+    dsp_params().set_native_voice_mode(mode);
+}
+
+/// Enable/disable 2× oversampling of the native synth's per-voice
+/// nonlinear section — the tanh drive + Moog ladder (ROADMAP §0.1 /
+/// §1.6 / Appendix A pivot item (a)): 0 = off (the DEFAULT — the
+/// base-rate path, bit-identical to the pre-oversampling engine), 1 =
+/// on (the mixer output is upsampled 2× through a minimum-phase
+/// halfband, the drive + ladder run — retuned — at sample_rate × 2,
+/// and the same halfband decimates back, removing the tanh stages'
+/// fold-back aliasing under hard drive). Out-of-range codes are ignored
+/// with an eprintln, mirroring the voice-mode setter. Toggling while
+/// notes sound swaps per-voice filter instances (the newly-active one
+/// is reset + retuned) — a brief click may be audible; the toggle is a
+/// setup switch, not a performance control. Same lifecycle as
+/// `polyclav_dsp_set_native_cutoff_hz`: the audio thread reads the
+/// atomic each block and applies it to the active
+/// `SynthBackend::Native`; harmless when other backends are active.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_native_oversample(on: u32) {
+    if on > 1 {
+        eprintln!("audio-core: set_native_oversample: value {on} out of range 0..=1 (0=off 1=on); ignored");
+        return;
+    }
+    dsp_params().set_native_oversample(on);
+}
+
 fn run_audio(
     quit_flag: Arc<AtomicBool>,
     ready_tx: &mpsc::SyncSender<Result<(), String>>,
@@ -1092,6 +1489,8 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
         if let Some(SynthBackend::Native(ref mut s)) = user_data.synth {
             s.set_cutoff_hz(user_data.dsp_params.native_cutoff_hz());
             s.set_resonance(user_data.dsp_params.native_resonance());
+            let (aa, ad, asu, ar) = user_data.dsp_params.native_amp_env();
+            s.set_amp_env(aa, ad, asu, ar);
             let (fa, fd, fs, fr, famt) = user_data.dsp_params.native_filter_env();
             s.set_filter_env(fa, fd, fs, fr, famt);
             for idx in 0..3 {
@@ -1100,6 +1499,17 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
             }
             s.set_noise_level(user_data.dsp_params.native_noise_level());
             s.set_glide(user_data.dsp_params.native_glide_s());
+            s.set_pulse_width(user_data.dsp_params.native_pulse_width());
+            s.set_drive(user_data.dsp_params.native_drive());
+            let (vel_to_cutoff, vel_to_amp) = user_data.dsp_params.native_vel_routing();
+            s.set_vel_routing(vel_to_cutoff, vel_to_amp);
+            s.set_kbd_track(user_data.dsp_params.native_kbd_track());
+            let (lfo_wave, lfo_rate, lfo_pitch, lfo_cutoff, lfo_amp) =
+                user_data.dsp_params.native_lfo();
+            s.set_lfo(lfo_wave, lfo_rate, lfo_pitch, lfo_cutoff, lfo_amp);
+            s.set_bend_range(user_data.dsp_params.native_bend_range_semitones());
+            s.set_voice_mode(user_data.dsp_params.native_voice_mode());
+            s.set_oversample(user_data.dsp_params.native_oversample() != 0);
         }
 
         match user_data.synth {
@@ -1351,6 +1761,291 @@ mod tests {
         assert_eq!(dsp_params().native_glide_s(), 0.0);
     }
 
+    /// Amp-env atomics boot at the §1.4 amp ADSR (5/200/0.7/400 — the
+    /// previously-hardcoded voice values, regression-safe) and clamp:
+    /// times to [0.0001, 10] s, sustain to [0, 1].
+    #[test]
+    fn native_amp_env_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_amp_env(), (0.005, 0.2, 0.7, 0.4));
+
+        p.set_native_amp_env(-1.0, 20.0, 1.5, 0.0);
+        assert_eq!(p.native_amp_env(), (1.0e-4, 10.0, 1.0, 1.0e-4));
+
+        p.set_native_amp_env(0.01, 0.2, 0.5, 0.3);
+        assert_eq!(p.native_amp_env(), (0.01, 0.2, 0.5, 0.3));
+    }
+
+    /// The C ABI amp-env setter reaches the same global params (and
+    /// clamps identically).
+    #[test]
+    fn native_amp_env_ffi_setter_clamps() {
+        polyclav_dsp_set_native_amp_env(100.0, -5.0, -1.0, 100.0);
+        assert_eq!(dsp_params().native_amp_env(), (10.0, 1.0e-4, 0.0, 10.0));
+        // Restore the defaults so other tests / later asserts see the
+        // documented boot values.
+        polyclav_dsp_set_native_amp_env(0.005, 0.2, 0.7, 0.4);
+        assert_eq!(dsp_params().native_amp_env(), (0.005, 0.2, 0.7, 0.4));
+    }
+
+    /// Pulse-width atomic boots at 0.25 (the old fixed stage-3 duty —
+    /// regression-safe) and clamps to [0.05, 0.95].
+    #[test]
+    fn native_pulse_width_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_pulse_width(), 0.25);
+
+        p.set_native_pulse_width(2.0);
+        assert_eq!(p.native_pulse_width(), 0.95);
+
+        p.set_native_pulse_width(-1.0);
+        assert_eq!(p.native_pulse_width(), 0.05);
+
+        p.set_native_pulse_width(0.5);
+        assert_eq!(p.native_pulse_width(), 0.5);
+    }
+
+    /// The C-ABI pulse-width setter routes through the same clamp into
+    /// the global params the audio thread reads.
+    #[test]
+    fn native_pulse_width_ffi_setter_clamps() {
+        polyclav_dsp_set_native_pulse_width(7.0);
+        assert_eq!(dsp_params().native_pulse_width(), 0.95);
+        polyclav_dsp_set_native_pulse_width(-0.25);
+        assert_eq!(dsp_params().native_pulse_width(), 0.05);
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_pulse_width(0.25);
+        assert_eq!(dsp_params().native_pulse_width(), 0.25);
+    }
+
+    /// Drive atomic boots at 0.0 (bit-exact bypass — regression-safe)
+    /// and clamps to [0, 1].
+    #[test]
+    fn native_drive_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_drive(), 0.0);
+
+        p.set_native_drive(2.0);
+        assert_eq!(p.native_drive(), 1.0);
+
+        p.set_native_drive(-1.0);
+        assert_eq!(p.native_drive(), 0.0);
+
+        p.set_native_drive(0.3);
+        assert_eq!(p.native_drive(), 0.3);
+    }
+
+    /// The C-ABI drive setter routes through the same clamp into the
+    /// global params the audio thread reads.
+    #[test]
+    fn native_drive_ffi_setter_clamps() {
+        polyclav_dsp_set_native_drive(7.0);
+        assert_eq!(dsp_params().native_drive(), 1.0);
+        polyclav_dsp_set_native_drive(-0.25);
+        assert_eq!(dsp_params().native_drive(), 0.0);
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_drive(0.0);
+        assert_eq!(dsp_params().native_drive(), 0.0);
+    }
+
+    /// Velocity-routing atomics boot at (to_cutoff 0.0, to_amp 1.0) —
+    /// the bit-transparent defaults (to_amp 1 is exactly the classic
+    /// vel/127 scaling) — and clamp both to [0, 1].
+    #[test]
+    fn native_vel_routing_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_vel_routing(), (0.0, 1.0));
+
+        p.set_native_vel_routing(2.0, -1.0);
+        assert_eq!(p.native_vel_routing(), (1.0, 0.0));
+
+        p.set_native_vel_routing(-1.0, 2.0);
+        assert_eq!(p.native_vel_routing(), (0.0, 1.0));
+
+        p.set_native_vel_routing(0.25, 0.5);
+        assert_eq!(p.native_vel_routing(), (0.25, 0.5));
+    }
+
+    /// The C-ABI vel-routing setter routes through the same clamps into
+    /// the global params the audio thread reads.
+    #[test]
+    fn native_vel_routing_ffi_setter_clamps() {
+        polyclav_dsp_set_native_vel_routing(7.0, -2.0);
+        assert_eq!(dsp_params().native_vel_routing(), (1.0, 0.0));
+        // Restore the defaults so other tests / later asserts see the
+        // documented boot values.
+        polyclav_dsp_set_native_vel_routing(0.0, 1.0);
+        assert_eq!(dsp_params().native_vel_routing(), (0.0, 1.0));
+    }
+
+    /// Keyboard-tracking atomic boots at 0.0 (bypass — regression-safe)
+    /// and clamps to [0, 1].
+    #[test]
+    fn native_kbd_track_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_kbd_track(), 0.0);
+
+        p.set_native_kbd_track(2.0);
+        assert_eq!(p.native_kbd_track(), 1.0);
+
+        p.set_native_kbd_track(-1.0);
+        assert_eq!(p.native_kbd_track(), 0.0);
+
+        p.set_native_kbd_track(0.5);
+        assert_eq!(p.native_kbd_track(), 0.5);
+    }
+
+    /// The C-ABI kbd-track setter routes through the same clamp into
+    /// the global params the audio thread reads.
+    #[test]
+    fn native_kbd_track_ffi_setter_clamps() {
+        polyclav_dsp_set_native_kbd_track(7.0);
+        assert_eq!(dsp_params().native_kbd_track(), 1.0);
+        polyclav_dsp_set_native_kbd_track(-0.25);
+        assert_eq!(dsp_params().native_kbd_track(), 0.0);
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_kbd_track(0.0);
+        assert_eq!(dsp_params().native_kbd_track(), 0.0);
+    }
+
+    /// GLOBAL LFO atomics boot at (triangle, 5 Hz, all depths 0 —
+    /// bit-transparent) and clamp: rate to [0.05, 20] Hz, pitch depth
+    /// to [0, 100] cents, cutoff depth to [0, 2] octaves, amp depth to
+    /// [0, 1]; the wave code is capped at 3 as a backstop.
+    #[test]
+    fn native_lfo_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_lfo(), (0, 5.0, 0.0, 0.0, 0.0));
+
+        p.set_native_lfo(9, 100.0, 500.0, 7.0, 3.0);
+        assert_eq!(p.native_lfo(), (3, 20.0, 100.0, 2.0, 1.0));
+
+        p.set_native_lfo(1, 0.0, -5.0, -1.0, -1.0);
+        assert_eq!(p.native_lfo(), (1, 0.05, 0.0, 0.0, 0.0));
+
+        p.set_native_lfo(2, 4.0, 30.0, 0.5, 0.25);
+        assert_eq!(p.native_lfo(), (2, 4.0, 30.0, 0.5, 0.25));
+    }
+
+    /// The C-ABI LFO setter routes through the same clamps into the
+    /// global params, and ignores out-of-range wave codes entirely.
+    #[test]
+    fn native_lfo_ffi_setter_clamps_and_ignores_bad_wave() {
+        polyclav_dsp_set_native_lfo(3, 100.0, 500.0, 7.0, 3.0);
+        assert_eq!(dsp_params().native_lfo(), (3, 20.0, 100.0, 2.0, 1.0));
+
+        // Out-of-range wave is ignored (values unchanged).
+        polyclav_dsp_set_native_lfo(4, 5.0, 0.0, 0.0, 0.0);
+        assert_eq!(dsp_params().native_lfo(), (3, 20.0, 100.0, 2.0, 1.0));
+
+        // Restore the defaults so other tests / later asserts see the
+        // documented boot values.
+        polyclav_dsp_set_native_lfo(0, 5.0, 0.0, 0.0, 0.0);
+        assert_eq!(dsp_params().native_lfo(), (0, 5.0, 0.0, 0.0, 0.0));
+    }
+
+    /// Bend-range atomic boots at 2.0 semitones (the MIDI convention)
+    /// and clamps to [0, 12].
+    #[test]
+    fn native_bend_range_default_and_clamp() {
+        let p = DspParams::new();
+        assert_eq!(p.native_bend_range_semitones(), 2.0);
+
+        p.set_native_bend_range(100.0);
+        assert_eq!(p.native_bend_range_semitones(), 12.0);
+
+        p.set_native_bend_range(-1.0);
+        assert_eq!(p.native_bend_range_semitones(), 0.0);
+
+        p.set_native_bend_range(7.0);
+        assert_eq!(p.native_bend_range_semitones(), 7.0);
+    }
+
+    /// The C-ABI bend-range setter routes through the same clamp into
+    /// the global params the audio thread reads.
+    #[test]
+    fn native_bend_range_ffi_setter_clamps() {
+        polyclav_dsp_set_native_bend_range(100.0);
+        assert_eq!(dsp_params().native_bend_range_semitones(), 12.0);
+        polyclav_dsp_set_native_bend_range(-3.0);
+        assert_eq!(dsp_params().native_bend_range_semitones(), 0.0);
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_bend_range(2.0);
+        assert_eq!(dsp_params().native_bend_range_semitones(), 2.0);
+    }
+
+    /// Voice-mode atomic boots at 0 (mono_legato — regression-safe)
+    /// and caps the wire code at 2 as a backstop.
+    #[test]
+    fn native_voice_mode_default_and_backstop() {
+        let p = DspParams::new();
+        assert_eq!(p.native_voice_mode(), 0);
+
+        p.set_native_voice_mode(2);
+        assert_eq!(p.native_voice_mode(), 2);
+
+        p.set_native_voice_mode(9);
+        assert_eq!(p.native_voice_mode(), 2);
+
+        p.set_native_voice_mode(1);
+        assert_eq!(p.native_voice_mode(), 1);
+    }
+
+    /// The C-ABI voice-mode setter reaches the global params and
+    /// ignores out-of-range codes entirely (values unchanged).
+    #[test]
+    fn native_voice_mode_ffi_setter_validates() {
+        polyclav_dsp_set_native_voice_mode(2);
+        assert_eq!(dsp_params().native_voice_mode(), 2);
+
+        // Out-of-range mode is ignored (value unchanged).
+        polyclav_dsp_set_native_voice_mode(3);
+        assert_eq!(dsp_params().native_voice_mode(), 2);
+
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_voice_mode(0);
+        assert_eq!(dsp_params().native_voice_mode(), 0);
+    }
+
+    /// Oversample atomic boots at 0 (off — regression-safe) and caps
+    /// the wire code at 1 as a backstop.
+    #[test]
+    fn native_oversample_default_and_backstop() {
+        let p = DspParams::new();
+        assert_eq!(p.native_oversample(), 0);
+
+        p.set_native_oversample(1);
+        assert_eq!(p.native_oversample(), 1);
+
+        p.set_native_oversample(9);
+        assert_eq!(p.native_oversample(), 1);
+
+        p.set_native_oversample(0);
+        assert_eq!(p.native_oversample(), 0);
+    }
+
+    /// The C-ABI oversample setter reaches the global params and
+    /// ignores out-of-range codes entirely (values unchanged).
+    #[test]
+    fn native_oversample_ffi_setter_validates() {
+        polyclav_dsp_set_native_oversample(1);
+        assert_eq!(dsp_params().native_oversample(), 1);
+
+        // Out-of-range code is ignored (value unchanged).
+        polyclav_dsp_set_native_oversample(2);
+        assert_eq!(dsp_params().native_oversample(), 1);
+
+        // Restore the default so other tests / later asserts see the
+        // documented boot value.
+        polyclav_dsp_set_native_oversample(0);
+        assert_eq!(dsp_params().native_oversample(), 0);
+    }
+
     /// The three non-finite f32 values every setter must reject.
     const NON_FINITE: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
 
@@ -1373,9 +2068,16 @@ mod tests {
         p.set_native_cutoff_hz(1_234.0);
         p.set_native_resonance(0.5);
         p.set_native_filter_env(0.01, 0.2, 0.5, 0.3, 0.25);
+        p.set_native_amp_env(0.02, 0.3, 0.6, 0.5);
         p.set_native_osc(1, 1, 1, 12.5, 0.25);
         p.set_native_noise_level(0.5);
         p.set_native_glide_s(0.25);
+        p.set_native_pulse_width(0.5);
+        p.set_native_drive(0.5);
+        p.set_native_vel_routing(0.25, 0.5);
+        p.set_native_kbd_track(0.75);
+        p.set_native_lfo(2, 4.0, 30.0, 0.5, 0.25);
+        p.set_native_bend_range(7.0);
 
         for bad in NON_FINITE {
             p.set_master_volume(bad);
@@ -1387,9 +2089,16 @@ mod tests {
             p.set_native_cutoff_hz(bad);
             p.set_native_resonance(bad);
             p.set_native_filter_env(bad, bad, bad, bad, bad);
+            p.set_native_amp_env(bad, bad, bad, bad);
             p.set_native_osc(1, 1, 1, bad, bad);
             p.set_native_noise_level(bad);
             p.set_native_glide_s(bad);
+            p.set_native_pulse_width(bad);
+            p.set_native_drive(bad);
+            p.set_native_vel_routing(bad, bad);
+            p.set_native_kbd_track(bad);
+            p.set_native_lfo(2, bad, bad, bad, bad);
+            p.set_native_bend_range(bad);
 
             assert_eq!(p.master_volume(), 0.5, "master_volume poisoned by {bad}");
             assert_eq!(p.comp_amount(), 0.25, "comp_amount poisoned by {bad}");
@@ -1421,6 +2130,11 @@ mod tests {
                 "native_filter_env poisoned by {bad}"
             );
             assert_eq!(
+                p.native_amp_env(),
+                (0.02, 0.3, 0.6, 0.5),
+                "native_amp_env poisoned by {bad}"
+            );
+            assert_eq!(
                 p.native_osc(1),
                 (1, 1, 12.5, 0.25),
                 "native_osc poisoned by {bad}"
@@ -1431,6 +2145,32 @@ mod tests {
                 "native_noise_level poisoned by {bad}"
             );
             assert_eq!(p.native_glide_s(), 0.25, "native_glide_s poisoned by {bad}");
+            assert_eq!(
+                p.native_pulse_width(),
+                0.5,
+                "native_pulse_width poisoned by {bad}"
+            );
+            assert_eq!(p.native_drive(), 0.5, "native_drive poisoned by {bad}");
+            assert_eq!(
+                p.native_vel_routing(),
+                (0.25, 0.5),
+                "native_vel_routing poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_kbd_track(),
+                0.75,
+                "native_kbd_track poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_lfo(),
+                (2, 4.0, 30.0, 0.5, 0.25),
+                "native_lfo poisoned by {bad}"
+            );
+            assert_eq!(
+                p.native_bend_range_semitones(),
+                7.0,
+                "native_bend_range poisoned by {bad}"
+            );
         }
     }
 
@@ -1449,6 +2189,20 @@ mod tests {
         assert_eq!(p.native_osc(1), (2, -1, 12.5, 0.75));
         p.set_native_osc(1, 0, 0, -7.0, f32::NEG_INFINITY);
         assert_eq!(p.native_osc(1), (0, 0, -7.0, 0.75));
+
+        p.set_native_amp_env(0.02, 0.3, 0.6, 0.5);
+        p.set_native_amp_env(f32::NAN, 0.4, f32::INFINITY, 0.6);
+        assert_eq!(p.native_amp_env(), (0.02, 0.4, 0.6, 0.6));
+
+        p.set_native_vel_routing(0.25, 0.5);
+        p.set_native_vel_routing(f32::NAN, 0.75);
+        assert_eq!(p.native_vel_routing(), (0.25, 0.75));
+        p.set_native_vel_routing(0.5, f32::NEG_INFINITY);
+        assert_eq!(p.native_vel_routing(), (0.5, 0.75));
+
+        p.set_native_lfo(2, 4.0, 30.0, 0.5, 0.25);
+        p.set_native_lfo(1, f32::NAN, 60.0, f32::INFINITY, 0.75);
+        assert_eq!(p.native_lfo(), (1, 4.0, 60.0, 0.5, 0.75));
     }
 
     /// The C ABI setters route through the same non-finite rejection.
@@ -1515,6 +2269,8 @@ mod tests {
         }
         p.set_native_noise_level(f32::NAN);
         p.set_native_glide_s(f32::NAN);
+        p.set_native_vel_routing(f32::NAN, f32::NEG_INFINITY);
+        p.set_native_kbd_track(f32::INFINITY);
 
         assert!(p.native_cutoff_hz().is_finite());
         assert!(p.native_resonance().is_finite());
@@ -1527,6 +2283,9 @@ mod tests {
         }
         assert!(p.native_noise_level().is_finite());
         assert!(p.native_glide_s().is_finite());
+        let (vtc, vta) = p.native_vel_routing();
+        assert!(vtc.is_finite() && vta.is_finite());
+        assert!(p.native_kbd_track().is_finite());
 
         // Mirror process_audio's per-block param push, then render.
         let mut synth = NativeSynth::new("minimoog", 48_000.0).unwrap();
@@ -1539,6 +2298,8 @@ mod tests {
         }
         synth.set_noise_level(p.native_noise_level());
         synth.set_glide(p.native_glide_s());
+        synth.set_vel_routing(vtc, vta);
+        synth.set_kbd_track(p.native_kbd_track());
 
         synth.handle_event(&MidiEvent::NoteOn {
             channel: 0,

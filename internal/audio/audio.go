@@ -31,6 +31,15 @@ package audio
 // void    polyclav_dsp_set_native_osc(int32_t idx, int32_t wave, int32_t octave, float detune_cents, float level);
 // void    polyclav_dsp_set_native_noise(float level);
 // void    polyclav_dsp_set_native_glide(float seconds);
+// void    polyclav_dsp_set_native_amp_env(float attack_s, float decay_s, float sustain, float release_s);
+// void    polyclav_dsp_set_native_pulse_width(float width);
+// void    polyclav_dsp_set_native_drive(float drive);
+// void    polyclav_dsp_set_native_vel_routing(float to_cutoff, float to_amp);
+// void    polyclav_dsp_set_native_kbd_track(float amt);
+// void    polyclav_dsp_set_native_lfo(uint32_t wave, float rate_hz, float to_pitch_cents, float to_cutoff_oct, float to_amp);
+// void    polyclav_dsp_set_native_bend_range(float st);
+// void    polyclav_dsp_set_native_voice_mode(uint32_t mode);
+// void    polyclav_dsp_set_native_oversample(uint32_t on);
 import "C"
 
 import (
@@ -253,6 +262,165 @@ func SetNativeNoise(level float32) {
 // backends).
 func SetNativeGlide(s float32) {
 	C.polyclav_dsp_set_native_glide(C.float(s))
+}
+
+// SetNativeAmpEnv pushes the active native synth's amp-envelope (env 1)
+// ADSR. Same lifecycle as SetNativeCutoffHz: the audio thread reads the
+// atomics per block and applies them to the active SynthBackend::Native
+// (no-op for other backends). Times are clamped to [0.0001, 10] s,
+// sustain to [0, 1] in Rust. Updating params does not disturb a running
+// envelope. Defaults: 5 ms / 200 ms / 0.7 / 400 ms — exactly the
+// previously-hardcoded values, so the default render is unchanged.
+func SetNativeAmpEnv(a, d, s, r float32) {
+	C.polyclav_dsp_set_native_amp_env(C.float(a), C.float(d), C.float(s), C.float(r))
+}
+
+// SetNativePulseWidth pushes the active native synth's pulse-wave duty
+// cycle. One global knob shared by all three oscillators; only audible
+// while a pulse waveform is selected. Clamped to [0.05, 0.95] in Rust;
+// default 0.25 (the old fixed duty — render unchanged at the default).
+// Same lifecycle as SetNativeCutoffHz (no-op for other backends).
+func SetNativePulseWidth(w float32) {
+	C.polyclav_dsp_set_native_pulse_width(C.float(w))
+}
+
+// SetNativeDrive pushes the active native synth's pre-filter tanh drive
+// amount. Clamped to [0, 1] in Rust; default 0 = bit-exact bypass. When
+// > 0 the post-mixer signal is shaped by
+// tanh(x*(1+drive*4)) / (1+drive*4) before the ladder filter — unity
+// gain at small signals, peaks compressed toward +/-1/(1+drive*4). Same
+// lifecycle as SetNativeCutoffHz (no-op for other backends).
+func SetNativeDrive(drive float32) {
+	C.polyclav_dsp_set_native_drive(C.float(drive))
+}
+
+// SetNativeVelRouting pushes the active native synth's velocity-routing
+// amounts, both clamped to [0, 1] in Rust. toAmp scales the per-note
+// amplitude: scale = lerp(1.0, vel/127, toAmp) — default 1 is exactly
+// the classic vel/127 (render unchanged); 0 ignores velocity. toCutoff
+// modulates the effective filter cutoff by
+// 2^(toCutoff*(vel/127-0.5)*2) — up to +/-1 octave around the knob
+// cutoff, centered at velocity 64; default 0 = bypass. Both are
+// captured per voice at note-on (knob turns mid-note affect the next
+// note). Composes multiplicatively with the filter-env and
+// keyboard-tracking cutoff modulation; the final effective cutoff is
+// clamped to [20, 20000] Hz. Same lifecycle as SetNativeCutoffHz
+// (no-op for other backends).
+func SetNativeVelRouting(toCutoff, toAmp float32) {
+	C.polyclav_dsp_set_native_vel_routing(C.float(toCutoff), C.float(toAmp))
+}
+
+// SetNativeKbdTrack pushes the active native synth's keyboard-tracking
+// amount, clamped to [0, 1] in Rust. The effective cutoff is multiplied
+// by 2^(amt*(note-60)/12) — at 1 it tracks the keyboard 100% (2x per
+// octave above middle C, /2 per octave below), following the sounding
+// note (legato hand-offs included). Default 0 = bypass. Composes
+// multiplicatively with the filter-env and velocity cutoff modulation;
+// the final effective cutoff is clamped to [20, 20000] Hz. Same
+// lifecycle as SetNativeCutoffHz (no-op for other backends).
+func SetNativeKbdTrack(amt float32) {
+	C.polyclav_dsp_set_native_kbd_track(C.float(amt))
+}
+
+// SetNativeLFO pushes the active native synth's GLOBAL LFO (one LFO
+// shared across voices, advanced once per sample). wave is "triangle",
+// "saw", "square", or "sh" (sample-and-hold: a deterministic xorshift
+// stepped once per LFO cycle). rateHz is clamped to [0.05, 20] in Rust
+// (default 5). The three depths all default to 0 = bit-transparent
+// bypass:
+//
+//   - toPitchCents [0, 100]: vibrato — the voice frequency is scaled by
+//     2^(lfo*cents/1200). The depth heard is additionally scaled LIVE
+//     by MIDI CC 1 (mod wheel): wheel and configured depth MULTIPLY,
+//     and the synth boots with the wheel at 1.0 so a configured depth
+//     is audible without a physical wheel; the first CC 1 event then
+//     takes over (wheel 0 silences vibrato — classic vibrato-on-wheel).
+//   - toCutoffOct [0, 2]: the effective filter cutoff is scaled by
+//     2^(lfo*oct), composing multiplicatively with the env/vel/kbd
+//     cutoff modulation (final cutoff clamped to [20, 20000] Hz).
+//   - toAmp [0, 1]: tremolo — output * (1 - depth*(lfo*0.5+0.5)).
+//
+// Same lifecycle as SetNativeCutoffHz (no-op for other backends).
+// Returns an error for an unknown wave name.
+func SetNativeLFO(wave string, rateHz, toPitchCents, toCutoffOct, toAmp float32) error {
+	var w uint32
+	switch wave {
+	case "triangle":
+		w = 0
+	case "saw":
+		w = 1
+	case "square":
+		w = 2
+	case "sh":
+		w = 3
+	default:
+		return fmt.Errorf("audio-core set native lfo: unknown wave %q (valid: triangle, saw, square, sh)", wave)
+	}
+	C.polyclav_dsp_set_native_lfo(C.uint32_t(w), C.float(rateHz), C.float(toPitchCents), C.float(toCutoffOct), C.float(toAmp))
+	return nil
+}
+
+// SetNativeBendRange pushes the active native synth's pitch-bend range
+// in semitones at full wheel deflection, clamped to [0, 12] in Rust;
+// default 2 (the MIDI convention). Incoming PushMIDI pitch-bend events
+// (14-bit Bend value, 8192 = centre) scale the voice frequency by
+// 2^(range * (bend-8192)/8192 / 12); with no bend event the factor is
+// exactly 1 and the render is unchanged. Same lifecycle as
+// SetNativeCutoffHz (no-op for other backends).
+func SetNativeBendRange(st float32) {
+	C.polyclav_dsp_set_native_bend_range(C.float(st))
+}
+
+// SetNativeVoiceMode selects the native synth's voice-allocation mode
+// (ROADMAP §1.2 / §1.5):
+//
+//   - "mono_legato" (the default): 1 voice, last-note priority,
+//     envelopes only retrigger when no other key is held. The render at
+//     this default is bit-identical to the pre-poly engine.
+//   - "mono_retrig": 1 voice, last-note priority, envelopes ALWAYS
+//     retrigger on note-on.
+//   - "poly": 8 voices. A note-on takes a free voice (amp envelope
+//     idle) or, when all are sounding, steals the oldest-fired voice; a
+//     note-off releases exactly the voice(s) sounding that note.
+//
+// Switching modes while notes sound releases every voice and clears the
+// held-notes bookkeeping (no stuck notes — keys already down fade out
+// through their release tails and must be re-pressed). Same lifecycle
+// as SetNativeCutoffHz (no-op for other backends). Returns an error for
+// an unknown mode name.
+func SetNativeVoiceMode(mode string) error {
+	var m uint32
+	switch mode {
+	case "mono_legato":
+		m = 0
+	case "mono_retrig":
+		m = 1
+	case "poly":
+		m = 2
+	default:
+		return fmt.Errorf("audio-core set native voice mode: unknown mode %q (valid: mono_legato, mono_retrig, poly)", mode)
+	}
+	C.polyclav_dsp_set_native_voice_mode(C.uint32_t(m))
+	return nil
+}
+
+// SetNativeOversample enables/disables 2x oversampling of the native
+// synth's per-voice nonlinear section (tanh drive + Moog ladder). Off
+// (the default) is the base-rate path, bit-identical to the
+// pre-oversampling engine. On, the mixer output is upsampled 2x through
+// a minimum-phase halfband, the drive + ladder run (retuned) at twice
+// the sample rate, and the same halfband decimates back — removing the
+// tanh stages' fold-back aliasing under hard drive. Toggling while
+// notes sound swaps per-voice filter instances (reset + retuned): a
+// brief click may be audible, so treat it as a setup switch, not a
+// performance control. Same lifecycle as SetNativeCutoffHz (no-op for
+// other backends).
+func SetNativeOversample(on bool) {
+	var v C.uint32_t
+	if on {
+		v = 1
+	}
+	C.polyclav_dsp_set_native_oversample(v)
 }
 
 // MIDIEvent is what Go pushes into the realtime audio thread's MIDI queue.

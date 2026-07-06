@@ -9,15 +9,17 @@
 //! the inactive generators, so a switch may click; that is acceptable
 //! and by design for this stage.
 //!
-//! The pulse waveform uses a fixed 25% duty cycle for this stage
-//! (fundsp `PolyPulse` takes width as a per-tick input; a width knob is
-//! a later-phase lever).
+//! The pulse waveform's duty cycle is a runtime parameter (fundsp
+//! `PolyPulse` takes width as a per-tick input): default 25% — the
+//! stage-3 fixed value, so the default render is bit-identical — with
+//! the knob clamped to [0.05, 0.95].
 
 use fundsp::audionode::AudioNode;
 use fundsp::oscillator::{PolyPulse, PolySaw, PolySquare};
 
-/// Fixed pulse-wave duty cycle for stage 3 (see module docs).
-const PULSE_WIDTH: f32 = 0.25;
+/// Default pulse-wave duty cycle (the stage-3 fixed value — keeping it
+/// as the default preserves the regression guarantee).
+pub const DEFAULT_PULSE_WIDTH: f32 = 0.25;
 
 /// Selectable oscillator waveform. The `u32` encoding (0/1/2) is the
 /// wire format used by the DSP atomics and the C ABI.
@@ -96,6 +98,11 @@ pub struct Oscillator {
     /// feeds the generator bit-identical frequencies to the Phase 1
     /// single-osc voice.
     pitch_factor: f32,
+    /// Pulse-wave duty cycle in [0.05, 0.95], fed to `PolyPulse` as its
+    /// width input every tick. Default 0.25 — exactly the old fixed
+    /// stage-3 constant, so the default render is bit-identical
+    /// (regression guarantee). Only the pulse waveform reads it.
+    pulse_width: f32,
 }
 
 impl Oscillator {
@@ -115,6 +122,7 @@ impl Oscillator {
             pulse,
             params,
             pitch_factor: Self::pitch_factor(&params),
+            pulse_width: DEFAULT_PULSE_WIDTH,
         }
     }
 
@@ -138,13 +146,21 @@ impl Oscillator {
         self.params.level
     }
 
+    /// Per-block pulse-width push, mirroring `set_params`. Clamped to
+    /// [0.05, 0.95] (extreme widths collapse the pulse into DC-with-
+    /// clicks territory). Only audible while the pulse waveform is
+    /// selected; the saw/square paths never read it.
+    pub fn set_pulse_width(&mut self, width: f32) {
+        self.pulse_width = width.clamp(0.05, 0.95);
+    }
+
     /// Render one sample at `base_freq_hz * 2^(octave + cents/1200)`.
     pub fn tick(&mut self, base_freq_hz: f32) -> f32 {
         let freq = base_freq_hz * self.pitch_factor;
         match self.params.wave {
             Waveform::Saw => self.saw.tick(&[freq].into())[0],
             Waveform::Square => self.square.tick(&[freq].into())[0],
-            Waveform::Pulse => self.pulse.tick(&[freq, PULSE_WIDTH].into())[0],
+            Waveform::Pulse => self.pulse.tick(&[freq, self.pulse_width].into())[0],
         }
     }
 }
@@ -209,6 +225,35 @@ mod tests {
             (duty - 0.25).abs() < 0.02,
             "pulse duty should be ~25%, got {duty}"
         );
+    }
+
+    /// `set_pulse_width` retargets the duty cycle: width 0.5 spends
+    /// ~50% of each cycle high, width 0.1 spends ~10%.
+    #[test]
+    fn pulse_width_sets_duty() {
+        for width in [0.5f32, 0.1] {
+            let mut p = osc(Waveform::Pulse, 0, 0.0);
+            p.set_pulse_width(width);
+            let n = 48_000; // 100 cycles of 100 Hz
+            let high = (0..n).filter(|_| p.tick(100.0) > 0.0).count();
+            let duty = high as f32 / n as f32;
+            assert!(
+                (duty - width).abs() < 0.02,
+                "pulse duty should be ~{width}, got {duty}"
+            );
+        }
+    }
+
+    /// `set_pulse_width` clamps to [0.05, 0.95].
+    #[test]
+    fn set_pulse_width_clamps() {
+        let mut p = osc(Waveform::Pulse, 0, 0.0);
+        p.set_pulse_width(2.0);
+        assert_eq!(p.pulse_width, 0.95);
+        p.set_pulse_width(-1.0);
+        assert_eq!(p.pulse_width, 0.05);
+        p.set_pulse_width(0.5);
+        assert_eq!(p.pulse_width, 0.5);
     }
 
     /// Octave -1 halves the frequency: count rising zero crossings.
