@@ -1106,9 +1106,20 @@ func TestPlayerEndpointsNilPlayer(t *testing.T) {
 
 // ---- static page + lifecycle ------------------------------------------------
 
-func TestIndexServed(t *testing.T) {
+// The Next.js export is committed under static/app/, so GET / redirects
+// into it (static.go); the interim page stays reachable at /legacy.
+func TestIndexRedirectsToApp(t *testing.T) {
 	f := newFixture(t, nil)
 	rec := f.do(t, "GET", "/", nil)
+	wantStatus(t, rec, http.StatusFound)
+	if loc := rec.Header().Get("Location"); loc != "/app/" {
+		t.Errorf("location: expected /app/, got %q", loc)
+	}
+}
+
+func TestLegacyServesInterimPage(t *testing.T) {
+	f := newFixture(t, nil)
+	rec := f.do(t, "GET", "/legacy", nil)
 	wantStatus(t, rec, http.StatusOK)
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("content-type: expected text/html, got %q", ct)
@@ -1119,6 +1130,56 @@ func TestIndexServed(t *testing.T) {
 			t.Errorf("index.html missing %q", marker)
 		}
 	}
+}
+
+func TestAppServed(t *testing.T) {
+	f := newFixture(t, nil)
+
+	rec := f.do(t, "GET", "/app/", nil)
+	wantStatus(t, rec, http.StatusOK)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type: expected text/html, got %q", ct)
+	}
+	body := rec.Body.String()
+	for _, marker := range []string{"polyclav", "/app/_next/static/"} {
+		if !strings.Contains(body, marker) {
+			t.Errorf("app index.html missing %q", marker)
+		}
+	}
+
+	// A hashed asset referenced by the page must be served with a JS
+	// content type and immutable caching. Pull the first quoted
+	// /app/_next/... URL that ends in .js out of the HTML.
+	var asset string
+	rest := body
+	for {
+		i := strings.Index(rest, "/app/_next/static/")
+		if i < 0 {
+			t.Fatal("no /app/_next/static/ asset URL found in app index.html")
+		}
+		rest = rest[i:]
+		j := strings.IndexByte(rest, '"')
+		if j < 0 {
+			t.Fatal("unterminated asset URL in app index.html")
+		}
+		if strings.HasSuffix(rest[:j], ".js") {
+			asset = rest[:j]
+			break
+		}
+		rest = rest[j:]
+	}
+	rec = f.do(t, "GET", asset, nil)
+	wantStatus(t, rec, http.StatusOK)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+		t.Errorf("asset content-type: expected text/javascript, got %q", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("asset cache-control: expected immutable, got %q", cc)
+	}
+
+	// Unknown app paths land on the export's 404 page.
+	rec = f.do(t, "GET", "/app/nope/", nil)
+	wantStatus(t, rec, http.StatusNotFound)
 }
 
 func TestUnknownPathIs404(t *testing.T) {

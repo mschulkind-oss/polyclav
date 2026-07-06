@@ -34,3 +34,10 @@ result-*
 *.zip
 /dist/
 /wheelhouse/
+
+# web dashboard (web/) build state — the built export is committed under
+# internal/web/static/app/ instead (see Justfile web-build)
+web/node_modules/
+web/.next/
+web/out/
+web/.pnpm-store/

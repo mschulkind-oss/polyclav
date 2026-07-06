@@ -1,0 +1,5 @@
+# pnpm settings (pnpm 11 reads build-script policy from this file).
+# sharp is next's optional image optimizer; unused with output:"export",
+# so its native postinstall build stays disabled.
+allowBuilds:
+  sharp: false

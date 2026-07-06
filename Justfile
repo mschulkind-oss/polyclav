@@ -79,6 +79,31 @@ clean:
 SOUNDFONT_URL  := "https://freepats.zenvoid.org/Piano/SF/freepats-acoustic-grand-piano-20211029.sf2"
 SOUNDFONT_FILE := "freepats-acoustic-grand-piano.sf2"
 
+# ---- web dashboard (web/ — Next.js static export, docs/WEB_UI.md) ---------
+# web-check is deliberately NOT part of `check`: web checks run only when
+# web/ changed (docs/WEB_UI.md §Decisions #5). Run it by hand (or in a
+# path-filtered CI job) whenever you touch web/.
+
+web-setup:
+    cd web && pnpm install
+
+# Dev loop: next dev on :3000 proxying /api/* to the daemon on :8666
+# (next.config.ts rewrites). Run the daemon too — or use
+# `hivemind Procfile.dev` to get both.
+web-dev:
+    cd web && pnpm dev
+
+# Build the static export and refresh the embedded copy. The copy under
+# internal/web/static/app/ is COMMITTED so `go build` needs no node.
+web-build:
+    cd web && pnpm build
+    rm -rf internal/web/static/app
+    mkdir -p internal/web/static/app
+    cp -a web/out/. internal/web/static/app/
+
+web-check:
+    cd web && pnpm exec biome ci . && pnpm exec tsc --noEmit
+
 fetch-soundfont:
     mkdir -p soundfonts
     @if [ -f soundfonts/{{SOUNDFONT_FILE}} ]; then \

@@ -79,6 +79,7 @@ func New(deps Deps) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.routesStatic() // static.go: /app/ (embedded Next.js export) + /legacy (interim page)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/patches", s.handlePatches)
