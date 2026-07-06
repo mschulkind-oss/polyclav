@@ -211,6 +211,16 @@ func main() {
 	// fork only — never mapper.Dispatch, so clip notes can't fire mixer
 	// bindings. Transport changes bridge onto the hub for the web UI.
 	plr := player.New(logger, pushSynth)
+	// User clips (docs/AUDITION.md P3): any .mid/.midi under the clips dir
+	// joins the audition registry after the built-in patterns. Loaded here,
+	// before the Player is shared with the web server or --play, per
+	// LoadUserClips's not-during-playback contract. A missing dir is fine.
+	clipsDir := config.ExpandHome("~/.local/share/polyclav/clips")
+	if n, cerr := plr.LoadUserClips(clipsDir); cerr != nil {
+		logger.Warn("load user clips", "dir", clipsDir, "err", cerr)
+	} else if n > 0 {
+		logger.Info("user clips loaded", "dir", clipsDir, "count", n)
+	}
 	plr.OnChange(func(st player.State) {
 		hub.Publish(controls.Change{Type: "player", Data: map[string]any{
 			"playing": st.Playing,
