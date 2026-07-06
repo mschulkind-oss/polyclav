@@ -167,6 +167,26 @@ type filterEnvJSON struct {
 	Amount  float32 `json:"amount"`
 }
 
+type ampEnvJSON struct {
+	Attack  float32 `json:"attack"`
+	Decay   float32 `json:"decay"`
+	Sustain float32 `json:"sustain"`
+	Release float32 `json:"release"`
+}
+
+type velRoutingJSON struct {
+	ToCutoff float32 `json:"to_cutoff"`
+	ToAmp    float32 `json:"to_amp"`
+}
+
+type lfoJSON struct {
+	Wave         string  `json:"wave"`
+	RateHz       float32 `json:"rate_hz"`
+	ToPitchCents float32 `json:"to_pitch_cents"`
+	ToCutoffOct  float32 `json:"to_cutoff_oct"`
+	ToAmp        float32 `json:"to_amp"`
+}
+
 type synthOscJSON struct {
 	Wave        string  `json:"wave"`
 	Octave      int     `json:"octave"`
@@ -177,11 +197,20 @@ type synthOscJSON struct {
 // synthJSON is the wire view of controls.SynthSnapshot: the PATCH
 // /api/synth response body and the "synth" block of params.
 type synthJSON struct {
-	Resonance float32         `json:"resonance"`
-	FilterEnv filterEnvJSON   `json:"filter_env"`
-	Osc       [3]synthOscJSON `json:"osc"`
-	Noise     float32         `json:"noise"`
-	Glide     float32         `json:"glide"`
+	Resonance  float32         `json:"resonance"`
+	Glide      float32         `json:"glide"`
+	Noise      float32         `json:"noise"`
+	PulseWidth float32         `json:"pulse_width"`
+	Drive      float32         `json:"drive"`
+	KbdTrack   float32         `json:"kbd_track"`
+	BendRange  float32         `json:"bend_range"`
+	VoiceMode  string          `json:"voice_mode"`
+	Oversample bool            `json:"oversample"`
+	FilterEnv  filterEnvJSON   `json:"filter_env"`
+	AmpEnv     ampEnvJSON      `json:"amp_env"`
+	VelRouting velRoutingJSON  `json:"vel_routing"`
+	LFO        lfoJSON         `json:"lfo"`
+	Osc        [3]synthOscJSON `json:"osc"`
 }
 
 func synthView(sy controls.SynthSnapshot) synthJSON {
@@ -194,8 +223,28 @@ func synthView(sy controls.SynthSnapshot) synthJSON {
 			Release: sy.FilterEnv.Release,
 			Amount:  sy.FilterEnv.Amount,
 		},
-		Noise: sy.Noise,
-		Glide: sy.Glide,
+		AmpEnv: ampEnvJSON{
+			Attack:  sy.AmpEnv.Attack,
+			Decay:   sy.AmpEnv.Decay,
+			Sustain: sy.AmpEnv.Sustain,
+			Release: sy.AmpEnv.Release,
+		},
+		Noise:      sy.Noise,
+		Glide:      sy.Glide,
+		PulseWidth: sy.PulseWidth,
+		Drive:      sy.Drive,
+		VelRouting: velRoutingJSON{ToCutoff: sy.VelRouting.ToCutoff, ToAmp: sy.VelRouting.ToAmp},
+		KbdTrack:   sy.KbdTrack,
+		LFO: lfoJSON{
+			Wave:         sy.LFO.Wave,
+			RateHz:       sy.LFO.RateHz,
+			ToPitchCents: sy.LFO.ToPitchCents,
+			ToCutoffOct:  sy.LFO.ToCutoffOct,
+			ToAmp:        sy.LFO.ToAmp,
+		},
+		BendRange:  sy.BendRange,
+		VoiceMode:  sy.VoiceMode,
+		Oversample: sy.Oversample,
 	}
 	for i, o := range sy.Oscs {
 		out.Osc[i] = synthOscJSON{Wave: o.Wave, Octave: o.Octave, DetuneCents: o.DetuneCents, Level: o.Level}
@@ -416,11 +465,20 @@ func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
 // merge over the current cached values (read-modify-write against the
 // controls snapshot).
 type synthPatchBody struct {
-	Resonance *float64             `json:"resonance"`
-	Glide     *float64             `json:"glide"`
-	Noise     *float64             `json:"noise"`
-	FilterEnv *synthFilterEnvPatch `json:"filter_env"`
-	Osc       []synthOscPatch      `json:"osc"`
+	Resonance  *float64              `json:"resonance"`
+	Glide      *float64              `json:"glide"`
+	Noise      *float64              `json:"noise"`
+	PulseWidth *float64              `json:"pulse_width"`
+	Drive      *float64              `json:"drive"`
+	KbdTrack   *float64              `json:"kbd_track"`
+	BendRange  *float64              `json:"bend_range"`
+	VoiceMode  *string               `json:"voice_mode"`
+	Oversample *bool                 `json:"oversample"`
+	FilterEnv  *synthFilterEnvPatch  `json:"filter_env"`
+	AmpEnv     *synthAmpEnvPatch     `json:"amp_env"`
+	VelRouting *synthVelRoutingPatch `json:"vel_routing"`
+	LFO        *synthLFOPatch        `json:"lfo"`
+	Osc        []synthOscPatch       `json:"osc"`
 }
 
 type synthFilterEnvPatch struct {
@@ -429,6 +487,26 @@ type synthFilterEnvPatch struct {
 	Sustain *float64 `json:"sustain"`
 	Release *float64 `json:"release"`
 	Amount  *float64 `json:"amount"`
+}
+
+type synthAmpEnvPatch struct {
+	Attack  *float64 `json:"attack"`
+	Decay   *float64 `json:"decay"`
+	Sustain *float64 `json:"sustain"`
+	Release *float64 `json:"release"`
+}
+
+type synthVelRoutingPatch struct {
+	ToCutoff *float64 `json:"to_cutoff"`
+	ToAmp    *float64 `json:"to_amp"`
+}
+
+type synthLFOPatch struct {
+	Wave         *string  `json:"wave"`
+	RateHz       *float64 `json:"rate_hz"`
+	ToPitchCents *float64 `json:"to_pitch_cents"`
+	ToCutoffOct  *float64 `json:"to_cutoff_oct"`
+	ToAmp        *float64 `json:"to_amp"`
 }
 
 type synthOscPatch struct {
@@ -459,6 +537,25 @@ func validateSynthBody(b *synthPatchBody) string {
 	if msg := check(b.Noise, 0, 1, "noise"); msg != "" {
 		return msg
 	}
+	if msg := check(b.PulseWidth, 0.05, 0.95, "pulse_width"); msg != "" {
+		return msg
+	}
+	if msg := check(b.Drive, 0, 1, "drive"); msg != "" {
+		return msg
+	}
+	if msg := check(b.KbdTrack, 0, 1, "kbd_track"); msg != "" {
+		return msg
+	}
+	if msg := check(b.BendRange, 0, 12, "bend_range"); msg != "" {
+		return msg
+	}
+	if b.VoiceMode != nil {
+		switch *b.VoiceMode {
+		case "mono_legato", "mono_retrig", "poly":
+		default:
+			return fmt.Sprintf("voice_mode %q invalid (valid: mono_legato, mono_retrig, poly)", *b.VoiceMode)
+		}
+	}
 	if fe := b.FilterEnv; fe != nil {
 		for name, p := range map[string]*float64{
 			"filter_env.attack": fe.Attack, "filter_env.decay": fe.Decay, "filter_env.release": fe.Release,
@@ -473,6 +570,47 @@ func validateSynthBody(b *synthPatchBody) string {
 			if msg := check(p, 0, 1, name); msg != "" {
 				return msg
 			}
+		}
+	}
+	if ae := b.AmpEnv; ae != nil {
+		for name, p := range map[string]*float64{
+			"amp_env.attack": ae.Attack, "amp_env.decay": ae.Decay, "amp_env.release": ae.Release,
+		} {
+			if msg := check(p, 0, 10, name); msg != "" {
+				return msg
+			}
+		}
+		if msg := check(ae.Sustain, 0, 1, "amp_env.sustain"); msg != "" {
+			return msg
+		}
+	}
+	if vr := b.VelRouting; vr != nil {
+		if msg := check(vr.ToCutoff, 0, 1, "vel_routing.to_cutoff"); msg != "" {
+			return msg
+		}
+		if msg := check(vr.ToAmp, 0, 1, "vel_routing.to_amp"); msg != "" {
+			return msg
+		}
+	}
+	if l := b.LFO; l != nil {
+		if l.Wave != nil {
+			switch *l.Wave {
+			case "triangle", "saw", "square", "sh":
+			default:
+				return fmt.Sprintf("lfo wave %q invalid (valid: triangle, saw, square, sh)", *l.Wave)
+			}
+		}
+		if msg := check(l.RateHz, 0.05, 20, "lfo.rate_hz"); msg != "" {
+			return msg
+		}
+		if msg := check(l.ToPitchCents, 0, 100, "lfo.to_pitch_cents"); msg != "" {
+			return msg
+		}
+		if msg := check(l.ToCutoffOct, 0, 2, "lfo.to_cutoff_oct"); msg != "" {
+			return msg
+		}
+		if msg := check(l.ToAmp, 0, 1, "lfo.to_amp"); msg != "" {
+			return msg
 		}
 	}
 	for _, o := range b.Osc {
@@ -516,9 +654,15 @@ func f32p(p *float64) *float32 {
 // partial. Osc entries rely on validateSynthBody having required Index.
 func synthPartial(b *synthPatchBody) controls.SynthPartial {
 	p := controls.SynthPartial{
-		Resonance: f32p(b.Resonance),
-		Noise:     f32p(b.Noise),
-		Glide:     f32p(b.Glide),
+		Resonance:  f32p(b.Resonance),
+		Noise:      f32p(b.Noise),
+		Glide:      f32p(b.Glide),
+		PulseWidth: f32p(b.PulseWidth),
+		Drive:      f32p(b.Drive),
+		KbdTrack:   f32p(b.KbdTrack),
+		BendRange:  f32p(b.BendRange),
+		VoiceMode:  b.VoiceMode,
+		Oversample: b.Oversample,
 	}
 	if fe := b.FilterEnv; fe != nil {
 		p.FilterEnv = &controls.FilterEnvPartial{
@@ -527,6 +671,29 @@ func synthPartial(b *synthPatchBody) controls.SynthPartial {
 			Sustain: f32p(fe.Sustain),
 			Release: f32p(fe.Release),
 			Amount:  f32p(fe.Amount),
+		}
+	}
+	if ae := b.AmpEnv; ae != nil {
+		p.AmpEnv = &controls.AmpEnvPartial{
+			Attack:  f32p(ae.Attack),
+			Decay:   f32p(ae.Decay),
+			Sustain: f32p(ae.Sustain),
+			Release: f32p(ae.Release),
+		}
+	}
+	if vr := b.VelRouting; vr != nil {
+		p.VelRouting = &controls.VelRoutingPartial{
+			ToCutoff: f32p(vr.ToCutoff),
+			ToAmp:    f32p(vr.ToAmp),
+		}
+	}
+	if l := b.LFO; l != nil {
+		p.LFO = &controls.LFOPartial{
+			Wave:         l.Wave,
+			RateHz:       f32p(l.RateHz),
+			ToPitchCents: f32p(l.ToPitchCents),
+			ToCutoffOct:  f32p(l.ToCutoffOct),
+			ToAmp:        f32p(l.ToAmp),
 		}
 	}
 	for _, o := range b.Osc {

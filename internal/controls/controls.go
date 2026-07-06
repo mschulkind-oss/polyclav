@@ -28,6 +28,15 @@ type Audio interface {
 	SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error
 	SetNativeNoise(level float32)
 	SetNativeGlide(s float32)
+	SetNativeAmpEnv(a, d, s, r float32)
+	SetNativePulseWidth(w float32)
+	SetNativeDrive(d float32)
+	SetNativeVelRouting(toCutoff, toAmp float32)
+	SetNativeKbdTrack(amt float32)
+	SetNativeLFO(wave string, rateHz, toPitchCents, toCutoffOct, toAmp float32) error
+	SetNativeBendRange(st float32)
+	SetNativeVoiceMode(mode string) error
+	SetNativeOversample(on bool)
 }
 
 // Registry is the slice of *patches.Registry the controls layer needs
@@ -86,6 +95,13 @@ type FilterEnv struct {
 	Attack, Decay, Sustain, Release, Amount float32
 }
 
+// AmpEnv is the native synth's amp-envelope (env 1) ADSR — FilterEnv's
+// shape minus the modulation Amount (the amp env always drives the VCA
+// at full depth).
+type AmpEnv struct {
+	Attack, Decay, Sustain, Release float32
+}
+
 // OscParams is one native-synth oscillator's settings (docs/ROADMAP.md §1.4).
 type OscParams struct {
 	Wave        string
@@ -94,26 +110,59 @@ type OscParams struct {
 	Level       float32
 }
 
+// VelRouting is the native synth's velocity-routing amounts: ToCutoff
+// modulates the filter cutoff (±1 octave around velocity 64 at 1),
+// ToAmp scales the per-note amplitude (1 = classic vel/127, 0 = ignore
+// velocity).
+type VelRouting struct {
+	ToCutoff, ToAmp float32
+}
+
+// LFO is the native synth's global LFO block: wave (triangle, saw,
+// square, or sh) plus rate and the three modulation depths (vibrato
+// cents, cutoff octaves, tremolo amount).
+type LFO struct {
+	Wave                              string
+	RateHz, ToPitchCents, ToCutoffOct float32
+	ToAmp                             float32
+}
+
 // SynthSnapshot is the cached view of every native-synth parameter this
 // layer pushes. Cached here (not read back from the engine) because the
 // audio atomics are write-only from this side of the fence — same
 // rationale as the mastering cache.
 type SynthSnapshot struct {
-	Resonance float32
-	FilterEnv FilterEnv
-	Oscs      [3]OscParams
-	Noise     float32
-	Glide     float32
+	Resonance  float32
+	FilterEnv  FilterEnv
+	AmpEnv     AmpEnv
+	Oscs       [3]OscParams
+	Noise      float32
+	Glide      float32
+	PulseWidth float32
+	Drive      float32
+	VelRouting VelRouting
+	KbdTrack   float32
+	LFO        LFO
+	BendRange  float32
+	VoiceMode  string
+	Oversample bool
 }
 
 // Native-synth clamp ranges, mirroring the Rust-side clamps in
 // audio-core (internal/audio doc comments are the contract).
 const (
-	maxResonance = 0.95   // headroom below ladder self-oscillation
-	minEnvTime   = 0.0001 // seconds
-	maxEnvTime   = 10     // seconds
-	maxDetune    = 100    // cents
-	maxGlide     = 5      // seconds
+	maxResonance     = 0.95   // headroom below ladder self-oscillation
+	minEnvTime       = 0.0001 // seconds
+	maxEnvTime       = 10     // seconds
+	maxDetune        = 100    // cents
+	maxGlide         = 5      // seconds
+	minPulseWidth    = 0.05   // duty cycle
+	maxPulseWidth    = 0.95   // duty cycle
+	minLFORateHz     = 0.05
+	maxLFORateHz     = 20
+	maxLFOPitchCents = 100
+	maxLFOCutoffOct  = 2
+	maxBendRange     = 12 // semitones
 )
 
 // defaultSynth returns the boot values: the audio-core defaults
@@ -124,13 +173,22 @@ func defaultSynth() SynthSnapshot {
 	return SynthSnapshot{
 		Resonance: 0.3,
 		FilterEnv: FilterEnv{Attack: 0.005, Decay: 0.6, Sustain: 0.4, Release: 0.6, Amount: 0},
+		AmpEnv:    AmpEnv{Attack: 0.005, Decay: 0.2, Sustain: 0.7, Release: 0.4},
 		Oscs: [3]OscParams{
 			{Wave: "saw", Octave: 0, DetuneCents: 0, Level: 1.0},
 			{Wave: "saw", Octave: 0, DetuneCents: -7, Level: 0.0},
 			{Wave: "saw", Octave: -1, DetuneCents: 5, Level: 0.0},
 		},
-		Noise: 0,
-		Glide: 0,
+		Noise:      0,
+		Glide:      0,
+		PulseWidth: 0.25,
+		Drive:      0,
+		VelRouting: VelRouting{ToCutoff: 0, ToAmp: 1},
+		KbdTrack:   0,
+		LFO:        LFO{Wave: "triangle", RateHz: 5, ToPitchCents: 0, ToCutoffOct: 0, ToAmp: 0},
+		BendRange:  2,
+		VoiceMode:  "mono_legato",
+		Oversample: false,
 	}
 }
 
@@ -149,8 +207,28 @@ func synthToState(s SynthSnapshot) state.SynthState {
 			Release: s.FilterEnv.Release,
 			Amount:  s.FilterEnv.Amount,
 		},
-		Noise: s.Noise,
-		Glide: s.Glide,
+		AmpEnv: state.AmpEnvState{
+			Attack:  s.AmpEnv.Attack,
+			Decay:   s.AmpEnv.Decay,
+			Sustain: s.AmpEnv.Sustain,
+			Release: s.AmpEnv.Release,
+		},
+		Noise:      s.Noise,
+		Glide:      s.Glide,
+		PulseWidth: s.PulseWidth,
+		Drive:      s.Drive,
+		VelRouting: state.VelRoutingState{ToCutoff: s.VelRouting.ToCutoff, ToAmp: s.VelRouting.ToAmp},
+		KbdTrack:   s.KbdTrack,
+		LFO: state.LFOState{
+			Wave:         s.LFO.Wave,
+			RateHz:       s.LFO.RateHz,
+			ToPitchCents: s.LFO.ToPitchCents,
+			ToCutoffOct:  s.LFO.ToCutoffOct,
+			ToAmp:        s.LFO.ToAmp,
+		},
+		BendRange:  s.BendRange,
+		VoiceMode:  s.VoiceMode,
+		Oversample: s.Oversample,
 	}
 	for i, o := range s.Oscs {
 		out.Oscs[i] = state.OscState{Wave: o.Wave, Octave: o.Octave, DetuneCents: o.DetuneCents, Level: o.Level}
@@ -171,8 +249,28 @@ func synthFromState(s state.SynthState) SynthSnapshot {
 			Release: s.FilterEnv.Release,
 			Amount:  s.FilterEnv.Amount,
 		},
-		Noise: s.Noise,
-		Glide: s.Glide,
+		AmpEnv: AmpEnv{
+			Attack:  s.AmpEnv.Attack,
+			Decay:   s.AmpEnv.Decay,
+			Sustain: s.AmpEnv.Sustain,
+			Release: s.AmpEnv.Release,
+		},
+		Noise:      s.Noise,
+		Glide:      s.Glide,
+		PulseWidth: s.PulseWidth,
+		Drive:      s.Drive,
+		VelRouting: VelRouting{ToCutoff: s.VelRouting.ToCutoff, ToAmp: s.VelRouting.ToAmp},
+		KbdTrack:   s.KbdTrack,
+		LFO: LFO{
+			Wave:         s.LFO.Wave,
+			RateHz:       s.LFO.RateHz,
+			ToPitchCents: s.LFO.ToPitchCents,
+			ToCutoffOct:  s.LFO.ToCutoffOct,
+			ToAmp:        s.LFO.ToAmp,
+		},
+		BendRange:  s.BendRange,
+		VoiceMode:  s.VoiceMode,
+		Oversample: s.Oversample,
 	}
 	for i, o := range s.Oscs {
 		out.Oscs[i] = OscParams{Wave: o.Wave, Octave: o.Octave, DetuneCents: o.DetuneCents, Level: o.Level}
@@ -196,8 +294,34 @@ func clampSynth(in SynthSnapshot) SynthSnapshot {
 			Release: clampRange(in.FilterEnv.Release, minEnvTime, maxEnvTime),
 			Amount:  clamp01(in.FilterEnv.Amount),
 		},
-		Noise: clamp01(in.Noise),
-		Glide: clampRange(in.Glide, 0, maxGlide),
+		AmpEnv: AmpEnv{
+			Attack:  clampRange(in.AmpEnv.Attack, minEnvTime, maxEnvTime),
+			Decay:   clampRange(in.AmpEnv.Decay, minEnvTime, maxEnvTime),
+			Sustain: clamp01(in.AmpEnv.Sustain),
+			Release: clampRange(in.AmpEnv.Release, minEnvTime, maxEnvTime),
+		},
+		Noise:      clamp01(in.Noise),
+		Glide:      clampRange(in.Glide, 0, maxGlide),
+		PulseWidth: clampRange(in.PulseWidth, minPulseWidth, maxPulseWidth),
+		Drive:      clamp01(in.Drive),
+		VelRouting: VelRouting{ToCutoff: clamp01(in.VelRouting.ToCutoff), ToAmp: clamp01(in.VelRouting.ToAmp)},
+		KbdTrack:   clamp01(in.KbdTrack),
+		LFO: LFO{
+			Wave:         in.LFO.Wave,
+			RateHz:       clampRange(in.LFO.RateHz, minLFORateHz, maxLFORateHz),
+			ToPitchCents: clampRange(in.LFO.ToPitchCents, 0, maxLFOPitchCents),
+			ToCutoffOct:  clampRange(in.LFO.ToCutoffOct, 0, maxLFOCutoffOct),
+			ToAmp:        clamp01(in.LFO.ToAmp),
+		},
+		BendRange:  clampRange(in.BendRange, 0, maxBendRange),
+		VoiceMode:  in.VoiceMode,
+		Oversample: in.Oversample,
+	}
+	if validateLFOWave(out.LFO.Wave) != nil {
+		out.LFO.Wave = def.LFO.Wave
+	}
+	if validateVoiceMode(out.VoiceMode) != nil {
+		out.VoiceMode = def.VoiceMode
 	}
 	for i, o := range in.Oscs {
 		if validateOsc(i, o.Wave) != nil {
@@ -237,9 +361,44 @@ func synthData(s SynthSnapshot) map[string]any {
 			"release": s.FilterEnv.Release,
 			"amount":  s.FilterEnv.Amount,
 		},
-		"osc":   oscs,
-		"noise": s.Noise,
-		"glide": s.Glide,
+		"amp_env":     ampEnvData(s.AmpEnv),
+		"osc":         oscs,
+		"noise":       s.Noise,
+		"glide":       s.Glide,
+		"pulse_width": s.PulseWidth,
+		"drive":       s.Drive,
+		"vel_routing": velRoutingData(s.VelRouting),
+		"kbd_track":   s.KbdTrack,
+		"lfo":         lfoData(s.LFO),
+		"bend_range":  s.BendRange,
+		"voice_mode":  s.VoiceMode,
+		"oversample":  s.Oversample,
+	}
+}
+
+// ampEnvData/velRoutingData/lfoData render one sub-block in the shared
+// wire shape (synthJSON keys) — used by both the whole-block synthData
+// and the per-field "synth" change publishes.
+func ampEnvData(ae AmpEnv) map[string]any {
+	return map[string]any{
+		"attack":  ae.Attack,
+		"decay":   ae.Decay,
+		"sustain": ae.Sustain,
+		"release": ae.Release,
+	}
+}
+
+func velRoutingData(vr VelRouting) map[string]any {
+	return map[string]any{"to_cutoff": vr.ToCutoff, "to_amp": vr.ToAmp}
+}
+
+func lfoData(l LFO) map[string]any {
+	return map[string]any{
+		"wave":           l.Wave,
+		"rate_hz":        l.RateHz,
+		"to_pitch_cents": l.ToPitchCents,
+		"to_cutoff_oct":  l.ToCutoffOct,
+		"to_amp":         l.ToAmp,
 	}
 }
 
@@ -515,8 +674,31 @@ func (c *Controls) applySynthAll(in SynthSnapshot) SynthSnapshot {
 	syn := clampSynth(in)
 	c.audio.SetNativeResonance(syn.Resonance)
 	c.audio.SetNativeFilterEnv(syn.FilterEnv.Attack, syn.FilterEnv.Decay, syn.FilterEnv.Sustain, syn.FilterEnv.Release, syn.FilterEnv.Amount)
+	c.audio.SetNativeAmpEnv(syn.AmpEnv.Attack, syn.AmpEnv.Decay, syn.AmpEnv.Sustain, syn.AmpEnv.Release)
 	c.audio.SetNativeNoise(syn.Noise)
 	c.audio.SetNativeGlide(syn.Glide)
+	c.audio.SetNativePulseWidth(syn.PulseWidth)
+	c.audio.SetNativeDrive(syn.Drive)
+	c.audio.SetNativeVelRouting(syn.VelRouting.ToCutoff, syn.VelRouting.ToAmp)
+	c.audio.SetNativeKbdTrack(syn.KbdTrack)
+	// clampSynth swapped any invalid LFO wave / voice mode for the factory
+	// value, but if the engine still rejects, that section keeps its
+	// previous cached value so cache and engine stay in agreement (the osc
+	// rejection contract below).
+	if err := c.audio.SetNativeLFO(syn.LFO.Wave, syn.LFO.RateHz, syn.LFO.ToPitchCents, syn.LFO.ToCutoffOct, syn.LFO.ToAmp); err != nil {
+		c.mu.Lock()
+		syn.LFO = c.synth.LFO
+		c.mu.Unlock()
+		c.logger.Warn("restore synth lfo rejected by engine", "err", err)
+	}
+	c.audio.SetNativeBendRange(syn.BendRange)
+	if err := c.audio.SetNativeVoiceMode(syn.VoiceMode); err != nil {
+		c.mu.Lock()
+		syn.VoiceMode = c.synth.VoiceMode
+		c.mu.Unlock()
+		c.logger.Warn("restore synth voice mode rejected by engine", "err", err)
+	}
+	c.audio.SetNativeOversample(syn.Oversample)
 	for i := range syn.Oscs {
 		o := syn.Oscs[i]
 		if err := c.audio.SetNativeOsc(i, o.Wave, o.Octave, o.DetuneCents, o.Level); err != nil {
@@ -609,6 +791,28 @@ func validateOsc(idx int, wave string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown osc wave %q (valid: saw, square, pulse)", wave)
+	}
+}
+
+// validateLFOWave is the shared wave gate for SetSynthLFO, MergeSynth,
+// and clampSynth (mirrors audio.SetNativeLFO's accepted names).
+func validateLFOWave(wave string) error {
+	switch wave {
+	case "triangle", "saw", "square", "sh":
+		return nil
+	default:
+		return fmt.Errorf("unknown lfo wave %q (valid: triangle, saw, square, sh)", wave)
+	}
+}
+
+// validateVoiceMode is the shared mode gate for SetSynthVoiceMode,
+// MergeSynth, and clampSynth (mirrors audio.SetNativeVoiceMode).
+func validateVoiceMode(mode string) error {
+	switch mode {
+	case "mono_legato", "mono_retrig", "poly":
+		return nil
+	default:
+		return fmt.Errorf("unknown voice mode %q (valid: mono_legato, mono_retrig, poly)", mode)
 	}
 }
 
@@ -715,23 +919,305 @@ func (c *Controls) applyGlide(patch string, seconds float32) float32 {
 	return seconds
 }
 
+// SetSynthAmpEnv sets the amp-envelope (env 1) ADSR. Times clamp to
+// [0.0001, 10] s; sustain to [0, 1]. Returns the clamped values; errors
+// unless a native patch is selected.
+func (c *Controls) SetSynthAmpEnv(a, d, s, r float32) (AmpEnv, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return AmpEnv{}, err
+	}
+	return c.applyAmpEnv(cur.Name, AmpEnv{Attack: a, Decay: d, Sustain: s, Release: r}), nil
+}
+
+// applyAmpEnv is SetSynthAmpEnv's clamp/apply/cache/persist/publish
+// body. Callers hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyAmpEnv(patch string, in AmpEnv) AmpEnv {
+	ae := AmpEnv{
+		Attack:  clampRange(in.Attack, minEnvTime, maxEnvTime),
+		Decay:   clampRange(in.Decay, minEnvTime, maxEnvTime),
+		Sustain: clamp01(in.Sustain),
+		Release: clampRange(in.Release, minEnvTime, maxEnvTime),
+	}
+	c.mu.Lock()
+	c.synth.AmpEnv = ae
+	c.mu.Unlock()
+	c.audio.SetNativeAmpEnv(ae.Attack, ae.Decay, ae.Sustain, ae.Release)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "amp_env", "amp_env": ampEnvData(ae)})
+	return ae
+}
+
+// SetSynthPulseWidth sets the shared pulse-wave duty cycle (clamped to
+// [0.05, 0.95]). Errors unless a native patch is selected.
+func (c *Controls) SetSynthPulseWidth(w float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return 0, err
+	}
+	return c.applyPulseWidth(cur.Name, w), nil
+}
+
+// applyPulseWidth is SetSynthPulseWidth's clamp/apply/cache/persist/
+// publish body. Callers hold applyMu and have passed the native gate.
+func (c *Controls) applyPulseWidth(patch string, w float32) float32 {
+	w = clampRange(w, minPulseWidth, maxPulseWidth)
+	c.mu.Lock()
+	c.synth.PulseWidth = w
+	c.mu.Unlock()
+	c.audio.SetNativePulseWidth(w)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "pulse_width", "pulse_width": w})
+	return w
+}
+
+// SetSynthDrive sets the pre-filter tanh drive amount (clamped to
+// [0, 1]). Errors unless a native patch is selected.
+func (c *Controls) SetSynthDrive(d float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return 0, err
+	}
+	return c.applyDrive(cur.Name, d), nil
+}
+
+// applyDrive is SetSynthDrive's clamp/apply/cache/persist/publish body.
+// Callers hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyDrive(patch string, d float32) float32 {
+	d = clamp01(d)
+	c.mu.Lock()
+	c.synth.Drive = d
+	c.mu.Unlock()
+	c.audio.SetNativeDrive(d)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "drive", "drive": d})
+	return d
+}
+
+// SetSynthVelRouting sets the velocity-routing amounts (both clamped to
+// [0, 1]). Errors unless a native patch is selected.
+func (c *Controls) SetSynthVelRouting(toCutoff, toAmp float32) (VelRouting, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return VelRouting{}, err
+	}
+	return c.applyVelRouting(cur.Name, VelRouting{ToCutoff: toCutoff, ToAmp: toAmp}), nil
+}
+
+// applyVelRouting is SetSynthVelRouting's clamp/apply/cache/persist/
+// publish body. Callers hold applyMu and have passed the native gate.
+func (c *Controls) applyVelRouting(patch string, in VelRouting) VelRouting {
+	vr := VelRouting{ToCutoff: clamp01(in.ToCutoff), ToAmp: clamp01(in.ToAmp)}
+	c.mu.Lock()
+	c.synth.VelRouting = vr
+	c.mu.Unlock()
+	c.audio.SetNativeVelRouting(vr.ToCutoff, vr.ToAmp)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "vel_routing", "vel_routing": velRoutingData(vr)})
+	return vr
+}
+
+// SetSynthKbdTrack sets the keyboard-tracking amount (clamped to
+// [0, 1]). Errors unless a native patch is selected.
+func (c *Controls) SetSynthKbdTrack(amt float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return 0, err
+	}
+	return c.applyKbdTrack(cur.Name, amt), nil
+}
+
+// applyKbdTrack is SetSynthKbdTrack's clamp/apply/cache/persist/publish
+// body. Callers hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyKbdTrack(patch string, amt float32) float32 {
+	amt = clamp01(amt)
+	c.mu.Lock()
+	c.synth.KbdTrack = amt
+	c.mu.Unlock()
+	c.audio.SetNativeKbdTrack(amt)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "kbd_track", "kbd_track": amt})
+	return amt
+}
+
+// SetSynthLFO sets the global LFO block. wave must be triangle, saw,
+// square, or sh; rate clamps to [0.05, 20] Hz, pitch depth to [0, 100]
+// cents, cutoff depth to [0, 2] octaves, amp depth to [0, 1]. Returns
+// the applied block; errors on a bad wave or unless a native patch is
+// selected.
+func (c *Controls) SetSynthLFO(wave string, rateHz, toPitchCents, toCutoffOct, toAmp float32) (LFO, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return LFO{}, err
+	}
+	if err := validateLFOWave(wave); err != nil {
+		return LFO{}, err
+	}
+	return c.applyLFO(cur.Name, LFO{Wave: wave, RateHz: rateHz, ToPitchCents: toPitchCents, ToCutoffOct: toCutoffOct, ToAmp: toAmp})
+}
+
+// applyLFO is SetSynthLFO's clamp/apply/cache/persist/publish body.
+// Callers hold applyMu, have passed the native-patch gate, and have
+// validated in.Wave. Audio-first (like applyOsc): if the engine still
+// rejects, the cache must not drift from what actually applied.
+func (c *Controls) applyLFO(patch string, in LFO) (LFO, error) {
+	l := LFO{
+		Wave:         in.Wave,
+		RateHz:       clampRange(in.RateHz, minLFORateHz, maxLFORateHz),
+		ToPitchCents: clampRange(in.ToPitchCents, 0, maxLFOPitchCents),
+		ToCutoffOct:  clampRange(in.ToCutoffOct, 0, maxLFOCutoffOct),
+		ToAmp:        clamp01(in.ToAmp),
+	}
+	if err := c.audio.SetNativeLFO(l.Wave, l.RateHz, l.ToPitchCents, l.ToCutoffOct, l.ToAmp); err != nil {
+		return LFO{}, err
+	}
+	c.mu.Lock()
+	c.synth.LFO = l
+	c.mu.Unlock()
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "lfo", "lfo": lfoData(l)})
+	return l, nil
+}
+
+// SetSynthBendRange sets the pitch-bend range in semitones (clamped to
+// [0, 12]). Errors unless a native patch is selected.
+func (c *Controls) SetSynthBendRange(st float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return 0, err
+	}
+	return c.applyBendRange(cur.Name, st), nil
+}
+
+// applyBendRange is SetSynthBendRange's clamp/apply/cache/persist/
+// publish body. Callers hold applyMu and have passed the native gate.
+func (c *Controls) applyBendRange(patch string, st float32) float32 {
+	st = clampRange(st, 0, maxBendRange)
+	c.mu.Lock()
+	c.synth.BendRange = st
+	c.mu.Unlock()
+	c.audio.SetNativeBendRange(st)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "bend_range", "bend_range": st})
+	return st
+}
+
+// SetSynthVoiceMode selects the voice-allocation mode (mono_legato,
+// mono_retrig, or poly). Errors on an unknown mode or unless a native
+// patch is selected.
+func (c *Controls) SetSynthVoiceMode(mode string) (string, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return "", err
+	}
+	if err := validateVoiceMode(mode); err != nil {
+		return "", err
+	}
+	return c.applyVoiceMode(cur.Name, mode)
+}
+
+// applyVoiceMode is SetSynthVoiceMode's apply/cache/persist/publish
+// body. Callers hold applyMu, have passed the native-patch gate, and
+// have validated mode. Audio-first (like applyOsc) so an engine
+// rejection cannot desync the cache.
+func (c *Controls) applyVoiceMode(patch, mode string) (string, error) {
+	if err := c.audio.SetNativeVoiceMode(mode); err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	c.synth.VoiceMode = mode
+	c.mu.Unlock()
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "voice_mode", "voice_mode": mode})
+	return mode, nil
+}
+
+// SetSynthOversample toggles 2x oversampling of the per-voice nonlinear
+// section. Errors unless a native patch is selected.
+func (c *Controls) SetSynthOversample(on bool) (bool, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	cur, err := c.nativeCurrent()
+	if err != nil {
+		return false, err
+	}
+	return c.applyOversample(cur.Name, on), nil
+}
+
+// applyOversample is SetSynthOversample's apply/cache/persist/publish
+// body. Callers hold applyMu and have passed the native-patch gate.
+func (c *Controls) applyOversample(patch string, on bool) bool {
+	c.mu.Lock()
+	c.synth.Oversample = on
+	c.mu.Unlock()
+	c.audio.SetNativeOversample(on)
+	c.persistSynth(patch)
+	c.publishSynth(patch, map[string]any{"field": "oversample", "oversample": on})
+	return on
+}
+
 // SynthPartial is a partial native-synth update: nil fields (and nil
 // sub-fields) keep their current values. It exists so partial PATCH
 // bodies merge over the live snapshot INSIDE the applyMu critical
 // section — a caller doing its own read-modify-write over Synth() would
 // race concurrent writers and silently lose their updates.
 type SynthPartial struct {
-	Resonance *float32
-	FilterEnv *FilterEnvPartial
-	Oscs      []OscPartial
-	Noise     *float32
-	Glide     *float32
+	Resonance  *float32
+	FilterEnv  *FilterEnvPartial
+	AmpEnv     *AmpEnvPartial
+	Oscs       []OscPartial
+	Noise      *float32
+	Glide      *float32
+	PulseWidth *float32
+	Drive      *float32
+	VelRouting *VelRoutingPartial
+	KbdTrack   *float32
+	LFO        *LFOPartial
+	BendRange  *float32
+	VoiceMode  *string
+	Oversample *bool
 }
 
 // FilterEnvPartial is SynthPartial's filter-envelope section; nil
 // fields keep the current envelope values.
 type FilterEnvPartial struct {
 	Attack, Decay, Sustain, Release, Amount *float32
+}
+
+// AmpEnvPartial is SynthPartial's amp-envelope section; nil fields keep
+// the current envelope values.
+type AmpEnvPartial struct {
+	Attack, Decay, Sustain, Release *float32
+}
+
+// VelRoutingPartial is SynthPartial's velocity-routing section; nil
+// fields keep the current amounts.
+type VelRoutingPartial struct {
+	ToCutoff, ToAmp *float32
+}
+
+// LFOPartial is SynthPartial's LFO section; nil fields keep the current
+// values (a nil Wave keeps the current wave, which is always valid).
+type LFOPartial struct {
+	Wave                              *string
+	RateHz, ToPitchCents, ToCutoffOct *float32
+	ToAmp                             *float32
 }
 
 // OscPartial is one oscillator's partial update. Index says which osc
@@ -749,9 +1235,11 @@ type OscPartial struct {
 // to different fields both survive. Each touched section runs the same
 // clamp/apply/cache/persist/publish sequence (and emits the same "synth"
 // change) as its SetSynth* counterpart, in a fixed order: resonance,
-// filter_env, noise, glide, then oscs. Osc index/wave are validated up
-// front so an invalid entry applies nothing. Returns the resulting
-// snapshot; errors unless a native patch is selected.
+// filter_env, amp_env, noise, glide, pulse_width, drive, vel_routing,
+// kbd_track, lfo, bend_range, voice_mode, oversample, then oscs. Osc
+// index/wave, the LFO wave, and the voice mode are validated up front
+// so an invalid entry applies nothing. Returns the resulting snapshot;
+// errors unless a native patch is selected.
 func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
@@ -769,6 +1257,16 @@ func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
 			if err := validateOsc(o.Index, *o.Wave); err != nil {
 				return SynthSnapshot{}, err
 			}
+		}
+	}
+	if p.LFO != nil && p.LFO.Wave != nil {
+		if err := validateLFOWave(*p.LFO.Wave); err != nil {
+			return SynthSnapshot{}, err
+		}
+	}
+	if p.VoiceMode != nil {
+		if err := validateVoiceMode(*p.VoiceMode); err != nil {
+			return SynthSnapshot{}, err
 		}
 	}
 
@@ -794,11 +1292,80 @@ func (c *Controls) MergeSynth(p SynthPartial) (SynthSnapshot, error) {
 		}
 		c.applyFilterEnv(cur.Name, fe)
 	}
+	if p.AmpEnv != nil {
+		ae := base.AmpEnv
+		if p.AmpEnv.Attack != nil {
+			ae.Attack = *p.AmpEnv.Attack
+		}
+		if p.AmpEnv.Decay != nil {
+			ae.Decay = *p.AmpEnv.Decay
+		}
+		if p.AmpEnv.Sustain != nil {
+			ae.Sustain = *p.AmpEnv.Sustain
+		}
+		if p.AmpEnv.Release != nil {
+			ae.Release = *p.AmpEnv.Release
+		}
+		c.applyAmpEnv(cur.Name, ae)
+	}
 	if p.Noise != nil {
 		c.applyNoise(cur.Name, *p.Noise)
 	}
 	if p.Glide != nil {
 		c.applyGlide(cur.Name, *p.Glide)
+	}
+	if p.PulseWidth != nil {
+		c.applyPulseWidth(cur.Name, *p.PulseWidth)
+	}
+	if p.Drive != nil {
+		c.applyDrive(cur.Name, *p.Drive)
+	}
+	if p.VelRouting != nil {
+		vr := base.VelRouting
+		if p.VelRouting.ToCutoff != nil {
+			vr.ToCutoff = *p.VelRouting.ToCutoff
+		}
+		if p.VelRouting.ToAmp != nil {
+			vr.ToAmp = *p.VelRouting.ToAmp
+		}
+		c.applyVelRouting(cur.Name, vr)
+	}
+	if p.KbdTrack != nil {
+		c.applyKbdTrack(cur.Name, *p.KbdTrack)
+	}
+	if p.LFO != nil {
+		l := base.LFO
+		if p.LFO.Wave != nil {
+			l.Wave = *p.LFO.Wave
+		}
+		if p.LFO.RateHz != nil {
+			l.RateHz = *p.LFO.RateHz
+		}
+		if p.LFO.ToPitchCents != nil {
+			l.ToPitchCents = *p.LFO.ToPitchCents
+		}
+		if p.LFO.ToCutoffOct != nil {
+			l.ToCutoffOct = *p.LFO.ToCutoffOct
+		}
+		if p.LFO.ToAmp != nil {
+			l.ToAmp = *p.LFO.ToAmp
+		}
+		if _, err := c.applyLFO(cur.Name, l); err != nil {
+			// Engine rejection mid-sequence: earlier sections stay applied
+			// and persisted; the LFO cache is untouched (applyOsc contract).
+			return SynthSnapshot{}, err
+		}
+	}
+	if p.BendRange != nil {
+		c.applyBendRange(cur.Name, *p.BendRange)
+	}
+	if p.VoiceMode != nil {
+		if _, err := c.applyVoiceMode(cur.Name, *p.VoiceMode); err != nil {
+			return SynthSnapshot{}, err
+		}
+	}
+	if p.Oversample != nil {
+		c.applyOversample(cur.Name, *p.Oversample)
 	}
 	for _, o := range p.Oscs {
 		m := base.Oscs[o.Index]

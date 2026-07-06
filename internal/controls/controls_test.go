@@ -19,6 +19,13 @@ type oscCall struct {
 	detune, level float32
 }
 
+// lfoCall records one SetNativeLFO apply for assertion.
+type lfoCall struct {
+	wave                              string
+	rateHz, toPitchCents, toCutoffOct float32
+	toAmp                             float32
+}
+
 // fakeAudio records every apply so tests can assert the controls layer
 // actually drove the engine (mirrors internal/patches's fakeAudio style).
 type fakeAudio struct {
@@ -29,13 +36,27 @@ type fakeAudio struct {
 	masteringComp, limiterCeilingDB  float32
 	resonance, noise, glide          float32
 	feA, feD, feS, feR, feAmt        float32
+	aeA, aeD, aeS, aeR               float32
+	pulseWidth, drive                float32
+	velToCutoff, velToAmp            float32
+	kbdTrack, bendRange              float32
+	lastLFO                          lfoCall
+	voiceMode                        string
+	oversample                       bool
 	lastOsc                          oscCall
 	oscErr                           error // forced SetNativeOsc failure
+	lfoErr                           error // forced SetNativeLFO failure
+	voiceModeErr                     error // forced SetNativeVoiceMode failure
 	volumeCalls, reverbCalls         int
 	compressorCalls, cutoffCalls     int
 	masteringCalls, limiterCalls     int
 	resonanceCalls, filterEnvCalls   int
 	oscCalls, noiseCalls, glideCalls int
+	ampEnvCalls, pulseWidthCalls     int
+	driveCalls, velRoutingCalls      int
+	kbdTrackCalls, lfoCalls          int
+	bendRangeCalls, voiceModeCalls   int
+	oversampleCalls                  int
 }
 
 func (f *fakeAudio) SetMasterVolume(v float32) {
@@ -119,11 +140,84 @@ func (f *fakeAudio) SetNativeGlide(s float32) {
 	f.glideCalls++
 }
 
+func (f *fakeAudio) SetNativeAmpEnv(a, d, s, r float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.aeA, f.aeD, f.aeS, f.aeR = a, d, s, r
+	f.ampEnvCalls++
+}
+
+func (f *fakeAudio) SetNativePulseWidth(w float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pulseWidth = w
+	f.pulseWidthCalls++
+}
+
+func (f *fakeAudio) SetNativeDrive(d float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drive = d
+	f.driveCalls++
+}
+
+func (f *fakeAudio) SetNativeVelRouting(toCutoff, toAmp float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.velToCutoff, f.velToAmp = toCutoff, toAmp
+	f.velRoutingCalls++
+}
+
+func (f *fakeAudio) SetNativeKbdTrack(amt float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.kbdTrack = amt
+	f.kbdTrackCalls++
+}
+
+func (f *fakeAudio) SetNativeLFO(wave string, rateHz, toPitchCents, toCutoffOct, toAmp float32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lfoErr != nil {
+		return f.lfoErr
+	}
+	f.lastLFO = lfoCall{wave: wave, rateHz: rateHz, toPitchCents: toPitchCents, toCutoffOct: toCutoffOct, toAmp: toAmp}
+	f.lfoCalls++
+	return nil
+}
+
+func (f *fakeAudio) SetNativeBendRange(st float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bendRange = st
+	f.bendRangeCalls++
+}
+
+func (f *fakeAudio) SetNativeVoiceMode(mode string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.voiceModeErr != nil {
+		return f.voiceModeErr
+	}
+	f.voiceMode = mode
+	f.voiceModeCalls++
+	return nil
+}
+
+func (f *fakeAudio) SetNativeOversample(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oversample = on
+	f.oversampleCalls++
+}
+
 // synthCalls sums every native-synth apply, for "audio untouched" checks.
 func (f *fakeAudio) synthCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.resonanceCalls + f.filterEnvCalls + f.oscCalls + f.noiseCalls + f.glideCalls
+	return f.resonanceCalls + f.filterEnvCalls + f.oscCalls + f.noiseCalls + f.glideCalls +
+		f.ampEnvCalls + f.pulseWidthCalls + f.driveCalls + f.velRoutingCalls + f.kbdTrackCalls +
+		f.lfoCalls + f.bendRangeCalls + f.voiceModeCalls + f.oversampleCalls
 }
 
 // fakeRegistry implements Registry over an in-memory patch list with no
@@ -959,13 +1053,22 @@ func TestSnapshotNoPatch(t *testing.T) {
 var defaultSynthWant = SynthSnapshot{
 	Resonance: 0.3,
 	FilterEnv: FilterEnv{Attack: 0.005, Decay: 0.6, Sustain: 0.4, Release: 0.6, Amount: 0},
+	AmpEnv:    AmpEnv{Attack: 0.005, Decay: 0.2, Sustain: 0.7, Release: 0.4},
 	Oscs: [3]OscParams{
 		{Wave: "saw", Octave: 0, DetuneCents: 0, Level: 1.0},
 		{Wave: "saw", Octave: 0, DetuneCents: -7, Level: 0.0},
 		{Wave: "saw", Octave: -1, DetuneCents: 5, Level: 0.0},
 	},
-	Noise: 0,
-	Glide: 0,
+	Noise:      0,
+	Glide:      0,
+	PulseWidth: 0.25,
+	Drive:      0,
+	VelRouting: VelRouting{ToCutoff: 0, ToAmp: 1},
+	KbdTrack:   0,
+	LFO:        LFO{Wave: "triangle", RateHz: 5, ToPitchCents: 0, ToCutoffOct: 0, ToAmp: 0},
+	BendRange:  2,
+	VoiceMode:  "mono_legato",
+	Oversample: false,
 }
 
 func TestSynthDefaults(t *testing.T) {
@@ -985,11 +1088,20 @@ func TestSynthDefaults(t *testing.T) {
 // the gating test.
 func synthSetters(c *Controls) map[string]func() error {
 	return map[string]func() error{
-		"SetSynthResonance": func() error { _, err := c.SetSynthResonance(0.5); return err },
-		"SetSynthFilterEnv": func() error { _, err := c.SetSynthFilterEnv(0.01, 0.5, 0.5, 0.5, 0.3); return err },
-		"SetSynthOsc":       func() error { _, err := c.SetSynthOsc(0, "saw", 0, 0, 1); return err },
-		"SetSynthNoise":     func() error { _, err := c.SetSynthNoise(0.2); return err },
-		"SetSynthGlide":     func() error { _, err := c.SetSynthGlide(0.1); return err },
+		"SetSynthResonance":  func() error { _, err := c.SetSynthResonance(0.5); return err },
+		"SetSynthFilterEnv":  func() error { _, err := c.SetSynthFilterEnv(0.01, 0.5, 0.5, 0.5, 0.3); return err },
+		"SetSynthOsc":        func() error { _, err := c.SetSynthOsc(0, "saw", 0, 0, 1); return err },
+		"SetSynthNoise":      func() error { _, err := c.SetSynthNoise(0.2); return err },
+		"SetSynthGlide":      func() error { _, err := c.SetSynthGlide(0.1); return err },
+		"SetSynthAmpEnv":     func() error { _, err := c.SetSynthAmpEnv(0.01, 0.3, 0.6, 0.5); return err },
+		"SetSynthPulseWidth": func() error { _, err := c.SetSynthPulseWidth(0.5); return err },
+		"SetSynthDrive":      func() error { _, err := c.SetSynthDrive(0.4); return err },
+		"SetSynthVelRouting": func() error { _, err := c.SetSynthVelRouting(0.5, 0.5); return err },
+		"SetSynthKbdTrack":   func() error { _, err := c.SetSynthKbdTrack(0.7); return err },
+		"SetSynthLFO":        func() error { _, err := c.SetSynthLFO("triangle", 5, 10, 0.5, 0.2); return err },
+		"SetSynthBendRange":  func() error { _, err := c.SetSynthBendRange(7); return err },
+		"SetSynthVoiceMode":  func() error { _, err := c.SetSynthVoiceMode("poly"); return err },
+		"SetSynthOversample": func() error { _, err := c.SetSynthOversample(true); return err },
 	}
 }
 
@@ -1214,6 +1326,282 @@ func TestSetSynthNoiseAndGlide(t *testing.T) {
 	}
 }
 
+func TestSetSynthAmpEnv(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	ae, err := f.c.SetSynthAmpEnv(0.01, 0.3, 0.6, 0.5)
+	if err != nil {
+		t.Fatalf("SetSynthAmpEnv: %v", err)
+	}
+	want := AmpEnv{Attack: 0.01, Decay: 0.3, Sustain: 0.6, Release: 0.5}
+	if ae != want {
+		t.Errorf("returned env: want %+v, got %+v", want, ae)
+	}
+	if f.audio.aeA != 0.01 || f.audio.aeD != 0.3 || f.audio.aeS != 0.6 || f.audio.aeR != 0.5 {
+		t.Errorf("audio env: unexpected (%v %v %v %v)", f.audio.aeA, f.audio.aeD, f.audio.aeS, f.audio.aeR)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "amp_env" {
+		t.Errorf("expected synth/amp_env change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+	aeData, ok := ch.Data["amp_env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested amp_env map, got %T", ch.Data["amp_env"])
+	}
+	if aeData["attack"] != float32(0.01) || aeData["sustain"] != float32(0.6) {
+		t.Errorf("unexpected amp_env data: %v", aeData)
+	}
+	if _, present := aeData["amount"]; present {
+		t.Error("amp_env must not carry an amount key")
+	}
+
+	// Clamps: times to [0.0001, 10], sustain to [0, 1].
+	ae, err = f.c.SetSynthAmpEnv(0, 99, 1.5, -3)
+	if err != nil {
+		t.Fatalf("SetSynthAmpEnv (clamping): %v", err)
+	}
+	want = AmpEnv{Attack: 0.0001, Decay: 10, Sustain: 1, Release: 0.0001}
+	if ae != want {
+		t.Errorf("clamped env: want %+v, got %+v", want, ae)
+	}
+	if f.c.Synth().AmpEnv != want {
+		t.Errorf("cache env: want %+v, got %+v", want, f.c.Synth().AmpEnv)
+	}
+}
+
+func TestSetSynthScalarClamps(t *testing.T) {
+	cases := []struct {
+		name    string
+		set     func(c *Controls, v float32) (float32, error)
+		audioV  func(a *fakeAudio) float32
+		field   string
+		in      float32
+		want    float32
+		inLow   float32
+		wantLow float32
+	}{
+		{"pulse_width", (*Controls).SetSynthPulseWidth,
+			func(a *fakeAudio) float32 { return a.pulseWidth },
+			"pulse_width", 2.0, 0.95, -1, 0.05},
+		{"drive", (*Controls).SetSynthDrive,
+			func(a *fakeAudio) float32 { return a.drive },
+			"drive", 1.5, 1, -0.5, 0},
+		{"kbd_track", (*Controls).SetSynthKbdTrack,
+			func(a *fakeAudio) float32 { return a.kbdTrack },
+			"kbd_track", 1.5, 1, -0.5, 0},
+		{"bend_range", (*Controls).SetSynthBendRange,
+			func(a *fakeAudio) float32 { return a.bendRange },
+			"bend_range", 24, 12, -3, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, nativePatch)
+			selectNative(t, f)
+
+			// Mid-range value applies verbatim and publishes.
+			mid := (tc.want + tc.wantLow) / 2
+			got, err := tc.set(f.c, mid)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if got != mid || tc.audioV(f.audio) != mid {
+				t.Errorf("expected %v returned and applied, got %v / %v", mid, got, tc.audioV(f.audio))
+			}
+			ch := recvChange(t, f.ch)
+			if ch.Type != "synth" || ch.Data["field"] != tc.field {
+				t.Errorf("expected synth/%s change, got %q/%v", tc.field, ch.Type, ch.Data["field"])
+			}
+			if ch.Data[tc.field] != mid || ch.Data["patch"] != "moog" {
+				t.Errorf("unexpected change data: %v", ch.Data)
+			}
+
+			// Clamps both ways.
+			if got, _ := tc.set(f.c, tc.in); got != tc.want {
+				t.Errorf("clamp high: expected %v, got %v", tc.want, got)
+			}
+			if got, _ := tc.set(f.c, tc.inLow); got != tc.wantLow {
+				t.Errorf("clamp low: expected %v, got %v", tc.wantLow, got)
+			}
+			if v := tc.audioV(f.audio); v != tc.wantLow {
+				t.Errorf("audio after clamps: expected %v, got %v", tc.wantLow, v)
+			}
+		})
+	}
+}
+
+func TestSetSynthVelRouting(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	vr, err := f.c.SetSynthVelRouting(0.5, 0.8)
+	if err != nil {
+		t.Fatalf("SetSynthVelRouting: %v", err)
+	}
+	if vr != (VelRouting{ToCutoff: 0.5, ToAmp: 0.8}) {
+		t.Errorf("returned routing: unexpected %+v", vr)
+	}
+	if f.audio.velToCutoff != 0.5 || f.audio.velToAmp != 0.8 {
+		t.Errorf("audio routing: unexpected (%v, %v)", f.audio.velToCutoff, f.audio.velToAmp)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "vel_routing" {
+		t.Errorf("expected synth/vel_routing change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+	vrData, ok := ch.Data["vel_routing"].(map[string]any)
+	if !ok || vrData["to_cutoff"] != float32(0.5) || vrData["to_amp"] != float32(0.8) {
+		t.Errorf("unexpected vel_routing data: %v", ch.Data["vel_routing"])
+	}
+
+	// Both clamp to [0, 1].
+	vr, err = f.c.SetSynthVelRouting(-1, 2)
+	if err != nil {
+		t.Fatalf("SetSynthVelRouting (clamping): %v", err)
+	}
+	if vr != (VelRouting{ToCutoff: 0, ToAmp: 1}) {
+		t.Errorf("clamped routing: unexpected %+v", vr)
+	}
+	if f.c.Synth().VelRouting != vr {
+		t.Errorf("cache routing: want %+v, got %+v", vr, f.c.Synth().VelRouting)
+	}
+}
+
+func TestSetSynthLFO(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	l, err := f.c.SetSynthLFO("square", 8, 25, 1.5, 0.4)
+	if err != nil {
+		t.Fatalf("SetSynthLFO: %v", err)
+	}
+	want := LFO{Wave: "square", RateHz: 8, ToPitchCents: 25, ToCutoffOct: 1.5, ToAmp: 0.4}
+	if l != want {
+		t.Errorf("returned lfo: want %+v, got %+v", want, l)
+	}
+	if f.audio.lastLFO != (lfoCall{wave: "square", rateHz: 8, toPitchCents: 25, toCutoffOct: 1.5, toAmp: 0.4}) {
+		t.Errorf("audio lfo: unexpected %+v", f.audio.lastLFO)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "lfo" {
+		t.Errorf("expected synth/lfo change, got %q/%v", ch.Type, ch.Data["field"])
+	}
+	lData, ok := ch.Data["lfo"].(map[string]any)
+	if !ok || lData["wave"] != "square" || lData["rate_hz"] != float32(8) {
+		t.Errorf("unexpected lfo data: %v", ch.Data["lfo"])
+	}
+
+	// Clamps: rate to [0.05, 20], pitch to [0, 100], cutoff to [0, 2],
+	// amp to [0, 1].
+	l, err = f.c.SetSynthLFO("sh", 99, -5, 7, 2)
+	if err != nil {
+		t.Fatalf("SetSynthLFO (clamping): %v", err)
+	}
+	want = LFO{Wave: "sh", RateHz: 20, ToPitchCents: 0, ToCutoffOct: 2, ToAmp: 1}
+	if l != want {
+		t.Errorf("clamped lfo: want %+v, got %+v", want, l)
+	}
+	if got, _ := f.c.SetSynthLFO("triangle", 0.001, 0, 0, 0); got.RateHz != 0.05 {
+		t.Errorf("rate clamp low: expected 0.05, got %v", got.RateHz)
+	}
+	for range 2 {
+		recvChange(t, f.ch) // drain the two clamp publishes
+	}
+
+	// Validation: unknown wave applies nothing.
+	before := f.c.Synth()
+	calls := f.audio.synthCalls()
+	if _, err := f.c.SetSynthLFO("sine", 5, 0, 0, 0); err == nil {
+		t.Error("expected error for unknown lfo wave")
+	}
+	if f.audio.synthCalls() != calls {
+		t.Error("audio must not be touched on a validation error")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on a validation error")
+	}
+	assertNoChange(t, f.ch)
+
+	// An engine-side failure propagates and leaves the cache alone.
+	f.audio.lfoErr = errors.New("boom")
+	if _, err := f.c.SetSynthLFO("triangle", 5, 0, 0, 0); err == nil {
+		t.Error("expected engine error to propagate")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on engine error")
+	}
+	assertNoChange(t, f.ch)
+}
+
+func TestSetSynthVoiceMode(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	for _, mode := range []string{"mono_retrig", "poly", "mono_legato"} {
+		got, err := f.c.SetSynthVoiceMode(mode)
+		if err != nil {
+			t.Fatalf("SetSynthVoiceMode(%q): %v", mode, err)
+		}
+		if got != mode || f.audio.voiceMode != mode {
+			t.Errorf("expected %q returned and applied, got %q / %q", mode, got, f.audio.voiceMode)
+		}
+		ch := recvChange(t, f.ch)
+		if ch.Type != "synth" || ch.Data["field"] != "voice_mode" || ch.Data["voice_mode"] != mode {
+			t.Errorf("unexpected voice_mode change: %q/%v", ch.Type, ch.Data)
+		}
+	}
+	if f.c.Synth().VoiceMode != "mono_legato" {
+		t.Errorf("cache: expected mono_legato, got %q", f.c.Synth().VoiceMode)
+	}
+
+	// Validation: unknown mode applies nothing.
+	before := f.c.Synth()
+	calls := f.audio.synthCalls()
+	if _, err := f.c.SetSynthVoiceMode("duophonic"); err == nil {
+		t.Error("expected error for unknown voice mode")
+	}
+	if f.audio.synthCalls() != calls || f.c.Synth() != before {
+		t.Error("nothing may change on a validation error")
+	}
+	assertNoChange(t, f.ch)
+
+	// An engine-side failure propagates and leaves the cache alone.
+	f.audio.voiceModeErr = errors.New("boom")
+	if _, err := f.c.SetSynthVoiceMode("poly"); err == nil {
+		t.Error("expected engine error to propagate")
+	}
+	if f.c.Synth() != before {
+		t.Error("cache must not change on engine error")
+	}
+	assertNoChange(t, f.ch)
+}
+
+func TestSetSynthOversample(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	got, err := f.c.SetSynthOversample(true)
+	if err != nil || got != true {
+		t.Fatalf("SetSynthOversample: got %v, err %v", got, err)
+	}
+	if !f.audio.oversample {
+		t.Error("audio: expected oversample on")
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "synth" || ch.Data["field"] != "oversample" || ch.Data["oversample"] != true {
+		t.Errorf("unexpected oversample change: %q/%v", ch.Type, ch.Data)
+	}
+	if !f.c.Synth().Oversample {
+		t.Error("cache: expected oversample on")
+	}
+
+	if got, _ := f.c.SetSynthOversample(false); got {
+		t.Error("expected oversample off")
+	}
+	if f.audio.oversample || f.c.Synth().Oversample {
+		t.Error("audio/cache: expected oversample off")
+	}
+}
+
 // TestSynthPerPatchPersistence pins the ROADMAP §3 contract end to end:
 // tweak patch A, select fresh patch B (factory defaults hit the engine),
 // re-select A (A's tweaks come back), with every step flowing through
@@ -1301,11 +1689,20 @@ func TestSynthPerPatchPersistence(t *testing.T) {
 // writes the resulting whole-block snapshot to the state store.
 func TestSynthMutationsPersist(t *testing.T) {
 	mutations := map[string]func(c *Controls) error{
-		"SetSynthResonance": func(c *Controls) error { _, err := c.SetSynthResonance(0.5); return err },
-		"SetSynthFilterEnv": func(c *Controls) error { _, err := c.SetSynthFilterEnv(0.01, 0.5, 0.5, 0.5, 0.3); return err },
-		"SetSynthOsc":       func(c *Controls) error { _, err := c.SetSynthOsc(1, "square", 1, -7, 0.6); return err },
-		"SetSynthNoise":     func(c *Controls) error { _, err := c.SetSynthNoise(0.2); return err },
-		"SetSynthGlide":     func(c *Controls) error { _, err := c.SetSynthGlide(0.1); return err },
+		"SetSynthResonance":  func(c *Controls) error { _, err := c.SetSynthResonance(0.5); return err },
+		"SetSynthFilterEnv":  func(c *Controls) error { _, err := c.SetSynthFilterEnv(0.01, 0.5, 0.5, 0.5, 0.3); return err },
+		"SetSynthOsc":        func(c *Controls) error { _, err := c.SetSynthOsc(1, "square", 1, -7, 0.6); return err },
+		"SetSynthNoise":      func(c *Controls) error { _, err := c.SetSynthNoise(0.2); return err },
+		"SetSynthGlide":      func(c *Controls) error { _, err := c.SetSynthGlide(0.1); return err },
+		"SetSynthAmpEnv":     func(c *Controls) error { _, err := c.SetSynthAmpEnv(0.01, 0.3, 0.6, 0.5); return err },
+		"SetSynthPulseWidth": func(c *Controls) error { _, err := c.SetSynthPulseWidth(0.5); return err },
+		"SetSynthDrive":      func(c *Controls) error { _, err := c.SetSynthDrive(0.4); return err },
+		"SetSynthVelRouting": func(c *Controls) error { _, err := c.SetSynthVelRouting(0.5, 0.5); return err },
+		"SetSynthKbdTrack":   func(c *Controls) error { _, err := c.SetSynthKbdTrack(0.7); return err },
+		"SetSynthLFO":        func(c *Controls) error { _, err := c.SetSynthLFO("saw", 3, 10, 0.5, 0.2); return err },
+		"SetSynthBendRange":  func(c *Controls) error { _, err := c.SetSynthBendRange(7); return err },
+		"SetSynthVoiceMode":  func(c *Controls) error { _, err := c.SetSynthVoiceMode("poly"); return err },
+		"SetSynthOversample": func(c *Controls) error { _, err := c.SetSynthOversample(true); return err },
 		"MergeSynth": func(c *Controls) error {
 			_, err := c.MergeSynth(SynthPartial{Noise: fp(0.4), Oscs: []OscPartial{{Index: 0, Level: fp(0.3)}}})
 			return err
@@ -1337,13 +1734,22 @@ func TestSelectPatchSanitizesStoredSynth(t *testing.T) {
 	f.st.synths["moog"] = state.SynthState{
 		Resonance: 2.0, // > maxResonance
 		FilterEnv: state.FilterEnvState{Attack: -1, Decay: 99, Sustain: 2, Release: 0, Amount: -3},
+		AmpEnv:    state.AmpEnvState{Attack: -1, Decay: 99, Sustain: 2, Release: 0},
 		Oscs: [3]state.OscState{
 			{Wave: "sine", Octave: 9, DetuneCents: 999, Level: 7}, // invalid wave + out of range
 			{Wave: "square", Octave: -2, DetuneCents: -7, Level: 0.5},
 			{Wave: "pulse", Octave: 1, DetuneCents: 3, Level: 0.25},
 		},
-		Noise: -0.5,
-		Glide: 99,
+		Noise:      -0.5,
+		Glide:      99,
+		PulseWidth: 0.01, // < minPulseWidth
+		Drive:      7,
+		VelRouting: state.VelRoutingState{ToCutoff: -1, ToAmp: 9},
+		KbdTrack:   -2,
+		LFO:        state.LFOState{Wave: "sine", RateHz: 999, ToPitchCents: -1, ToCutoffOct: 9, ToAmp: 2},
+		BendRange:  99,
+		VoiceMode:  "duophonic", // invalid → factory default
+		Oversample: true,
 	}
 
 	if err := f.c.SelectPatch("moog"); err != nil {
@@ -1358,14 +1764,40 @@ func TestSelectPatchSanitizesStoredSynth(t *testing.T) {
 	if s.FilterEnv != want {
 		t.Errorf("filter env: want %+v, got %+v", want, s.FilterEnv)
 	}
+	if wantAE := (AmpEnv{Attack: 0.0001, Decay: 10, Sustain: 1, Release: 0.0001}); s.AmpEnv != wantAE {
+		t.Errorf("amp env: want %+v, got %+v", wantAE, s.AmpEnv)
+	}
 	if wantOsc := (OscParams{Wave: "saw", Octave: 2, DetuneCents: 100, Level: 1}); s.Oscs[0] != wantOsc {
 		t.Errorf("osc 0: want sanitized %+v, got %+v", wantOsc, s.Oscs[0])
 	}
 	if s.Noise != 0 || s.Glide != 5 {
 		t.Errorf("noise/glide: want (0, 5), got (%v, %v)", s.Noise, s.Glide)
 	}
+	if s.PulseWidth != 0.05 || s.Drive != 1 || s.KbdTrack != 0 || s.BendRange != 12 {
+		t.Errorf("scalars: want (0.05, 1, 0, 12), got (%v, %v, %v, %v)",
+			s.PulseWidth, s.Drive, s.KbdTrack, s.BendRange)
+	}
+	if s.VelRouting != (VelRouting{ToCutoff: 0, ToAmp: 1}) {
+		t.Errorf("vel routing: want clamped (0, 1), got %+v", s.VelRouting)
+	}
+	if wantLFO := (LFO{Wave: "triangle", RateHz: 20, ToPitchCents: 0, ToCutoffOct: 2, ToAmp: 1}); s.LFO != wantLFO {
+		t.Errorf("lfo: want sanitized %+v, got %+v", wantLFO, s.LFO)
+	}
+	if s.VoiceMode != "mono_legato" {
+		t.Errorf("voice mode: want factory fallback mono_legato, got %q", s.VoiceMode)
+	}
+	if !s.Oversample {
+		t.Error("oversample: want stored true preserved")
+	}
 	if f.audio.resonance != 0.95 || f.audio.glide != 5 {
 		t.Errorf("engine: want clamped (0.95, 5), got (%v, %v)", f.audio.resonance, f.audio.glide)
+	}
+	if f.audio.pulseWidth != 0.05 || f.audio.drive != 1 || f.audio.bendRange != 12 {
+		t.Errorf("engine: want clamped (0.05, 1, 12), got (%v, %v, %v)",
+			f.audio.pulseWidth, f.audio.drive, f.audio.bendRange)
+	}
+	if f.audio.voiceMode != "mono_legato" || !f.audio.oversample {
+		t.Errorf("engine: want (mono_legato, true), got (%q, %v)", f.audio.voiceMode, f.audio.oversample)
 	}
 }
 
@@ -1544,6 +1976,147 @@ func TestMergeSynthEngineErrorPropagates(t *testing.T) {
 		t.Error("cache must not change on engine error")
 	}
 	assertNoChange(t, f.ch)
+}
+
+func bp(b bool) *bool { return &b }
+
+func TestMergeSynthPhase34Partials(t *testing.T) {
+	f := newFixture(t, nativePatch)
+	selectNative(t, f)
+
+	// amp_env: attack only — every other env field keeps its default.
+	syn, err := f.c.MergeSynth(SynthPartial{AmpEnv: &AmpEnvPartial{Attack: fp(0.05)}})
+	if err != nil {
+		t.Fatalf("MergeSynth(amp_env.attack): %v", err)
+	}
+	wantAE := defaultSynthWant.AmpEnv
+	wantAE.Attack = 0.05
+	if syn.AmpEnv != wantAE {
+		t.Errorf("amp env: want %+v, got %+v", wantAE, syn.AmpEnv)
+	}
+	if f.audio.aeA != 0.05 || f.audio.aeD != 0.2 {
+		t.Errorf("audio amp env: expected attack 0.05 with default decay 0.2, got %v/%v", f.audio.aeA, f.audio.aeD)
+	}
+	recvChange(t, f.ch)
+
+	// vel_routing: to_cutoff only — to_amp keeps its default 1 (the
+	// classic vel/127 must not silently mute).
+	syn, err = f.c.MergeSynth(SynthPartial{VelRouting: &VelRoutingPartial{ToCutoff: fp(0.4)}})
+	if err != nil {
+		t.Fatalf("MergeSynth(vel_routing.to_cutoff): %v", err)
+	}
+	if syn.VelRouting != (VelRouting{ToCutoff: 0.4, ToAmp: 1}) {
+		t.Errorf("vel routing: want to_amp preserved at 1, got %+v", syn.VelRouting)
+	}
+	recvChange(t, f.ch)
+
+	// lfo: rate only — wave and the depths keep their values.
+	syn, err = f.c.MergeSynth(SynthPartial{LFO: &LFOPartial{RateHz: fp(2.5)}})
+	if err != nil {
+		t.Fatalf("MergeSynth(lfo.rate_hz): %v", err)
+	}
+	wantLFO := defaultSynthWant.LFO
+	wantLFO.RateHz = 2.5
+	if syn.LFO != wantLFO {
+		t.Errorf("lfo: want %+v, got %+v", wantLFO, syn.LFO)
+	}
+	if f.audio.lastLFO.wave != "triangle" || f.audio.lastLFO.rateHz != 2.5 {
+		t.Errorf("audio lfo: expected triangle/2.5, got %+v", f.audio.lastLFO)
+	}
+	recvChange(t, f.ch)
+
+	// Multi-section body: voice_mode + oversample + scalars, one publish
+	// per touched section (like the individual setters).
+	syn, err = f.c.MergeSynth(SynthPartial{
+		PulseWidth: fp(0.5),
+		Drive:      fp(2), // clamps to 1
+		KbdTrack:   fp(0.6),
+		BendRange:  fp(12.5), // clamps to 12
+		VoiceMode:  sp("poly"),
+		Oversample: bp(true),
+	})
+	if err != nil {
+		t.Fatalf("MergeSynth(multi): %v", err)
+	}
+	if syn.PulseWidth != 0.5 || syn.Drive != 1 || syn.KbdTrack != 0.6 || syn.BendRange != 12 {
+		t.Errorf("scalars: want (0.5, 1, 0.6, 12), got (%v, %v, %v, %v)",
+			syn.PulseWidth, syn.Drive, syn.KbdTrack, syn.BendRange)
+	}
+	if syn.VoiceMode != "poly" || !syn.Oversample {
+		t.Errorf("voice_mode/oversample: want poly/true, got %q/%v", syn.VoiceMode, syn.Oversample)
+	}
+	if f.audio.voiceMode != "poly" || !f.audio.oversample {
+		t.Errorf("audio: want poly/true, got %q/%v", f.audio.voiceMode, f.audio.oversample)
+	}
+	if f.c.Synth() != syn {
+		t.Errorf("returned snapshot must match the cache: %+v vs %+v", syn, f.c.Synth())
+	}
+	for i := 0; i < 6; i++ { // pulse_width, drive, kbd_track, bend_range, voice_mode, oversample
+		if ch := recvChange(t, f.ch); ch.Type != "synth" {
+			t.Errorf("change %d: expected type synth, got %q", i, ch.Type)
+		}
+	}
+	assertNoChange(t, f.ch)
+}
+
+func TestMergeSynthValidatesLFOWaveAndVoiceModeUpFront(t *testing.T) {
+	for name, p := range map[string]SynthPartial{
+		"bad lfo wave":   {Resonance: fp(0.5), LFO: &LFOPartial{Wave: sp("sine")}},
+		"bad voice mode": {Resonance: fp(0.5), VoiceMode: sp("duophonic")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, nativePatch)
+			selectNative(t, f)
+			if _, err := f.c.MergeSynth(p); err == nil {
+				t.Fatal("expected a validation error")
+			}
+			// Validation runs up front, so nothing — not even the valid
+			// resonance section — may have been applied.
+			if f.audio.synthCalls() != 0 {
+				t.Error("audio must not be touched on a validation error")
+			}
+			if got := f.c.Synth(); got != defaultSynthWant {
+				t.Errorf("cache must not change on a validation error, got %+v", got)
+			}
+			assertNoChange(t, f.ch)
+		})
+	}
+}
+
+func TestMergeSynthLFOAndVoiceModeEngineErrorsPropagate(t *testing.T) {
+	t.Run("lfo", func(t *testing.T) {
+		f := newFixture(t, nativePatch)
+		selectNative(t, f)
+		f.audio.lfoErr = errors.New("boom")
+		before := f.c.Synth()
+		if _, err := f.c.MergeSynth(SynthPartial{LFO: &LFOPartial{RateHz: fp(3)}}); err == nil {
+			t.Fatal("expected engine error to propagate")
+		}
+		if f.c.Synth() != before {
+			t.Error("cache must not change on engine error")
+		}
+		assertNoChange(t, f.ch)
+	})
+	t.Run("voice mode", func(t *testing.T) {
+		f := newFixture(t, nativePatch)
+		selectNative(t, f)
+		f.audio.voiceModeErr = errors.New("boom")
+		before := f.c.Synth()
+		if _, err := f.c.MergeSynth(SynthPartial{VoiceMode: sp("poly")}); err == nil {
+			t.Fatal("expected engine error to propagate")
+		}
+		if f.c.Synth() != before {
+			t.Error("cache must not change on engine error")
+		}
+		// Earlier sections in the same body stay applied (documented
+		// mid-sequence semantics) — a resonance riding along landed.
+		if _, err := f.c.MergeSynth(SynthPartial{Resonance: fp(0.5), VoiceMode: sp("poly")}); err == nil {
+			t.Fatal("expected engine error to propagate")
+		}
+		if f.audio.resonance != 0.5 || f.c.Synth().Resonance != 0.5 {
+			t.Errorf("earlier section must stay applied: audio=%v cache=%v", f.audio.resonance, f.c.Synth().Resonance)
+		}
+	})
 }
 
 // ---- writer-serialization probes (C2/C3) ------------------------------------

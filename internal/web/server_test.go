@@ -32,6 +32,14 @@ type fakeAudio struct {
 	masteringComp, limiterCeilingDB float32
 	resonance, noise, glide         float32
 	feAttack, feAmount              float32
+	aeAttack, aeSustain             float32
+	pulseWidth, drive               float32
+	velToCutoff, velToAmp           float32
+	kbdTrack, bendRange             float32
+	lfoWave                         string
+	lfoRateHz, lfoToPitchCents      float32
+	voiceMode                       string
+	oversample                      bool
 	oscCalls                        int
 }
 
@@ -85,10 +93,78 @@ func (f *fakeAudio) SetNativeGlide(s float32) {
 	f.glide = s
 }
 
+func (f *fakeAudio) SetNativeAmpEnv(a, d, s, r float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.aeAttack, f.aeSustain = a, s
+}
+
+func (f *fakeAudio) SetNativePulseWidth(w float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pulseWidth = w
+}
+
+func (f *fakeAudio) SetNativeDrive(d float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drive = d
+}
+
+func (f *fakeAudio) SetNativeVelRouting(toCutoff, toAmp float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.velToCutoff, f.velToAmp = toCutoff, toAmp
+}
+
+func (f *fakeAudio) SetNativeKbdTrack(amt float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.kbdTrack = amt
+}
+
+func (f *fakeAudio) SetNativeLFO(wave string, rateHz, toPitchCents, _, _ float32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lfoWave, f.lfoRateHz, f.lfoToPitchCents = wave, rateHz, toPitchCents
+	return nil
+}
+
+func (f *fakeAudio) SetNativeBendRange(st float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bendRange = st
+}
+
+func (f *fakeAudio) SetNativeVoiceMode(mode string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.voiceMode = mode
+	return nil
+}
+
+func (f *fakeAudio) SetNativeOversample(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.oversample = on
+}
+
 func (f *fakeAudio) getOscCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.oscCalls
+}
+
+func (f *fakeAudio) getVoiceMode() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.voiceMode
+}
+
+func (f *fakeAudio) getOversample() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.oversample
 }
 
 func (f *fakeAudio) get(field string) float32 {
@@ -117,6 +193,26 @@ func (f *fakeAudio) get(field string) float32 {
 		return f.feAttack
 	case "feAmount":
 		return f.feAmount
+	case "aeAttack":
+		return f.aeAttack
+	case "aeSustain":
+		return f.aeSustain
+	case "pulseWidth":
+		return f.pulseWidth
+	case "drive":
+		return f.drive
+	case "velToCutoff":
+		return f.velToCutoff
+	case "velToAmp":
+		return f.velToAmp
+	case "kbdTrack":
+		return f.kbdTrack
+	case "bendRange":
+		return f.bendRange
+	case "lfoRateHz":
+		return f.lfoRateHz
+	case "lfoToPitchCents":
+		return f.lfoToPitchCents
 	}
 	return 0
 }
@@ -720,6 +816,11 @@ func TestSynthPatchConflictWithoutNativePatch(t *testing.T) {
 		{"resonance": 0.5},
 		{"filter_env": map[string]any{"attack": 0.1}},
 		{"osc": []map[string]any{{"index": 0, "level": 0.5}}},
+		{"voice_mode": "poly"},
+		{"oversample": true},
+		{"lfo": map[string]any{"rate_hz": 3.0}},
+		{"amp_env": map[string]any{"attack": 0.1}},
+		{"drive": 0.4},
 	}
 	t.Run("no patch selected", func(t *testing.T) {
 		f := newFixture(t, nil)
@@ -771,6 +872,26 @@ func TestSynthPatchValidation(t *testing.T) {
 		"osc octave high":     map[string]any{"osc": []map[string]any{{"index": 0, "octave": 3}}},
 		"osc detune high":     map[string]any{"osc": []map[string]any{{"index": 0, "detune_cents": 101.0}}},
 		"osc level high":      map[string]any{"osc": []map[string]any{{"index": 0, "level": 1.5}}},
+
+		// Phase 3/4 fields.
+		"pulse_width low":          map[string]any{"pulse_width": 0.01},
+		"pulse_width high":         map[string]any{"pulse_width": 0.96},
+		"drive high":               map[string]any{"drive": 1.5},
+		"drive negative":           map[string]any{"drive": -0.1},
+		"kbd_track high":           map[string]any{"kbd_track": 1.1},
+		"bend_range high":          map[string]any{"bend_range": 12.5},
+		"bend_range negative":      map[string]any{"bend_range": -1.0},
+		"bad voice_mode":           map[string]any{"voice_mode": "duophonic"},
+		"amp_env attack high":      map[string]any{"amp_env": map[string]any{"attack": 11.0}},
+		"amp_env sustain high":     map[string]any{"amp_env": map[string]any{"sustain": 1.5}},
+		"vel_routing to_amp high":  map[string]any{"vel_routing": map[string]any{"to_amp": 1.5}},
+		"vel_routing to_cutoff <0": map[string]any{"vel_routing": map[string]any{"to_cutoff": -0.1}},
+		"bad lfo wave":             map[string]any{"lfo": map[string]any{"wave": "sine"}},
+		"lfo rate low":             map[string]any{"lfo": map[string]any{"rate_hz": 0.01}},
+		"lfo rate high":            map[string]any{"lfo": map[string]any{"rate_hz": 21.0}},
+		"lfo pitch high":           map[string]any{"lfo": map[string]any{"to_pitch_cents": 101.0}},
+		"lfo cutoff oct high":      map[string]any{"lfo": map[string]any{"to_cutoff_oct": 2.5}},
+		"lfo amp high":             map[string]any{"lfo": map[string]any{"to_amp": 1.5}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			wantStatus(t, f.do(t, "PATCH", "/api/synth", body), http.StatusBadRequest)
@@ -800,6 +921,171 @@ func TestSynthPatchEnvTimeZeroFloorsNotRejects(t *testing.T) {
 	fe := m["filter_env"].(map[string]any)
 	if v := fe["attack"].(float64); !approxEq(v, 0.0001) {
 		t.Errorf("filter_env.attack: expected floor 0.0001, got %v", v)
+	}
+}
+
+// TestSynthPatchPhase34Fields drives the smoke-test body from the task
+// sheet through the handler: voice_mode + a partial lfo + drive in one
+// PATCH, expecting the full merged snapshot back.
+func TestSynthPatchPhase34Fields(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	rec := f.do(t, "PATCH", "/api/synth", map[string]any{
+		"voice_mode": "poly",
+		"lfo":        map[string]any{"to_pitch_cents": 15.0},
+		"drive":      0.4,
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	if m["voice_mode"] != "poly" {
+		t.Errorf("voice_mode: expected poly, got %v", m["voice_mode"])
+	}
+	if v := m["drive"].(float64); !approxEq(v, 0.4) {
+		t.Errorf("drive: expected 0.4, got %v", v)
+	}
+	lfo := m["lfo"].(map[string]any)
+	if v := lfo["to_pitch_cents"].(float64); !approxEq(v, 15) {
+		t.Errorf("lfo.to_pitch_cents: expected 15, got %v", v)
+	}
+	// The untouched lfo siblings keep their engine defaults.
+	if lfo["wave"] != "triangle" || !approxEq(lfo["rate_hz"].(float64), 5) {
+		t.Errorf("lfo: expected triangle/5 Hz preserved, got %v", lfo)
+	}
+	// The rest of the snapshot is untouched defaults.
+	ae := m["amp_env"].(map[string]any)
+	if !approxEq(ae["decay"].(float64), 0.2) || !approxEq(ae["sustain"].(float64), 0.7) {
+		t.Errorf("amp_env: expected defaults 0.2/0.7, got %v", ae)
+	}
+	vr := m["vel_routing"].(map[string]any)
+	if !approxEq(vr["to_amp"].(float64), 1) {
+		t.Errorf("vel_routing.to_amp: expected default 1, got %v", vr)
+	}
+	if v := m["bend_range"].(float64); !approxEq(v, 2) {
+		t.Errorf("bend_range: expected default 2, got %v", v)
+	}
+	if m["oversample"] != false {
+		t.Errorf("oversample: expected default false, got %v", m["oversample"])
+	}
+	// The engine was actually driven.
+	if got := f.audio.getVoiceMode(); got != "poly" {
+		t.Errorf("audio voice mode: expected poly, got %q", got)
+	}
+	if v := f.audio.get("drive"); !approxEq(float64(v), 0.4) {
+		t.Errorf("audio drive: expected 0.4, got %v", v)
+	}
+	if v := f.audio.get("lfoToPitchCents"); !approxEq(float64(v), 15) {
+		t.Errorf("audio lfo pitch depth: expected 15, got %v", v)
+	}
+}
+
+func TestSynthPatchPhase34MergeSemantics(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	// Partial amp_env: attack only, then sustain only — attack survives.
+	rec := f.do(t, "PATCH", "/api/synth", map[string]any{"amp_env": map[string]any{"attack": 0.05}})
+	wantStatus(t, rec, http.StatusOK)
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{"amp_env": map[string]any{"sustain": 0.5}})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	ae := m["amp_env"].(map[string]any)
+	if v := ae["attack"].(float64); !approxEq(v, 0.05) {
+		t.Errorf("amp_env.attack: expected 0.05 to survive sustain-only patch, got %v", v)
+	}
+	if v := ae["sustain"].(float64); !approxEq(v, 0.5) {
+		t.Errorf("amp_env.sustain: expected 0.5, got %v", v)
+	}
+	if v := f.audio.get("aeAttack"); !approxEq(float64(v), 0.05) {
+		t.Errorf("audio amp env attack: expected 0.05, got %v", v)
+	}
+
+	// Partial vel_routing: to_cutoff only — to_amp keeps its default 1.
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{"vel_routing": map[string]any{"to_cutoff": 0.5}})
+	wantStatus(t, rec, http.StatusOK)
+	m = decodeBody(t, rec)
+	vr := m["vel_routing"].(map[string]any)
+	if !approxEq(vr["to_cutoff"].(float64), 0.5) || !approxEq(vr["to_amp"].(float64), 1) {
+		t.Errorf("vel_routing: expected (0.5, 1), got %v", vr)
+	}
+	if v := f.audio.get("velToAmp"); !approxEq(float64(v), 1) {
+		t.Errorf("audio vel to_amp: expected 1, got %v", v)
+	}
+
+	// Oversample toggles round trip.
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{"oversample": true})
+	wantStatus(t, rec, http.StatusOK)
+	if m = decodeBody(t, rec); m["oversample"] != true {
+		t.Errorf("oversample: expected true, got %v", m["oversample"])
+	}
+	if !f.audio.getOversample() {
+		t.Error("audio oversample: expected on")
+	}
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{"oversample": false})
+	wantStatus(t, rec, http.StatusOK)
+	if m = decodeBody(t, rec); m["oversample"] != false {
+		t.Errorf("oversample: expected false, got %v", m["oversample"])
+	}
+	if f.audio.getOversample() {
+		t.Error("audio oversample: expected off")
+	}
+
+	// A slider at 0 s amp-env time floors (not rejects), like filter_env.
+	rec = f.do(t, "PATCH", "/api/synth", map[string]any{"amp_env": map[string]any{"release": 0.0}})
+	wantStatus(t, rec, http.StatusOK)
+	m = decodeBody(t, rec)
+	ae = m["amp_env"].(map[string]any)
+	if v := ae["release"].(float64); !approxEq(v, 0.0001) {
+		t.Errorf("amp_env.release: expected floor 0.0001, got %v", v)
+	}
+}
+
+func TestStatusIncludesPhase34Synth(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("moog"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if _, err := f.ctrl.SetSynthKbdTrack(0.6); err != nil {
+		t.Fatalf("SetSynthKbdTrack: %v", err)
+	}
+	if _, err := f.ctrl.SetSynthLFO("sh", 2.5, 10, 0.5, 0.2); err != nil {
+		t.Fatalf("SetSynthLFO: %v", err)
+	}
+
+	rec := f.do(t, "GET", "/api/status", nil)
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	sy := m["params"].(map[string]any)["synth"].(map[string]any)
+	if v := sy["kbd_track"].(float64); !approxEq(v, 0.6) {
+		t.Errorf("synth.kbd_track: expected 0.6, got %v", v)
+	}
+	lfo := sy["lfo"].(map[string]any)
+	if lfo["wave"] != "sh" || !approxEq(lfo["rate_hz"].(float64), 2.5) {
+		t.Errorf("synth.lfo: expected sh/2.5, got %v", lfo)
+	}
+	ae := sy["amp_env"].(map[string]any)
+	if !approxEq(ae["attack"].(float64), 0.005) || !approxEq(ae["release"].(float64), 0.4) {
+		t.Errorf("synth.amp_env: expected engine defaults, got %v", ae)
+	}
+	if v := sy["pulse_width"].(float64); !approxEq(v, 0.25) {
+		t.Errorf("synth.pulse_width: expected default 0.25, got %v", v)
+	}
+	if sy["voice_mode"] != "mono_legato" {
+		t.Errorf("synth.voice_mode: expected mono_legato, got %v", sy["voice_mode"])
+	}
+	if sy["oversample"] != false {
+		t.Errorf("synth.oversample: expected false, got %v", sy["oversample"])
+	}
+	vr := sy["vel_routing"].(map[string]any)
+	if !approxEq(vr["to_amp"].(float64), 1) {
+		t.Errorf("synth.vel_routing.to_amp: expected default 1, got %v", vr)
+	}
+	if v := sy["bend_range"].(float64); !approxEq(v, 2) {
+		t.Errorf("synth.bend_range: expected default 2, got %v", v)
 	}
 }
 

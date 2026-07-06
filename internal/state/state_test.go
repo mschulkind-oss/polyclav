@@ -231,18 +231,29 @@ func TestPatchKnobReturnsDefaultsWhenAbsent(t *testing.T) {
 // ---- per-patch synth persistence (ROADMAP §3) -------------------------------
 
 // testSynth returns a fully-populated synth block so round-trip tests
-// exercise every field, including negative octaves/detunes.
+// exercise every field, including negative octaves/detunes and
+// non-default Phase 3/4 values (so a lost field can't hide behind its
+// default).
 func testSynth() SynthState {
 	return SynthState{
 		Resonance: 0.7,
 		FilterEnv: FilterEnvState{Attack: 0.005, Decay: 0.6, Sustain: 0.4, Release: 0.6, Amount: 0.3},
+		AmpEnv:    AmpEnvState{Attack: 0.01, Decay: 0.3, Sustain: 0.6, Release: 0.5},
 		Oscs: [3]OscState{
 			{Wave: "saw", Octave: 0, DetuneCents: 0, Level: 1.0},
 			{Wave: "square", Octave: 0, DetuneCents: -7, Level: 0.5},
 			{Wave: "pulse", Octave: -1, DetuneCents: 5, Level: 0.25},
 		},
-		Noise: 0.1,
-		Glide: 0.05,
+		Noise:      0.1,
+		Glide:      0.05,
+		PulseWidth: 0.5,
+		Drive:      0.4,
+		VelRouting: VelRoutingState{ToCutoff: 0.3, ToAmp: 0.8},
+		KbdTrack:   0.6,
+		LFO:        LFOState{Wave: "square", RateHz: 2.5, ToPitchCents: 15, ToCutoffOct: 0.5, ToAmp: 0.2},
+		BendRange:  7,
+		VoiceMode:  "poly",
+		Oversample: true,
 	}
 }
 
@@ -365,6 +376,192 @@ compressor = 0.1
 	}
 	if k := store.PatchKnob("ydp-grand"); k != p.Knob {
 		t.Errorf("PatchKnob = %+v, want %+v", k, p.Knob)
+	}
+}
+
+// TestLoadOldSynthSchemaFillsEngineDefaults pins the Phase 3/4 backward
+// compatibility contract: a state.toml whose synth block predates the
+// amp_env/pulse_width/drive/vel_routing/kbd_track/lfo/bend_range/
+// voice_mode/oversample fields must load with those fields at the
+// ENGINE defaults, not Go zero values. Zeros would be audible damage:
+// vel_routing.to_amp = 0 mutes velocity response, lfo rate 0 is below
+// the engine minimum, amp_env all-zero clicks every note off.
+func TestLoadOldSynthSchemaFillsEngineDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	old := `current_patch = "moog"
+
+[patches.moog]
+volume = 0.8
+reverb = 0.2
+compressor = 0.1
+
+[patches.moog.synth]
+resonance = 0.7
+noise = 0.1
+glide = 0.05
+
+[patches.moog.synth.filter_env]
+attack = 0.005
+decay = 0.6
+sustain = 0.4
+release = 0.6
+amount = 0.3
+
+[[patches.moog.synth.oscs]]
+wave = "saw"
+octave = 0
+detune_cents = 0.0
+level = 1.0
+
+[[patches.moog.synth.oscs]]
+wave = "square"
+octave = 0
+detune_cents = -7.0
+level = 0.5
+
+[[patches.moog.synth.oscs]]
+wave = "pulse"
+octave = -1
+detune_cents = 5.0
+level = 0.25
+`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load old schema: %v", err)
+	}
+	p, ok := snap.Patches["moog"]
+	if !ok || p.Synth == nil {
+		t.Fatalf("moog synth block missing: %+v (ok=%v)", p, ok)
+	}
+	s := p.Synth
+
+	// The old fields decode verbatim.
+	if s.Resonance != 0.7 || s.Noise != 0.1 || s.Glide != 0.05 {
+		t.Errorf("old scalars: want (0.7, 0.1, 0.05), got (%v, %v, %v)", s.Resonance, s.Noise, s.Glide)
+	}
+	if s.FilterEnv.Decay != 0.6 || s.FilterEnv.Amount != 0.3 {
+		t.Errorf("old filter env changed: %+v", s.FilterEnv)
+	}
+	if s.Oscs[1].Wave != "square" || s.Oscs[1].DetuneCents != -7 {
+		t.Errorf("old oscs changed: %+v", s.Oscs)
+	}
+
+	// The absent Phase 3/4 fields land at the ENGINE defaults.
+	if want := (AmpEnvState{Attack: 0.005, Decay: 0.2, Sustain: 0.7, Release: 0.4}); s.AmpEnv != want {
+		t.Errorf("amp_env: want engine defaults %+v, got %+v", want, s.AmpEnv)
+	}
+	if s.PulseWidth != 0.25 {
+		t.Errorf("pulse_width: want 0.25, got %v", s.PulseWidth)
+	}
+	if s.Drive != 0 {
+		t.Errorf("drive: want 0, got %v", s.Drive)
+	}
+	if want := (VelRoutingState{ToCutoff: 0, ToAmp: 1}); s.VelRouting != want {
+		t.Errorf("vel_routing: want %+v (to_amp MUST NOT zero out), got %+v", want, s.VelRouting)
+	}
+	if s.KbdTrack != 0 {
+		t.Errorf("kbd_track: want 0, got %v", s.KbdTrack)
+	}
+	if want := (LFOState{Wave: "triangle", RateHz: 5, ToPitchCents: 0, ToCutoffOct: 0, ToAmp: 0}); s.LFO != want {
+		t.Errorf("lfo: want engine defaults %+v, got %+v", want, s.LFO)
+	}
+	if s.BendRange != 2 {
+		t.Errorf("bend_range: want 2, got %v", s.BendRange)
+	}
+	if s.VoiceMode != "mono_legato" {
+		t.Errorf("voice_mode: want mono_legato, got %q", s.VoiceMode)
+	}
+	if s.Oversample {
+		t.Error("oversample: want false")
+	}
+}
+
+// TestLoadPartialNewSynthKeysKeepExplicitValues is fillSynthDefaults's
+// per-leaf contract: a hand-edited file carrying SOME new keys keeps
+// its explicit values (including explicit zeros/non-defaults) while the
+// missing siblings — even inside the same sub-table — default sanely.
+func TestLoadPartialNewSynthKeysKeepExplicitValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	body := `[patches.moog.synth]
+resonance = 0.5
+pulse_width = 0.1
+bend_range = 0.0
+
+[patches.moog.synth.vel_routing]
+to_cutoff = 0.5
+
+[patches.moog.synth.lfo]
+rate_hz = 0.5
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load partial: %v", err)
+	}
+	s := snap.Patches["moog"].Synth
+	if s == nil {
+		t.Fatal("moog synth block missing")
+	}
+	// Explicit values survive — including an explicit 0 bend_range and a
+	// non-default pulse width.
+	if s.PulseWidth != 0.1 || s.BendRange != 0 {
+		t.Errorf("explicit values: want (0.1, 0), got (%v, %v)", s.PulseWidth, s.BendRange)
+	}
+	// Sibling keys inside a present sub-table still default per leaf.
+	if want := (VelRoutingState{ToCutoff: 0.5, ToAmp: 1}); s.VelRouting != want {
+		t.Errorf("vel_routing: want %+v, got %+v", want, s.VelRouting)
+	}
+	if s.LFO.Wave != "triangle" || s.LFO.RateHz != 0.5 {
+		t.Errorf("lfo: want (triangle, 0.5), got (%q, %v)", s.LFO.Wave, s.LFO.RateHz)
+	}
+	// Whole absent sub-tables default too.
+	if want := (AmpEnvState{Attack: 0.005, Decay: 0.2, Sustain: 0.7, Release: 0.4}); s.AmpEnv != want {
+		t.Errorf("amp_env: want engine defaults %+v, got %+v", want, s.AmpEnv)
+	}
+	if s.VoiceMode != "mono_legato" {
+		t.Errorf("voice_mode: want mono_legato, got %q", s.VoiceMode)
+	}
+}
+
+// TestSynthNewFieldsRoundTripVerbatim: a store flush writes every new
+// field, and a reload does NOT re-default them (the fill only fires on
+// truly absent keys — a saved non-default must never be clobbered).
+func TestSynthNewFieldsRoundTripVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	want := testSynth()
+
+	store := NewStore(path, 10*time.Millisecond, slog.Default(), Snapshot{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = store.Run(ctx); close(done) }()
+	store.UpdatePatchSynth("moog", want)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit within 2s")
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load round-trip: %v", err)
+	}
+	p := got.Patches["moog"]
+	if p.Synth == nil {
+		t.Fatal("moog synth block missing after round trip")
+	}
+	if *p.Synth != want {
+		t.Errorf("round trip changed the block:\nwant %+v\ngot  %+v", want, *p.Synth)
 	}
 }
 

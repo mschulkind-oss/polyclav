@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 import { api } from "@/lib/api";
-import { fmt2, fmtCents, fmtSec } from "@/lib/format";
+import { fmt2, fmtCents, fmtLfoHz, fmtOct, fmtSec, fmtSemi } from "@/lib/format";
 import type { Synth, SynthField, SynthGroup, SynthLeaf } from "@/lib/types";
 import { SelectField } from "./SelectField";
 import { SliderRow } from "./SliderRow";
@@ -28,11 +30,25 @@ const RANGES: Record<string, NumSpec> = {
   resonance: { min: 0, max: 0.95, step: 0.005, fmt: fmt2 },
   glide: { min: 0, max: 5, step: 0.01, fmt: fmtSec },
   noise: { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  pulse_width: { min: 0.05, max: 0.95, step: 0.005, fmt: fmt2 },
+  drive: { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  kbd_track: { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  bend_range: { min: 0, max: 12, step: 0.5, fmt: fmtSemi },
   "filter_env.attack": { min: 0, max: 2, step: 0.001, fmt: fmtSec },
   "filter_env.decay": { min: 0, max: 2, step: 0.001, fmt: fmtSec },
   "filter_env.sustain": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
   "filter_env.release": { min: 0, max: 3, step: 0.001, fmt: fmtSec },
   "filter_env.amount": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  "amp_env.attack": { min: 0, max: 2, step: 0.001, fmt: fmtSec },
+  "amp_env.decay": { min: 0, max: 2, step: 0.001, fmt: fmtSec },
+  "amp_env.sustain": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  "amp_env.release": { min: 0, max: 3, step: 0.001, fmt: fmtSec },
+  "vel_routing.to_cutoff": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  "vel_routing.to_amp": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
+  "lfo.rate_hz": { min: 0.05, max: 20, step: 0.05, fmt: fmtLfoHz },
+  "lfo.to_pitch_cents": { min: 0, max: 100, step: 1, fmt: fmtCents },
+  "lfo.to_cutoff_oct": { min: 0, max: 2, step: 0.01, fmt: fmtOct },
+  "lfo.to_amp": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
   "osc.detune_cents": { min: -100, max: 100, step: 1, fmt: fmtCents },
   "osc.level": { min: 0, max: 1, step: 0.01, fmt: fmt2 },
 };
@@ -40,6 +56,8 @@ const RANGES: Record<string, NumSpec> = {
 /** String fields rendered as selects; anything else read-only. */
 const ENUMS: Record<string, string[]> = {
   "osc.wave": ["saw", "square", "pulse"],
+  "lfo.wave": ["triangle", "saw", "square", "sh"],
+  voice_mode: ["mono_legato", "mono_retrig", "poly"],
 };
 
 /** Integer fields rendered as selects (value list in display order). */
@@ -50,11 +68,34 @@ const INT_SELECTS: Record<string, number[]> = {
 const LABELS: Record<string, string> = {
   filter_env: "Filter envelope",
   "filter_env.amount": "Env amount",
+  amp_env: "Amp envelope",
+  vel_routing: "Velocity routing",
+  "vel_routing.to_cutoff": "→ cutoff",
+  "vel_routing.to_amp": "→ amp",
+  lfo: "LFO",
+  "lfo.rate_hz": "Rate",
+  "lfo.to_pitch_cents": "→ pitch",
+  "lfo.to_cutoff_oct": "→ cutoff",
+  "lfo.to_amp": "→ amp",
+  pulse_width: "Pulse width",
+  kbd_track: "Kbd track",
+  bend_range: "Bend range",
+  voice_mode: "Voice mode",
   osc: "Oscillators",
 };
 
 /** Scalars listed here render first, in this order; unknowns follow in wire order. */
-const SCALAR_ORDER = ["resonance", "glide", "noise"];
+const SCALAR_ORDER = [
+  "resonance",
+  "glide",
+  "noise",
+  "drive",
+  "pulse_width",
+  "kbd_track",
+  "bend_range",
+  "voice_mode",
+  "oversample",
+];
 
 const humanize = (key: string): string => {
   const s = key.replace(/_/g, " ");
@@ -64,7 +105,7 @@ const humanize = (key: string): string => {
 const label = (path: string, fallbackKey: string): string => LABELS[path] ?? humanize(fallbackKey);
 
 const isLeaf = (v: SynthField | undefined): v is SynthLeaf =>
-  typeof v === "number" || typeof v === "string";
+  typeof v === "number" || typeof v === "string" || typeof v === "boolean";
 const isGroup = (v: SynthField | undefined): v is SynthGroup =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -92,6 +133,52 @@ function NumField({
       format={spec.fmt}
       onSend={send}
     />
+  );
+}
+
+const HOLD_MS = 400;
+
+/**
+ * BoolField is the toggle twin of SelectField: a checkbox that sends
+ * immediately on change and holds the picked value for 400ms so it
+ * doesn't flicker back to the stale server value before the SSE echo
+ * lands.
+ */
+function BoolField({
+  path,
+  name,
+  value,
+  send,
+}: {
+  path: string;
+  name: string;
+  value: boolean;
+  send: (v: boolean) => void;
+}) {
+  const [local, setLocal] = useState<boolean | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(holdTimer.current), []);
+
+  const shown = local ?? value;
+  return (
+    <div className="row">
+      <span className="rowlabel">{label(path, name)}</span>
+      <input
+        type="checkbox"
+        name={name}
+        aria-label={label(path, name)}
+        style={{ justifySelf: "start" }}
+        checked={shown}
+        onChange={(e) => {
+          const v = e.currentTarget.checked;
+          setLocal(v);
+          clearTimeout(holdTimer.current);
+          holdTimer.current = setTimeout(() => setLocal(null), HOLD_MS);
+          send(v);
+        }}
+      />
+      <span className="val">{shown ? "on" : "off"}</span>
+    </div>
   );
 }
 
@@ -169,6 +256,17 @@ export function SynthCard({ synth }: SynthCardProps) {
             />
           );
         }
+        if (typeof v === "boolean") {
+          return (
+            <BoolField
+              key={k}
+              path={k}
+              name={k}
+              value={v}
+              send={(nv) => api.patchSynth({ [k]: nv })}
+            />
+          );
+        }
         return (
           <StrField
             key={k}
@@ -191,6 +289,17 @@ export function SynthCard({ synth }: SynthCardProps) {
               if (typeof v === "number") {
                 return (
                   <NumField
+                    key={sub}
+                    path={path}
+                    name={sub}
+                    value={v}
+                    send={(nv) => api.patchSynth({ [gk]: { [sub]: nv } })}
+                  />
+                );
+              }
+              if (typeof v === "boolean") {
+                return (
+                  <BoolField
                     key={sub}
                     path={path}
                     name={sub}

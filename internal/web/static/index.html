@@ -169,6 +169,41 @@
     <div class="row"><label for="noise">Noise</label>
       <input id="noise" type="range" min="0" max="1" step="0.01">
       <span class="val" id="noise-val">&ndash;</span></div>
+    <div class="row"><label for="drive">Drive</label>
+      <input id="drive" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="drive-val">&ndash;</span></div>
+    <div class="row"><label for="pulse-width">Pulse width</label>
+      <input id="pulse-width" type="range" min="0.05" max="0.95" step="0.005">
+      <span class="val" id="pulse-width-val">&ndash;</span></div>
+    <div class="row"><label for="kbd-track">Kbd track</label>
+      <input id="kbd-track" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="kbd-track-val">&ndash;</span></div>
+    <div class="row"><label for="bend-range">Bend range</label>
+      <input id="bend-range" type="range" min="0" max="12" step="0.5">
+      <span class="val" id="bend-range-val">&ndash;</span></div>
+    <div class="row"><label for="voice-mode">Voice mode</label>
+      <select id="voice-mode">
+        <option value="mono_legato">mono legato</option>
+        <option value="mono_retrig">mono retrig</option>
+        <option value="poly">poly</option>
+      </select>
+      <span></span></div>
+    <div class="row"><label for="oversample">Oversample</label>
+      <input id="oversample" type="checkbox" style="justify-self:start">
+      <span class="val" id="oversample-val">&ndash;</span></div>
+    <h3>Amp envelope</h3>
+    <div class="row"><label for="ae-attack">Attack</label>
+      <input id="ae-attack" type="range" min="0" max="2" step="0.001">
+      <span class="val" id="ae-attack-val">&ndash;</span></div>
+    <div class="row"><label for="ae-decay">Decay</label>
+      <input id="ae-decay" type="range" min="0" max="2" step="0.001">
+      <span class="val" id="ae-decay-val">&ndash;</span></div>
+    <div class="row"><label for="ae-sustain">Sustain</label>
+      <input id="ae-sustain" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="ae-sustain-val">&ndash;</span></div>
+    <div class="row"><label for="ae-release">Release</label>
+      <input id="ae-release" type="range" min="0" max="3" step="0.001">
+      <span class="val" id="ae-release-val">&ndash;</span></div>
     <h3>Filter envelope</h3>
     <div class="row"><label for="fe-attack">Attack</label>
       <input id="fe-attack" type="range" min="0" max="2" step="0.001">
@@ -185,6 +220,34 @@
     <div class="row"><label for="fe-amount">Env amount</label>
       <input id="fe-amount" type="range" min="0" max="1" step="0.01">
       <span class="val" id="fe-amount-val">&ndash;</span></div>
+    <h3>Velocity routing</h3>
+    <div class="row"><label for="vr-cutoff">&rarr; cutoff</label>
+      <input id="vr-cutoff" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="vr-cutoff-val">&ndash;</span></div>
+    <div class="row"><label for="vr-amp">&rarr; amp</label>
+      <input id="vr-amp" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="vr-amp-val">&ndash;</span></div>
+    <h3>LFO</h3>
+    <div class="row"><label for="lfo-wave">Wave</label>
+      <select id="lfo-wave">
+        <option value="triangle">triangle</option>
+        <option value="saw">saw</option>
+        <option value="square">square</option>
+        <option value="sh">s&amp;h</option>
+      </select>
+      <span></span></div>
+    <div class="row"><label for="lfo-rate">Rate</label>
+      <input id="lfo-rate" type="range" min="0.05" max="20" step="0.05">
+      <span class="val" id="lfo-rate-val">&ndash;</span></div>
+    <div class="row"><label for="lfo-pitch">&rarr; pitch</label>
+      <input id="lfo-pitch" type="range" min="0" max="100" step="1">
+      <span class="val" id="lfo-pitch-val">&ndash;</span></div>
+    <div class="row"><label for="lfo-cutoff">&rarr; cutoff</label>
+      <input id="lfo-cutoff" type="range" min="0" max="2" step="0.01">
+      <span class="val" id="lfo-cutoff-val">&ndash;</span></div>
+    <div class="row"><label for="lfo-amp">&rarr; amp</label>
+      <input id="lfo-amp" type="range" min="0" max="1" step="0.01">
+      <span class="val" id="lfo-amp-val">&ndash;</span></div>
     <h3>Oscillators</h3>
     <div id="osc-rows"></div>
     <p class="hint">Per-osc: wave &middot; octave &middot; detune (&cent;) &middot; level.</p>
@@ -313,6 +376,9 @@ const fmtDb = (v) => Number(v).toFixed(1) + " dB";
 const fmtTempo = (t) => Number(t).toFixed(2) + "×";
 const fmtSec = (v) => v >= 1 ? Number(v).toFixed(2) + " s" : Math.round(v * 1000) + " ms";
 const fmtCents = (v) => (v > 0 ? "+" : "") + Math.round(v) + "¢";
+const fmtLfoHz = (v) => Number(v).toFixed(2) + " Hz";
+const fmtOct = (v) => Number(v).toFixed(2) + " oct";
+const fmtSemi = (v) => Number(v).toFixed(1) + " st";
 
 // --- debounced senders (100ms, one per field so they don't starve each other)
 const sendParam = {};
@@ -407,6 +473,39 @@ function applyFilterEnv(fe) {
   setSynthVal("fe-amount", fe.amount, fmt2);
 }
 
+function applyAmpEnv(ae) {
+  if (!ae) return;
+  setSynthVal("ae-attack", ae.attack, fmtSec);
+  setSynthVal("ae-decay", ae.decay, fmtSec);
+  setSynthVal("ae-sustain", ae.sustain, fmt2);
+  setSynthVal("ae-release", ae.release, fmtSec);
+}
+
+function applyVelRouting(vr) {
+  if (!vr) return;
+  setSynthVal("vr-cutoff", vr.to_cutoff, fmt2);
+  setSynthVal("vr-amp", vr.to_amp, fmt2);
+}
+
+function applyLFO(l) {
+  if (!l) return;
+  if (typeof l.wave === "string") $("lfo-wave").value = l.wave;
+  setSynthVal("lfo-rate", l.rate_hz, fmtLfoHz);
+  setSynthVal("lfo-pitch", l.to_pitch_cents, fmtCents);
+  setSynthVal("lfo-cutoff", l.to_cutoff_oct, fmtOct);
+  setSynthVal("lfo-amp", l.to_amp, fmt2);
+}
+
+function applyVoiceMode(mode) {
+  if (typeof mode === "string") $("voice-mode").value = mode;
+}
+
+function applyOversample(on) {
+  if (typeof on !== "boolean") return;
+  $("oversample").checked = on;
+  $("oversample-val").textContent = on ? "on" : "off";
+}
+
 function applyOsc(i, o) {
   if (!o || typeof i !== "number" || i < 0 || i > 2) return;
   if (typeof o.wave === "string") $("osc" + i + "-wave").value = o.wave;
@@ -420,7 +519,16 @@ function applySynth(sy) {
   setSynthVal("resonance", sy.resonance, fmt2);
   setSynthVal("glide", sy.glide, fmtSec);
   setSynthVal("noise", sy.noise, fmt2);
+  setSynthVal("drive", sy.drive, fmt2);
+  setSynthVal("pulse-width", sy.pulse_width, fmt2);
+  setSynthVal("kbd-track", sy.kbd_track, fmt2);
+  setSynthVal("bend-range", sy.bend_range, fmtSemi);
+  applyVoiceMode(sy.voice_mode);
+  applyOversample(sy.oversample);
+  applyAmpEnv(sy.amp_env);
   applyFilterEnv(sy.filter_env);
+  applyVelRouting(sy.vel_routing);
+  applyLFO(sy.lfo);
   if (Array.isArray(sy.osc)) sy.osc.forEach((o, i) => applyOsc(i, o));
 }
 
@@ -520,11 +628,34 @@ function wireSynthSlider(id, fmt, makeBody) {
 wireSynthSlider("resonance", fmt2, (v) => ({ resonance: v }));
 wireSynthSlider("glide", fmtSec, (v) => ({ glide: v }));
 wireSynthSlider("noise", fmt2, (v) => ({ noise: v }));
+wireSynthSlider("drive", fmt2, (v) => ({ drive: v }));
+wireSynthSlider("pulse-width", fmt2, (v) => ({ pulse_width: v }));
+wireSynthSlider("kbd-track", fmt2, (v) => ({ kbd_track: v }));
+wireSynthSlider("bend-range", fmtSemi, (v) => ({ bend_range: v }));
+wireSynthSlider("ae-attack", fmtSec, (v) => ({ amp_env: { attack: v } }));
+wireSynthSlider("ae-decay", fmtSec, (v) => ({ amp_env: { decay: v } }));
+wireSynthSlider("ae-sustain", fmt2, (v) => ({ amp_env: { sustain: v } }));
+wireSynthSlider("ae-release", fmtSec, (v) => ({ amp_env: { release: v } }));
 wireSynthSlider("fe-attack", fmtSec, (v) => ({ filter_env: { attack: v } }));
 wireSynthSlider("fe-decay", fmtSec, (v) => ({ filter_env: { decay: v } }));
 wireSynthSlider("fe-sustain", fmt2, (v) => ({ filter_env: { sustain: v } }));
 wireSynthSlider("fe-release", fmtSec, (v) => ({ filter_env: { release: v } }));
 wireSynthSlider("fe-amount", fmt2, (v) => ({ filter_env: { amount: v } }));
+wireSynthSlider("vr-cutoff", fmt2, (v) => ({ vel_routing: { to_cutoff: v } }));
+wireSynthSlider("vr-amp", fmt2, (v) => ({ vel_routing: { to_amp: v } }));
+wireSynthSlider("lfo-rate", fmtLfoHz, (v) => ({ lfo: { rate_hz: v } }));
+wireSynthSlider("lfo-pitch", fmtCents, (v) => ({ lfo: { to_pitch_cents: v } }));
+wireSynthSlider("lfo-cutoff", fmtOct, (v) => ({ lfo: { to_cutoff_oct: v } }));
+wireSynthSlider("lfo-amp", fmt2, (v) => ({ lfo: { to_amp: v } }));
+$("voice-mode").addEventListener("change", () =>
+  send("PATCH", "/api/synth", { voice_mode: $("voice-mode").value }));
+$("lfo-wave").addEventListener("change", () =>
+  send("PATCH", "/api/synth", { lfo: { wave: $("lfo-wave").value } }));
+$("oversample").addEventListener("change", () => {
+  const on = $("oversample").checked;
+  $("oversample-val").textContent = on ? "on" : "off";
+  send("PATCH", "/api/synth", { oversample: on });
+});
 
 // The three oscillator rows are built here (not static HTML) so the wave
 // list, octave range, and ids stay in one place.
@@ -946,7 +1077,16 @@ function connect() {
       case "resonance": setSynthVal("resonance", d.resonance, fmt2); break;
       case "glide": setSynthVal("glide", d.glide, fmtSec); break;
       case "noise": setSynthVal("noise", d.noise, fmt2); break;
+      case "drive": setSynthVal("drive", d.drive, fmt2); break;
+      case "pulse_width": setSynthVal("pulse-width", d.pulse_width, fmt2); break;
+      case "kbd_track": setSynthVal("kbd-track", d.kbd_track, fmt2); break;
+      case "bend_range": setSynthVal("bend-range", d.bend_range, fmtSemi); break;
+      case "voice_mode": applyVoiceMode(d.voice_mode); break;
+      case "oversample": applyOversample(d.oversample); break;
+      case "amp_env": applyAmpEnv(d.amp_env); break;
       case "filter_env": applyFilterEnv(d.filter_env); break;
+      case "vel_routing": applyVelRouting(d.vel_routing); break;
+      case "lfo": applyLFO(d.lfo); break;
       case "osc": applyOsc(d.index, d); break;
     }
   });

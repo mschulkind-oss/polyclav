@@ -555,6 +555,23 @@ func (audioBackend) SetNativeOsc(idx int, wave string, octave int, detuneCents, 
 }
 func (audioBackend) SetNativeNoise(level float32) { audio.SetNativeNoise(level) }
 func (audioBackend) SetNativeGlide(s float32)     { audio.SetNativeGlide(s) }
+func (audioBackend) SetNativeAmpEnv(a, d, s, r float32) {
+	audio.SetNativeAmpEnv(a, d, s, r)
+}
+func (audioBackend) SetNativePulseWidth(w float32) { audio.SetNativePulseWidth(w) }
+func (audioBackend) SetNativeDrive(d float32)      { audio.SetNativeDrive(d) }
+func (audioBackend) SetNativeVelRouting(toCutoff, toAmp float32) {
+	audio.SetNativeVelRouting(toCutoff, toAmp)
+}
+func (audioBackend) SetNativeKbdTrack(amt float32) { audio.SetNativeKbdTrack(amt) }
+func (audioBackend) SetNativeLFO(wave string, rateHz, toPitchCents, toCutoffOct, toAmp float32) error {
+	return audio.SetNativeLFO(wave, rateHz, toPitchCents, toCutoffOct, toAmp)
+}
+func (audioBackend) SetNativeBendRange(st float32) { audio.SetNativeBendRange(st) }
+func (audioBackend) SetNativeVoiceMode(mode string) error {
+	return audio.SetNativeVoiceMode(mode)
+}
+func (audioBackend) SetNativeOversample(on bool) { audio.SetNativeOversample(on) }
 
 // newRateGate returns a non-blocking rate limiter: each call reports
 // whether the caller may proceed, allowing at most one pass per minGap.

@@ -18,9 +18,9 @@ export interface Patch {
 
 // params.synth is deliberately loose: the synth card renders whatever
 // keys arrive (docs/WEB_UI.md — params added later appear automatically).
-// Scalars are sliders/selects, objects are sub-sections, arrays of
-// objects are per-row groups (the oscillators).
-export type SynthLeaf = number | string;
+// Scalars are sliders/selects/toggles, objects are sub-sections, arrays
+// of objects are per-row groups (the oscillators).
+export type SynthLeaf = number | string | boolean;
 export type SynthGroup = Record<string, SynthLeaf>;
 export type SynthField = SynthLeaf | SynthGroup | SynthGroup[];
 export type Synth = Record<string, SynthField>;

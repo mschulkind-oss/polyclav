@@ -14,3 +14,9 @@ export const fmtSec = (v: number): string =>
   v >= 1 ? `${v.toFixed(2)} s` : `${Math.round(v * 1000)} ms`;
 
 export const fmtCents = (v: number): string => `${v > 0 ? "+" : ""}${Math.round(v)}¢`;
+
+export const fmtLfoHz = (v: number): string => `${v.toFixed(2)} Hz`;
+
+export const fmtOct = (v: number): string => `${v.toFixed(2)} oct`;
+
+export const fmtSemi = (v: number): string => `${v.toFixed(1)} st`;

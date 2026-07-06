@@ -42,13 +42,28 @@ type Knob struct {
 //   - oscillators are an array-of-tables [[...synth.oscs]] rather than
 //     osc1/osc2/osc3 named tables: SynthSnapshot models them as an
 //     indexed array, and a TOML array round-trips the indices directly.
-//   - only the shipped params exist (no page/lfo/mod/amp_env/noise-color).
+//   - only the shipped params exist (no page/mod/noise-color).
+//
+// Phase 3/4 fields (amp_env, pulse_width, drive, vel_routing,
+// kbd_track, lfo, bend_range, voice_mode, oversample) may be ABSENT in
+// files written by older builds; Load fills those with the engine
+// defaults (see fillSynthDefaults) so a legacy block cannot silently
+// zero them (vel_routing.to_amp = 0 would mute velocity response).
 type SynthState struct {
-	Resonance float32        `toml:"resonance"`
-	FilterEnv FilterEnvState `toml:"filter_env"`
-	Oscs      [3]OscState    `toml:"oscs"`
-	Noise     float32        `toml:"noise"`
-	Glide     float32        `toml:"glide"`
+	Resonance  float32         `toml:"resonance"`
+	FilterEnv  FilterEnvState  `toml:"filter_env"`
+	AmpEnv     AmpEnvState     `toml:"amp_env"`
+	Oscs       [3]OscState     `toml:"oscs"`
+	Noise      float32         `toml:"noise"`
+	Glide      float32         `toml:"glide"`
+	PulseWidth float32         `toml:"pulse_width"`
+	Drive      float32         `toml:"drive"`
+	VelRouting VelRoutingState `toml:"vel_routing"`
+	KbdTrack   float32         `toml:"kbd_track"`
+	LFO        LFOState        `toml:"lfo"`
+	BendRange  float32         `toml:"bend_range"`
+	VoiceMode  string          `toml:"voice_mode"`
+	Oversample bool            `toml:"oversample"`
 }
 
 // FilterEnvState is SynthState's filter-envelope section (ADSR seconds/
@@ -59,6 +74,31 @@ type FilterEnvState struct {
 	Sustain float32 `toml:"sustain"`
 	Release float32 `toml:"release"`
 	Amount  float32 `toml:"amount"`
+}
+
+// AmpEnvState is SynthState's amp-envelope section (ADSR, no modulation
+// amount), mirroring controls.AmpEnv.
+type AmpEnvState struct {
+	Attack  float32 `toml:"attack"`
+	Decay   float32 `toml:"decay"`
+	Sustain float32 `toml:"sustain"`
+	Release float32 `toml:"release"`
+}
+
+// VelRoutingState is SynthState's velocity-routing section, mirroring
+// controls.VelRouting.
+type VelRoutingState struct {
+	ToCutoff float32 `toml:"to_cutoff"`
+	ToAmp    float32 `toml:"to_amp"`
+}
+
+// LFOState is SynthState's global-LFO section, mirroring controls.LFO.
+type LFOState struct {
+	Wave         string  `toml:"wave"`
+	RateHz       float32 `toml:"rate_hz"`
+	ToPitchCents float32 `toml:"to_pitch_cents"`
+	ToCutoffOct  float32 `toml:"to_cutoff_oct"`
+	ToAmp        float32 `toml:"to_amp"`
 }
 
 // OscState is one oscillator's persisted settings, mirroring
@@ -115,7 +155,7 @@ func Defaults() Knob {
 // If the file does not exist, returns an empty snapshot (normal first-run).
 func Load(path string) (Snapshot, error) {
 	var snap Snapshot
-	_, err := toml.DecodeFile(path, &snap)
+	md, err := toml.DecodeFile(path, &snap)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Snapshot{Patches: map[string]PatchState{}}, nil
@@ -125,7 +165,60 @@ func Load(path string) (Snapshot, error) {
 	if snap.Patches == nil {
 		snap.Patches = map[string]PatchState{}
 	}
+	fillSynthDefaults(md, &snap)
 	return snap, nil
+}
+
+// fillSynthDefaults backfills ENGINE defaults into synth blocks whose
+// TOML keys are absent — the backward-compat path for state.toml files
+// written before the Phase 3/4 params existed. Only fields whose engine
+// default is non-zero need filling (an absent key already decodes to
+// the Go zero value, which IS the engine default for drive, kbd_track,
+// vel_routing.to_cutoff, the LFO depths, and oversample). Per-leaf on
+// purpose: a hand-edited file carrying a partial [synth.lfo] table must
+// keep its explicit values while the missing siblings default sanely.
+// The values mirror audio-core (synth/mod.rs, synth/voice.rs,
+// synth/lfo.rs) and controls.defaultSynth — keep all three in lockstep.
+func fillSynthDefaults(md toml.MetaData, snap *Snapshot) {
+	for name, p := range snap.Patches {
+		if p.Synth == nil {
+			continue
+		}
+		defined := func(key ...string) bool {
+			return md.IsDefined(append([]string{"patches", name, "synth"}, key...)...)
+		}
+		s := p.Synth
+		if !defined("amp_env", "attack") {
+			s.AmpEnv.Attack = 0.005
+		}
+		if !defined("amp_env", "decay") {
+			s.AmpEnv.Decay = 0.2
+		}
+		if !defined("amp_env", "sustain") {
+			s.AmpEnv.Sustain = 0.7
+		}
+		if !defined("amp_env", "release") {
+			s.AmpEnv.Release = 0.4
+		}
+		if !defined("pulse_width") {
+			s.PulseWidth = 0.25
+		}
+		if !defined("vel_routing", "to_amp") {
+			s.VelRouting.ToAmp = 1
+		}
+		if !defined("lfo", "wave") {
+			s.LFO.Wave = "triangle"
+		}
+		if !defined("lfo", "rate_hz") {
+			s.LFO.RateHz = 5
+		}
+		if !defined("bend_range") {
+			s.BendRange = 2
+		}
+		if !defined("voice_mode") {
+			s.VoiceMode = "mono_legato"
+		}
+	}
 }
 
 // NewStore constructs a Store with the given initial snapshot.
