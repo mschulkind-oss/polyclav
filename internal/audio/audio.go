@@ -79,6 +79,21 @@ func SetSoundfont(path string) {
 	C.polyclav_audio_set_soundfont(cpath)
 }
 
+// SetLatencyFrames requests the audio buffer size in frames — polyclav's
+// own latency knob. Clamped to [16, 8192] in Rust; 0 selects the default
+// (128, ~2.7 ms at 48 kHz). It is a request, not a guarantee: the effective
+// buffer never drops below what the platform supports (the PipeWire graph
+// quantum on Linux, the device's minimum buffer on macOS), so the real
+// latency is "this many frames, or the platform minimum, whichever is
+// larger". Must be called before Start; the value is read once when the
+// audio thread starts.
+func SetLatencyFrames(frames int) {
+	if frames < 0 {
+		frames = 0
+	}
+	C.polyclav_audio_set_latency_frames(C.uint32_t(frames))
+}
+
 // ReloadSoundfont triggers a background load of whatever path is currently
 // set by SetSoundfont. The audio thread swaps to the new backend on the
 // next callback. Safe to call while playing; the previous backend is

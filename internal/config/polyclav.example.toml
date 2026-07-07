@@ -63,6 +63,19 @@ limiter_ceiling_db = -0.3
 #     Scarypiano/Programs/Scarypiano.sfz
 path = "~/.local/share/polyclav/soundfonts/YDP-GrandPiano-SF2-20160804/YDP-GrandPiano-20160804.sf2"
 
+[audio]
+# Requested audio buffer size in frames — polyclav's own latency knob.
+#   0 (or unset)  -> engine default, 128 frames (~2.7 ms at 48 kHz)
+#   smaller       -> lower latency, higher CPU, more xrun risk
+#   larger        -> higher latency, safer under load
+# Clamped to [16, 8192]. This is a REQUEST: the effective buffer never drops
+# below what the platform supports. On Linux it becomes the PipeWire
+# `node.latency` hint (the graph may clamp it to its own min/max quantum);
+# on macOS it sets the CoreAudio device buffer size, raised to the device's
+# minimum if the request is smaller. So the real latency is "this many
+# frames, or the platform minimum, whichever is larger".
+latency_frames = 0
+
 [midi]
 # Case-insensitive substring matched against ALSA-seq MIDI input port names.
 # The Launchkey 61 MK4 enumerates as "Launchkey MK4 61 MIDI" (keys, wheels,

@@ -17,6 +17,14 @@ int32_t polyclav_audio_sfizz_available(void);
 /* Soundfont path: NULL or empty -> sine fallback. Must be set BEFORE start. */
 int32_t polyclav_audio_set_soundfont(const char *path);
 
+/* Requested audio buffer size in frames — polyclav's own latency knob.
+ * Clamped to [16, 8192]; 0 selects the default (128, ~2.7 ms at 48 kHz).
+ * A *request*: the effective buffer never drops below what the platform
+ * supports (the PipeWire graph quantum on Linux, the device's minimum
+ * buffer on macOS). Must be set BEFORE start; read once when the audio
+ * thread starts. */
+void polyclav_audio_set_latency_frames(uint32_t frames);
+
 /* Reload the soundfont set by polyclav_audio_set_soundfont(). Loads on a
  * background thread; the audio thread picks up the new backend on the
  * next callback. Returns 0 if reload was scheduled, 1 if no soundfont

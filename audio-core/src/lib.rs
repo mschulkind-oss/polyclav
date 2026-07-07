@@ -38,6 +38,15 @@ mod synth;
 
 const SAMPLE_RATE: f32 = 48000.0;
 const MAX_QUANTUM: usize = 8192;
+/// Absolute floor for the requested audio buffer size (frames). The real
+/// minimum is whatever the audio graph (PipeWire on Linux) or output device
+/// (CoreAudio on macOS) actually supports; this is only a sanity clamp so a
+/// bogus config can't request a pathological quantum. See
+/// `polyclav_audio_set_latency_frames`.
+const MIN_QUANTUM: u32 = 16;
+/// Default audio buffer size (frames) when none is configured — ~2.7 ms at
+/// 48 kHz, the historical polyclav quantum.
+const DEFAULT_QUANTUM: u32 = 128;
 
 enum SynthBackend {
     Oxi(Box<OxiSynth>),
@@ -145,6 +154,16 @@ fn soundfont_path_cell() -> &'static Mutex<Option<PathBuf>> {
 /// discards loads whose captured generation is older than the latest, so rapid
 /// pad-spam can't cause the audio to swap to a stale soundfont.
 static SOUNDFONT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Requested audio buffer size in frames — polyclav's own latency knob,
+/// read once when the audio thread starts. `0` is normalized to
+/// [`DEFAULT_QUANTUM`] by the FFI setter. On Linux it becomes the PipeWire
+/// `node.latency` "<frames>/48000" hint; on macOS the CoreAudio backend
+/// clamps it up to the device's minimum supported buffer size and sets
+/// `kAudioDevicePropertyBufferFrameSize`. Set it before
+/// `polyclav_audio_start`; changing it afterward has no effect until the
+/// next start.
+static LATENCY_FRAMES: AtomicU32 = AtomicU32::new(DEFAULT_QUANTUM);
 
 /// Queue of preloaded synth backends ready to be swapped into the audio
 /// thread. Capacity is small — we only ever expect one pending reload, but
@@ -717,6 +736,24 @@ pub unsafe extern "C" fn polyclav_audio_set_soundfont(path: *const c_char) -> i3
     0
 }
 
+/// Set the requested audio buffer size in frames — polyclav's own latency
+/// knob. Clamped to `[MIN_QUANTUM, MAX_QUANTUM]`; `0` selects the default
+/// ([`DEFAULT_QUANTUM`] = 128, ~2.7 ms at 48 kHz). This is a *request*: the
+/// effective buffer never drops below what the platform supports (the
+/// PipeWire graph quantum on Linux, the device's minimum buffer on macOS),
+/// so the real latency is "this many frames, or the platform minimum,
+/// whichever is larger". Set BEFORE `polyclav_audio_start` — the value is
+/// read once when the audio thread starts.
+#[no_mangle]
+pub extern "C" fn polyclav_audio_set_latency_frames(frames: u32) {
+    let clamped = if frames == 0 {
+        DEFAULT_QUANTUM
+    } else {
+        frames.clamp(MIN_QUANTUM, MAX_QUANTUM as u32)
+    };
+    LATENCY_FRAMES.store(clamped, Ordering::Relaxed);
+}
+
 /// Reload the soundfont set by `polyclav_audio_set_soundfont`. Loads on a
 /// background thread; the audio thread picks up the new backend on the
 /// next callback. Returns 0 if reload was scheduled, 1 if no soundfont is
@@ -1279,6 +1316,16 @@ fn run_audio(
         .connect_rc(None)
         .map_err(|e| format!("Core::connect: {e}"))?;
 
+    // Requested quantum (buffer size). PipeWire treats node.latency as a
+    // hint the graph may honor or clamp to its own min/max quantum, so the
+    // effective latency is this-or-the-graph-minimum. See
+    // `polyclav_audio_set_latency_frames`.
+    let latency = LATENCY_FRAMES.load(Ordering::Relaxed);
+    let node_latency = format!("{latency}/48000");
+    eprintln!(
+        "audio-core: requesting node.latency={node_latency} (~{:.2} ms)",
+        latency as f32 / SAMPLE_RATE * 1000.0
+    );
     let props = properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Playback",
@@ -1286,7 +1333,7 @@ fn run_audio(
         *pw::keys::NODE_NAME => "polyclav",
         *pw::keys::NODE_DESCRIPTION => "polyclav audio core",
         *pw::keys::APP_NAME => "polyclav",
-        *pw::keys::NODE_LATENCY => "128/48000",
+        *pw::keys::NODE_LATENCY => node_latency.as_str(),
     };
 
     let stream =
@@ -1637,6 +1684,24 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `polyclav_audio_set_latency_frames` clamps to [MIN_QUANTUM,
+    /// MAX_QUANTUM] and maps 0 to the default quantum. This is the config
+    /// "buffer size / latency" knob; the value flows into PipeWire's
+    /// node.latency on Linux and the CoreAudio buffer size on macOS.
+    #[test]
+    fn latency_frames_ffi_setter_clamps() {
+        polyclav_audio_set_latency_frames(0);
+        assert_eq!(LATENCY_FRAMES.load(Ordering::Relaxed), DEFAULT_QUANTUM);
+        polyclav_audio_set_latency_frames(1);
+        assert_eq!(LATENCY_FRAMES.load(Ordering::Relaxed), MIN_QUANTUM);
+        polyclav_audio_set_latency_frames(1_000_000);
+        assert_eq!(LATENCY_FRAMES.load(Ordering::Relaxed), MAX_QUANTUM as u32);
+        polyclav_audio_set_latency_frames(256);
+        assert_eq!(LATENCY_FRAMES.load(Ordering::Relaxed), 256);
+        // Restore the default so a subsequent real start uses 128.
+        polyclav_audio_set_latency_frames(0);
+    }
 
     /// `native_resonance` defaults to the Minimoog factory 0.3 and
     /// clamps to [0.0, 0.95] (headroom below the Stilson/Smith ladder's

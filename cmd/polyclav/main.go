@@ -156,6 +156,7 @@ func main() {
 	go func() { _ = stateStore.Run(ctx) }()
 
 	audio.SetSoundfont(cfg.Soundfont.Path)
+	audio.SetLatencyFrames(cfg.Audio.LatencyFrames) // 0 = engine default; must precede Start
 	if err := audio.Start(); err != nil {
 		logger.Error("audio start", "err", err)
 	}

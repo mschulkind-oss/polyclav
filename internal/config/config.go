@@ -29,11 +29,24 @@ func IsKnownNativeEngine(engine string) bool {
 
 type Config struct {
 	Soundfont SoundfontConfig  `toml:"soundfont"`
+	Audio     AudioConfig      `toml:"audio"`
 	MIDI      MIDIConfig       `toml:"midi"`
 	OSC       OSCConfig        `toml:"osc"`
 	Web       WebConfig        `toml:"web"`
 	Patches   []PatchConfig    `toml:"patches"`
 	Mastering *MasteringConfig `toml:"mastering"`
+}
+
+// AudioConfig tunes the audio output path. Optional; the zero value uses
+// engine defaults.
+type AudioConfig struct {
+	// LatencyFrames requests the audio buffer size in frames (the
+	// "quantum"). 0 = engine default (128, ~2.7 ms at 48 kHz). Clamped to
+	// [16, 8192] in the audio core. This is a request: the effective buffer
+	// never drops below what the platform supports (the PipeWire graph
+	// quantum on Linux, the device's minimum buffer on macOS). Smaller =
+	// lower latency but higher CPU and more xrun risk.
+	LatencyFrames int `toml:"latency_frames"`
 }
 
 type SoundfontConfig struct {
