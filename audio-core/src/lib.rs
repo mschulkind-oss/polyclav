@@ -1392,8 +1392,11 @@ fn run_audio(
     Ok(())
 }
 
-fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
-    // 1. Hot-swap soundfont if a freshly loaded backend is pending.
+/// Swap in a freshly loaded synth backend if one is pending on the reload
+/// queue. Generation-checked so rapid patch switches discard stale loads.
+/// Portable — no OS audio API; shared by the PipeWire callback (Linux) and
+/// the CoreAudio backend (macOS).
+fn swap_pending_backend(user_data: &mut UserData) {
     if let Some((gen, new_backend)) = user_data.reload_queue.pop() {
         let current_gen = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
         if gen == current_gen {
@@ -1408,8 +1411,12 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
             // new_backend dropped here — Rust will free underlying resources
         }
     }
+}
 
-    // 2. Drain MIDI events into the current synth.
+/// Drain queued MIDI events into the active backend. Portable — no OS audio
+/// API; shared by the PipeWire callback (Linux) and the CoreAudio backend
+/// (macOS).
+fn drain_midi(user_data: &mut UserData) {
     while let Some(event) = user_data.midi_queue.pop() {
         match user_data.synth {
             Some(SynthBackend::Oxi(ref mut s)) => {
@@ -1456,6 +1463,122 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
             None => {}
         }
     }
+}
+
+/// Render one block of audio: push the live native-synth params, dispatch the
+/// active backend into `samples` (interleaved stereo f32, `len = frames * 2`,
+/// 48 kHz), then run the DSP chain (patch gain → compressor → reverb →
+/// mastering → limiter → master volume). Pure portable buffer math — no OS
+/// audio API — so it is shared verbatim by the PipeWire callback (Linux) and
+/// the CoreAudio backend (macOS), and is exercised directly by the offline
+/// render tests.
+fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
+    let n_frames = samples.len() / 2;
+
+    // Phase 1 native-synth knob override: push the latest cutoff +
+    // resonance atomics into the active native synth before
+    // rendering. This is a no-op for other backends (the match arm
+    // doesn't fire).
+    if let Some(SynthBackend::Native(ref mut s)) = user_data.synth {
+        s.set_cutoff_hz(user_data.dsp_params.native_cutoff_hz());
+        s.set_resonance(user_data.dsp_params.native_resonance());
+        let (aa, ad, asu, ar) = user_data.dsp_params.native_amp_env();
+        s.set_amp_env(aa, ad, asu, ar);
+        let (fa, fd, fs, fr, famt) = user_data.dsp_params.native_filter_env();
+        s.set_filter_env(fa, fd, fs, fr, famt);
+        for idx in 0..3 {
+            let (wave, octave, detune_cents, level) = user_data.dsp_params.native_osc(idx);
+            s.set_osc(idx, wave, octave, detune_cents, level);
+        }
+        s.set_noise_level(user_data.dsp_params.native_noise_level());
+        s.set_glide(user_data.dsp_params.native_glide_s());
+        s.set_pulse_width(user_data.dsp_params.native_pulse_width());
+        s.set_drive(user_data.dsp_params.native_drive());
+        let (vel_to_cutoff, vel_to_amp) = user_data.dsp_params.native_vel_routing();
+        s.set_vel_routing(vel_to_cutoff, vel_to_amp);
+        s.set_kbd_track(user_data.dsp_params.native_kbd_track());
+        let (lfo_wave, lfo_rate, lfo_pitch, lfo_cutoff, lfo_amp) =
+            user_data.dsp_params.native_lfo();
+        s.set_lfo(lfo_wave, lfo_rate, lfo_pitch, lfo_cutoff, lfo_amp);
+        s.set_bend_range(user_data.dsp_params.native_bend_range_semitones());
+        s.set_voice_mode(user_data.dsp_params.native_voice_mode());
+        s.set_oversample(user_data.dsp_params.native_oversample() != 0);
+    }
+
+    match user_data.synth {
+        Some(SynthBackend::Oxi(ref mut s)) => s.write(&mut *samples),
+        Some(SynthBackend::Sfizz(ref mut s)) => s.render(samples),
+        Some(SynthBackend::Lv2(ref mut s)) => s.render(samples),
+        Some(SynthBackend::Clap(ref mut s)) => s.render(samples),
+        Some(SynthBackend::Native(ref mut s)) => s.render(samples),
+        None => {
+            for i in 0..n_frames {
+                let s = 0.1 * (2.0 * std::f32::consts::PI * 440.0 * user_data.sine_phase).sin();
+                samples[i * 2] = s;
+                samples[i * 2 + 1] = s;
+                user_data.sine_phase += 1.0 / 48000.0;
+                if user_data.sine_phase >= 1.0 {
+                    user_data.sine_phase -= 1.0;
+                }
+            }
+        }
+    }
+
+    // 3. DSP chain. Read parameters once per callback.
+    let master = user_data.dsp_params.master_volume();
+    let comp_amount = user_data.dsp_params.comp_amount();
+    let reverb_mix = user_data.dsp_params.reverb_mix();
+    let patch_gain = user_data.dsp_params.patch_gain();
+    let mastering_amount = user_data.dsp_params.mastering_amount();
+    let limiter_ceiling_db = user_data.dsp_params.limiter_ceiling_db();
+
+    if (comp_amount - user_data.last_comp_amount).abs() > f32::EPSILON {
+        user_data.compressor.set_amount(comp_amount);
+        user_data.last_comp_amount = comp_amount;
+    }
+    if (reverb_mix - user_data.last_reverb_mix).abs() > f32::EPSILON {
+        user_data.reverb.set_mix(reverb_mix);
+        user_data.last_reverb_mix = reverb_mix;
+    }
+    if (mastering_amount - user_data.last_mastering_amount).abs() > f32::EPSILON {
+        user_data.mastering.set_amount(mastering_amount);
+        user_data.last_mastering_amount = mastering_amount;
+    }
+    if (limiter_ceiling_db - user_data.last_limiter_ceiling_db).abs() > f32::EPSILON {
+        user_data.limiter.set_ceiling_db(limiter_ceiling_db);
+        user_data.last_limiter_ceiling_db = limiter_ceiling_db;
+    }
+
+    // Patch gain first — direct multiply on every sample.
+    if (patch_gain - 1.0).abs() > f32::EPSILON {
+        for s in samples.iter_mut() {
+            *s *= patch_gain;
+        }
+    }
+    if comp_amount > 0.0 {
+        user_data.compressor.process(samples);
+    }
+    if reverb_mix > 0.0 {
+        user_data.reverb.process(samples);
+    }
+    if mastering_amount > 0.0 {
+        user_data.mastering.process(samples);
+    }
+    // Limiter always runs — it is brick-wall safety, default ceiling -0.3 dBFS.
+    user_data.limiter.process(samples);
+    if (master - 1.0).abs() > f32::EPSILON {
+        for s in samples.iter_mut() {
+            *s *= master;
+        }
+    }
+}
+
+fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
+    // 1. Hot-swap soundfont if a freshly loaded backend is pending.
+    swap_pending_backend(user_data);
+
+    // 2. Drain MIDI events into the current synth.
+    drain_midi(user_data);
 
     let raw = unsafe { stream.dequeue_raw_buffer() };
     if raw.is_null() {
@@ -1481,103 +1604,7 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
     if !data.data.is_null() && n_frames > 0 {
         let samples =
             unsafe { std::slice::from_raw_parts_mut(data.data.cast::<f32>(), n_frames * 2) };
-
-        // Phase 1 native-synth knob override: push the latest cutoff +
-        // resonance atomics into the active native synth before
-        // rendering. This is a no-op for other backends (the match arm
-        // doesn't fire).
-        if let Some(SynthBackend::Native(ref mut s)) = user_data.synth {
-            s.set_cutoff_hz(user_data.dsp_params.native_cutoff_hz());
-            s.set_resonance(user_data.dsp_params.native_resonance());
-            let (aa, ad, asu, ar) = user_data.dsp_params.native_amp_env();
-            s.set_amp_env(aa, ad, asu, ar);
-            let (fa, fd, fs, fr, famt) = user_data.dsp_params.native_filter_env();
-            s.set_filter_env(fa, fd, fs, fr, famt);
-            for idx in 0..3 {
-                let (wave, octave, detune_cents, level) = user_data.dsp_params.native_osc(idx);
-                s.set_osc(idx, wave, octave, detune_cents, level);
-            }
-            s.set_noise_level(user_data.dsp_params.native_noise_level());
-            s.set_glide(user_data.dsp_params.native_glide_s());
-            s.set_pulse_width(user_data.dsp_params.native_pulse_width());
-            s.set_drive(user_data.dsp_params.native_drive());
-            let (vel_to_cutoff, vel_to_amp) = user_data.dsp_params.native_vel_routing();
-            s.set_vel_routing(vel_to_cutoff, vel_to_amp);
-            s.set_kbd_track(user_data.dsp_params.native_kbd_track());
-            let (lfo_wave, lfo_rate, lfo_pitch, lfo_cutoff, lfo_amp) =
-                user_data.dsp_params.native_lfo();
-            s.set_lfo(lfo_wave, lfo_rate, lfo_pitch, lfo_cutoff, lfo_amp);
-            s.set_bend_range(user_data.dsp_params.native_bend_range_semitones());
-            s.set_voice_mode(user_data.dsp_params.native_voice_mode());
-            s.set_oversample(user_data.dsp_params.native_oversample() != 0);
-        }
-
-        match user_data.synth {
-            Some(SynthBackend::Oxi(ref mut s)) => s.write(&mut *samples),
-            Some(SynthBackend::Sfizz(ref mut s)) => s.render(samples),
-            Some(SynthBackend::Lv2(ref mut s)) => s.render(samples),
-            Some(SynthBackend::Clap(ref mut s)) => s.render(samples),
-            Some(SynthBackend::Native(ref mut s)) => s.render(samples),
-            None => {
-                for i in 0..n_frames {
-                    let s = 0.1 * (2.0 * std::f32::consts::PI * 440.0 * user_data.sine_phase).sin();
-                    samples[i * 2] = s;
-                    samples[i * 2 + 1] = s;
-                    user_data.sine_phase += 1.0 / 48000.0;
-                    if user_data.sine_phase >= 1.0 {
-                        user_data.sine_phase -= 1.0;
-                    }
-                }
-            }
-        }
-
-        // 3. DSP chain. Read parameters once per callback.
-        let master = user_data.dsp_params.master_volume();
-        let comp_amount = user_data.dsp_params.comp_amount();
-        let reverb_mix = user_data.dsp_params.reverb_mix();
-        let patch_gain = user_data.dsp_params.patch_gain();
-        let mastering_amount = user_data.dsp_params.mastering_amount();
-        let limiter_ceiling_db = user_data.dsp_params.limiter_ceiling_db();
-
-        if (comp_amount - user_data.last_comp_amount).abs() > f32::EPSILON {
-            user_data.compressor.set_amount(comp_amount);
-            user_data.last_comp_amount = comp_amount;
-        }
-        if (reverb_mix - user_data.last_reverb_mix).abs() > f32::EPSILON {
-            user_data.reverb.set_mix(reverb_mix);
-            user_data.last_reverb_mix = reverb_mix;
-        }
-        if (mastering_amount - user_data.last_mastering_amount).abs() > f32::EPSILON {
-            user_data.mastering.set_amount(mastering_amount);
-            user_data.last_mastering_amount = mastering_amount;
-        }
-        if (limiter_ceiling_db - user_data.last_limiter_ceiling_db).abs() > f32::EPSILON {
-            user_data.limiter.set_ceiling_db(limiter_ceiling_db);
-            user_data.last_limiter_ceiling_db = limiter_ceiling_db;
-        }
-
-        // Patch gain first — direct multiply on every sample.
-        if (patch_gain - 1.0).abs() > f32::EPSILON {
-            for s in samples.iter_mut() {
-                *s *= patch_gain;
-            }
-        }
-        if comp_amount > 0.0 {
-            user_data.compressor.process(samples);
-        }
-        if reverb_mix > 0.0 {
-            user_data.reverb.process(samples);
-        }
-        if mastering_amount > 0.0 {
-            user_data.mastering.process(samples);
-        }
-        // Limiter always runs — it is brick-wall safety, default ceiling -0.3 dBFS.
-        user_data.limiter.process(samples);
-        if (master - 1.0).abs() > f32::EPSILON {
-            for s in samples.iter_mut() {
-                *s *= master;
-            }
-        }
+        render_block(user_data, samples);
     }
 
     if !data.chunk.is_null() {
