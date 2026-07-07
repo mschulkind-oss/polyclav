@@ -1,0 +1,139 @@
+# macOS (Apple-Silicon) CI for the polyclav port.
+#
+# Separate from ci.yml (the Linux + nix job) on purpose: the macOS build takes a
+# different path — cpal's CoreAudio backend instead of PipeWire, no LV2/CLAP
+# plugin hosting (v1 macOS backends are native + SF2/SF3 + SFZ), and no nix.
+# Everything here is device-free (offline render only) so it runs on a
+# hardware-less GitHub-hosted runner.
+name: CI (macOS)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# macOS runner minutes bill at 10x (free only on public repos). Cancel a run
+# as soon as a newer commit supersedes it so we don't pay for stale builds.
+concurrency:
+  group: ci-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    # Pin macos-15, NOT macos-latest: the `macos-latest` label is mid-migration
+    # to macOS 26 (Tahoe) — GitHub started repointing it on 2026-06-15 and the
+    # 30-day rollout runs through mid-July 2026, so `macos-latest` is a moving
+    # target right now. macos-15 is the Apple-Silicon (arm64) image; the Intel
+    # variant is the separate `macos-15-intel` label.
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      # Go must link the Rust staticlib via cgo.
+      CGO_ENABLED: "1"
+      # Match mise.toml so `go build`/`go vet` behave identically to Linux CI.
+      GOFLAGS: "-mod=mod"
+      # Harmless on the CLAP-only macOS path (no pkg-config'd deps), but keeps the
+      # shared cgo code future-proof if a pkg-config dep that emits these hardening
+      # flags is ever added — cgo otherwise rejects unknown pkg-config cflags.
+      CGO_CFLAGS_ALLOW: "-fno-strict-aliasing|-fno-strict-overflow"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # 1.26.x tracks the latest 1.26 patch; mise.toml pins 1.26.3 for the
+          # nix/jail flow. go.mod declares `go 1.26`.
+          go-version: '1.26.x'
+          # setup-go@v5 caches the module cache (GOMODCACHE) *and* the build cache
+          # (GOCACHE) by default, keyed on the hash of this file. This is the
+          # "cache go build" half of the requirement — no separate actions/cache
+          # step needed.
+          cache-dependency-path: go.sum
+
+      - name: Set up Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + git + target
+        # Swatinem/rust-cache caches ~/.cargo/{registry,git} and the workspace
+        # target/ dir, keyed on Cargo.lock + rustc version. It prunes the target
+        # dir before saving, which matters here: macOS runners ship only ~14 GB
+        # free disk, so an unpruned release target/ would blow the cache budget.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # --- Homebrew system deps -------------------------------------------------
+      # The v1 macOS backends are native (fundsp), SF2/SF3 (oxisynth), and SFZ
+      # (sfizz, loaded at runtime via dlopen — never linked). cpal's CoreAudio
+      # backend links the system CoreAudio / AudioToolbox / AudioUnit frameworks.
+      # None of this needs a Homebrew package, so there is deliberately no
+      # `brew install` step on the default path.
+      #
+      # IF the LV2 host (livi/lilv) or the OSC client (liblo) is kept on macOS,
+      # this is exactly where its deps would go — lilv is a C library resolved via
+      # pkg-config and pulls the whole serd/sord/sratom/lv2 stack:
+      #
+      #   - name: Install LV2 + OSC deps (only if the LV2/OSC path is kept)
+      #     run: brew install pkg-config lilv liblo
+      # --------------------------------------------------------------------------
+
+      - name: Build Rust staticlib (cpal CoreAudio backend on macOS)
+        # Produces target/release/libpolyclav_audio_core.a, which the Go cgo build
+        # below links against. On macOS this compiles the cpal/CoreAudio backend
+        # (the PipeWire backend must be #[cfg(target_os = "linux")]-gated — see the
+        # port caveats in the PR description).
+        run: cargo build --release --manifest-path audio-core/Cargo.toml
+
+      - name: Rust unit tests (device-free)
+        # All audio-core tests today are #[cfg(test)] DSP/synth unit tests — pure
+        # math, no audio stream is ever opened. Keep it that way: DO NOT add a test
+        # that opens the default output device (see the Null-Audio-Device flake
+        # note in the PR description).
+        run: cargo test --manifest-path audio-core/Cargo.toml
+
+      - name: Go build (cgo links the Rust staticlib)
+        # `go build ./...` (not just `go test`) catches cgo link errors that
+        # test-only linking misses — e.g. a missing `-framework CoreAudio` on the
+        # darwin cgo LDFLAGS line.
+        run: go build ./...
+
+      - name: Go tests (device-free)
+        run: go test ./...
+
+      - name: Offline-render smoke (placeholder until `render` subcommand lands)
+        # PLACEHOLDER. The `render` subcommand does not exist yet (this is part of
+        # the port). Once it does, this becomes a real gate: render a couple of
+        # seconds of audio to a WAV entirely offline (no device opened) and assert
+        # the file is non-empty. Guarded on `render --help` so it no-ops (warning,
+        # not failure) until the subcommand ships.
+        run: |
+          set -euo pipefail
+          go build -o bin/polyclav ./cmd/polyclav
+          if ./bin/polyclav render --help >/dev/null 2>&1; then
+            out="${RUNNER_TEMP}/smoke.wav"
+            # Intended shape: fixed-length offline render of a known patch to WAV.
+            ./bin/polyclav render --seconds 2 --out "$out"
+            # BSD stat on macOS uses -f%z for size (GNU's -c%s does NOT work here).
+            if [ ! -s "$out" ]; then
+              echo "::error::offline render produced an empty/missing WAV at $out"
+              exit 1
+            fi
+            echo "offline render OK: $(stat -f%z "$out") bytes -> $out"
+          else
+            echo "::warning::render subcommand not implemented yet — skipping offline-render smoke (placeholder)"
+          fi
+
+      - name: Debug over SSH on failure (tmate)
+        # Only spawns when an earlier step failed. limit-access-to-actor: true
+        # restricts the SSH session to the GitHub account that triggered the run
+        # (using the SSH keys on their profile). timeout-minutes caps the session
+        # so a forgotten debug window can't burn 10x macOS minutes indefinitely.
+        if: failure()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
