@@ -2,6 +2,8 @@
 
 > Status: strategy / feasibility document. Scope: what it takes to build, automatically test, and (eventually) hand-verify the Linux-first polyclav live-piano host on macOS/Apple Silicon when the owner has no Mac.
 
+> **Implementation status — branch `macos-port` (2026-07-07):** most of the plan below is now built and Linux-verified: the portable audio-backend seam (`render_block`/`drain_midi`/`swap_pending_backend`), a config-driven buffer-size/latency knob (`[audio] latency_frames` → `polyclav_audio_set_latency_frames`), the cpal CoreAudio backend (`audio-core/src/backend_macos.rs`) behind `cfg(target_os = "macos")`, the per-OS Go cgo split (`audio_linux.go`/`audio_darwin.go`), and a pinned `macos-15` CI workflow (`.github/workflows/ci-macos.yml`). **The macOS build has not yet been compiled** — there is no Mac in the dev loop, so its first real proof is the `CI (macOS)` job. What remains: run that CI (open a PR from `macos-port`), then the hardware bring-up in §5. The cpal API was adversarially verified against cpal 0.18.1 source, but treat the first CI run as the compile gate.
+
 ---
 
 ## 1. TL;DR / verdict
