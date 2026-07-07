@@ -1,19 +1,17 @@
 package audio
 
+// Cgo bindings for the polyclav audio-core Rust staticlib.
+//
+// OS split: the -I include path and the shared FFI prototypes are OS-agnostic
+// and live in the cgo preamble below. The OS-specific LINK flags (the Rust
+// staticlib + its per-backend libs, pkg-config, frameworks) live in
+// audio_linux.go / audio_darwin.go; the nixpkgs-only -lzix-0 lives in
+// zix_link.go. cgo concatenates every file's #cgo directives in the package,
+// so this resolves to one link line per OS. The LV2/CLAP setters wrapped below
+// are DEFINED symbols on macOS too (the Rust staticlib ships thin error stubs
+// there), so they link on darwin without a per-OS Go split.
+
 // #cgo CFLAGS: -I${SRCDIR}/../../audio-core/include
-// #cgo LDFLAGS: -L${SRCDIR}/../../target/release -lpolyclav_audio_core -lpthread -ldl -lm
-// // sfizz (SFZ player) is OPTIONAL and dlopen'd at runtime by the Rust
-// // audio-core — deliberately NOT linked here, so the build needs no sfizz
-// // and `.sfz` patches degrade gracefully when libsfizz is absent.
-// // Phase 1 LV2 plugin host: livi -> lilv -> serd/sord/sratom. The Rust
-// // staticlib swallows their `cargo:rustc-link-lib` directives, so we
-// // re-state them at the cgo link step. The matching -L / -Wl,-rpath
-// // entries come from CGO_LDFLAGS in mise.toml. (zix is linked separately
-// // for nixpkgs lilv 0.26+ in zix_link.go; distro lilv 0.24 vendors it.)
-// #cgo LDFLAGS: -llilv-0 -lserd-0 -lsord-0 -lsratom-0
-// // CLAP plugin host (clack-host) uses libloading -> libdl; -ldl already
-// // present above. No extra system library is needed at link time.
-// #cgo pkg-config: libpipewire-0.3 libspa-0.2
 // #include "polyclav_audio.h"
 // #include <stdlib.h>
 // #include <stdint.h>
