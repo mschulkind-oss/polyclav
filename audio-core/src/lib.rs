@@ -8,16 +8,24 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
+// PipeWire is the Linux audio backend; on macOS the CoreAudio backend
+// (backend_macos, cpal) replaces all of this. Gated so a macOS build neither
+// links pipewire nor trips unused-import errors.
+#[cfg(target_os = "linux")]
 use pipewire as pw;
-use pw::context::ContextRc;
-use pw::main_loop::MainLoopRc;
-use pw::properties::properties;
-use pw::spa::param::audio::{AudioFormat, AudioInfoRaw};
-use pw::spa::pod;
-use pw::spa::pod::serialize::PodSerializer;
-use pw::spa::sys;
-use pw::spa::utils::Direction;
-use pw::stream::{StreamBox, StreamFlags};
+#[cfg(target_os = "linux")]
+use pw::{
+    context::ContextRc,
+    main_loop::MainLoopRc,
+    properties::properties,
+    spa::{
+        param::audio::{AudioFormat, AudioInfoRaw},
+        pod::{self, serialize::PodSerializer},
+        sys,
+        utils::Direction,
+    },
+    stream::{StreamBox, StreamFlags},
+};
 
 use crossbeam_queue::ArrayQueue;
 use oxisynth::{
@@ -25,18 +33,25 @@ use oxisynth::{
 };
 
 use crate::dsp::{Compressor, Limiter, MasteringCompressor, Reverb};
+#[cfg(target_os = "linux")]
 use crate::plugin_clap::ClapInstance;
+#[cfg(target_os = "linux")]
 use crate::plugin_lv2::LvInstance;
 use crate::synth::NativeSynth;
 
 mod dsp;
+// CoreAudio output backend (cpal); the macOS analog of the PipeWire path.
+#[cfg(target_os = "macos")]
+mod backend_macos;
+#[cfg(target_os = "linux")]
 mod plugin_clap;
+#[cfg(target_os = "linux")]
 mod plugin_lv2;
 mod sfizz;
 mod sfizz_sys;
 mod synth;
 
-const SAMPLE_RATE: f32 = 48000.0;
+pub(crate) const SAMPLE_RATE: f32 = 48000.0;
 const MAX_QUANTUM: usize = 8192;
 /// Absolute floor for the requested audio buffer size (frames). The real
 /// minimum is whatever the audio graph (PipeWire on Linux) or output device
@@ -48,10 +63,12 @@ const MIN_QUANTUM: u32 = 16;
 /// 48 kHz, the historical polyclav quantum.
 const DEFAULT_QUANTUM: u32 = 128;
 
-enum SynthBackend {
+pub(crate) enum SynthBackend {
     Oxi(Box<OxiSynth>),
     Sfizz(sfizz::Sfizz),
+    #[cfg(target_os = "linux")]
     Lv2(Box<LvInstance>),
+    #[cfg(target_os = "linux")]
     Clap(Box<ClapInstance>),
     Native(Box<NativeSynth>),
 }
@@ -86,12 +103,14 @@ impl SynthBackend {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn load_lv2(uri: &str) -> Result<Self, String> {
         let inst = LvInstance::load(uri, f64::from(SAMPLE_RATE), MAX_QUANTUM)?;
         eprintln!("audio-core: LV2 plugin loaded ({uri})");
         Ok(SynthBackend::Lv2(Box::new(inst)))
     }
 
+    #[cfg(target_os = "linux")]
     fn load_clap(bundle_path: &Path, plugin_id: &str) -> Result<Self, String> {
         let inst = ClapInstance::load(bundle_path, plugin_id, f64::from(SAMPLE_RATE), MAX_QUANTUM)?;
         eprintln!(
@@ -111,7 +130,9 @@ impl SynthBackend {
         match self {
             SynthBackend::Oxi(_) => "oxisynth",
             SynthBackend::Sfizz(_) => "sfizz",
+            #[cfg(target_os = "linux")]
             SynthBackend::Lv2(_) => "lv2",
+            #[cfg(target_os = "linux")]
             SynthBackend::Clap(_) => "clap",
             SynthBackend::Native(_) => "native",
         }
@@ -163,7 +184,7 @@ static SOUNDFONT_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// `kAudioDevicePropertyBufferFrameSize`. Set it before
 /// `polyclav_audio_start`; changing it afterward has no effect until the
 /// next start.
-static LATENCY_FRAMES: AtomicU32 = AtomicU32::new(DEFAULT_QUANTUM);
+pub(crate) static LATENCY_FRAMES: AtomicU32 = AtomicU32::new(DEFAULT_QUANTUM);
 
 /// Queue of preloaded synth backends ready to be swapped into the audio
 /// thread. Capacity is small — we only ever expect one pending reload, but
@@ -645,7 +666,7 @@ struct State {
     quit_flag: Arc<AtomicBool>,
 }
 
-struct UserData {
+pub(crate) struct UserData {
     sine_phase: f32,
     callback_count: u32,
     last_frames: usize,
@@ -685,7 +706,14 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
     let handle = thread::Builder::new()
         .name("polyclav-audio".into())
         .spawn(move || {
-            if let Err(e) = run_audio(quit_for_thread, &ready_tx) {
+            // Platform dispatch: PipeWire on Linux, CoreAudio (cpal) on macOS.
+            // Both share the same (quit_flag, ready_tx) contract: build the
+            // stream, signal ready, then block until quit_flag flips.
+            #[cfg(target_os = "linux")]
+            let setup = run_audio(quit_for_thread, &ready_tx);
+            #[cfg(target_os = "macos")]
+            let setup = crate::backend_macos::run_audio(quit_for_thread, &ready_tx);
+            if let Err(e) = setup {
                 eprintln!("audio-core: setup failed: {e}");
                 let _ = ready_tx.send(Err(e));
             }
@@ -810,6 +838,7 @@ pub extern "C" fn polyclav_audio_reload_soundfont() -> i32 {
 ///
 /// # Safety
 /// `uri` must be a valid NUL-terminated C string.
+#[cfg(target_os = "linux")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i32 {
     if uri.is_null() {
@@ -854,6 +883,7 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
 ///
 /// # Safety
 /// `bundle_path` and `plugin_id` must be valid NUL-terminated C strings.
+#[cfg(target_os = "linux")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     bundle_path: *const c_char,
@@ -897,6 +927,36 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
         })
         .expect("spawn clap load thread");
     0
+}
+
+/// macOS stub: LV2 hosting is Linux-only (livi wraps the lilv C library,
+/// which has no macOS build). Kept as a DEFINED exported symbol so the shared,
+/// build-tag-free Go wrapper `audio.SetLv2Plugin` still links on darwin. Always
+/// returns 1 ("not available / not running").
+///
+/// # Safety
+/// `uri` must be a valid NUL-terminated C string or NULL.
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(_uri: *const c_char) -> i32 {
+    eprintln!("audio-core: LV2 hosting is unavailable on macOS (native/SF2/SFZ only)");
+    1
+}
+
+/// macOS stub: CLAP hosting is out of scope for the v1 macOS port. Kept as a
+/// DEFINED exported symbol so the shared Go wrapper `audio.SetClapPlugin`
+/// still links on darwin. Always returns 1 ("not available / not running").
+///
+/// # Safety
+/// `bundle_path` and `plugin_id` must be valid NUL-terminated C strings or NULL.
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
+    _bundle_path: *const c_char,
+    _plugin_id: *const c_char,
+) -> i32 {
+    eprintln!("audio-core: CLAP hosting is unavailable on macOS in v1");
+    1
 }
 
 /// Returns 1 if libsfizz is available (SFZ playback possible), else 0.
@@ -1305,6 +1365,61 @@ pub extern "C" fn polyclav_dsp_set_native_oversample(on: u32) {
     dsp_params().set_native_oversample(on);
 }
 
+/// Build the initial [`UserData`]: soundfont/native load, a DSP-param snapshot,
+/// and DSP-stage construction. Portable (no OS audio API), so it is shared by
+/// the PipeWire `run_audio` (Linux) and the CoreAudio backend (macOS).
+pub(crate) fn build_user_data() -> UserData {
+    let synth: Option<SynthBackend> = {
+        let path_guard = soundfont_path_cell().lock().unwrap();
+        path_guard.as_ref().and_then(|path| {
+            if !path.exists() {
+                eprintln!("audio-core: soundfont path does not exist: {path:?}");
+                return None;
+            }
+            match SynthBackend::load(path) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    eprintln!("audio-core: soundfont load failed: {e}");
+                    None
+                }
+            }
+        })
+    };
+
+    let params = Arc::clone(dsp_params());
+    let initial_comp = params.comp_amount();
+    let initial_mix = params.reverb_mix();
+    let initial_mastering = params.mastering_amount();
+    let initial_ceiling_db = params.limiter_ceiling_db();
+    let mut compressor = Compressor::new();
+    let mut reverb = Reverb::new();
+    let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
+    let mut limiter = Limiter::new(SAMPLE_RATE);
+    compressor.set_amount(initial_comp);
+    reverb.set_mix(initial_mix);
+    mastering.set_amount(initial_mastering);
+    limiter.set_ceiling_db(initial_ceiling_db);
+
+    UserData {
+        sine_phase: 0.0,
+        callback_count: 0,
+        last_frames: 0,
+        synth,
+        midi_queue: Arc::clone(midi_queue()),
+        reload_queue: Arc::clone(synth_reload_queue()),
+        dsp_params: params,
+        compressor,
+        reverb,
+        mastering,
+        limiter,
+        last_comp_amount: initial_comp,
+        last_reverb_mix: initial_mix,
+        last_mastering_amount: initial_mastering,
+        last_limiter_ceiling_db: initial_ceiling_db,
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn run_audio(
     quit_flag: Arc<AtomicBool>,
     ready_tx: &mpsc::SyncSender<Result<(), String>>,
@@ -1339,54 +1454,7 @@ fn run_audio(
     let stream =
         StreamBox::new(&core, "polyclav-output", props).map_err(|e| format!("Stream::new: {e}"))?;
 
-    let synth: Option<SynthBackend> = {
-        let path_guard = soundfont_path_cell().lock().unwrap();
-        path_guard.as_ref().and_then(|path| {
-            if !path.exists() {
-                eprintln!("audio-core: soundfont path does not exist: {path:?}");
-                return None;
-            }
-            match SynthBackend::load(path) {
-                Ok(b) => Some(b),
-                Err(e) => {
-                    eprintln!("audio-core: soundfont load failed: {e}");
-                    None
-                }
-            }
-        })
-    };
-
-    let params = Arc::clone(dsp_params());
-    let initial_comp = params.comp_amount();
-    let initial_mix = params.reverb_mix();
-    let initial_mastering = params.mastering_amount();
-    let initial_ceiling_db = params.limiter_ceiling_db();
-    let mut compressor = Compressor::new();
-    let mut reverb = Reverb::new();
-    let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
-    let mut limiter = Limiter::new(SAMPLE_RATE);
-    compressor.set_amount(initial_comp);
-    reverb.set_mix(initial_mix);
-    mastering.set_amount(initial_mastering);
-    limiter.set_ceiling_db(initial_ceiling_db);
-
-    let user_data = UserData {
-        sine_phase: 0.0,
-        callback_count: 0,
-        last_frames: 0,
-        synth,
-        midi_queue: Arc::clone(midi_queue()),
-        reload_queue: Arc::clone(synth_reload_queue()),
-        dsp_params: params,
-        compressor,
-        reverb,
-        mastering,
-        limiter,
-        last_comp_amount: initial_comp,
-        last_reverb_mix: initial_mix,
-        last_mastering_amount: initial_mastering,
-        last_limiter_ceiling_db: initial_ceiling_db,
-    };
+    let user_data = build_user_data();
 
     let _listener = stream
         .add_local_listener_with_user_data(user_data)
@@ -1443,7 +1511,7 @@ fn run_audio(
 /// queue. Generation-checked so rapid patch switches discard stale loads.
 /// Portable — no OS audio API; shared by the PipeWire callback (Linux) and
 /// the CoreAudio backend (macOS).
-fn swap_pending_backend(user_data: &mut UserData) {
+pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
     if let Some((gen, new_backend)) = user_data.reload_queue.pop() {
         let current_gen = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
         if gen == current_gen {
@@ -1463,7 +1531,7 @@ fn swap_pending_backend(user_data: &mut UserData) {
 /// Drain queued MIDI events into the active backend. Portable — no OS audio
 /// API; shared by the PipeWire callback (Linux) and the CoreAudio backend
 /// (macOS).
-fn drain_midi(user_data: &mut UserData) {
+pub(crate) fn drain_midi(user_data: &mut UserData) {
     while let Some(event) = user_data.midi_queue.pop() {
         match user_data.synth {
             Some(SynthBackend::Oxi(ref mut s)) => {
@@ -1504,7 +1572,9 @@ fn drain_midi(user_data: &mut UserData) {
                 } => s.cc(controller, value),
                 MidiEvent::PitchBend { bend, .. } => s.pitch_bend(bend),
             },
+            #[cfg(target_os = "linux")]
             Some(SynthBackend::Lv2(ref mut s)) => s.push_midi(&event),
+            #[cfg(target_os = "linux")]
             Some(SynthBackend::Clap(ref mut s)) => s.push_midi(&event),
             Some(SynthBackend::Native(ref mut s)) => s.handle_event(&event),
             None => {}
@@ -1519,7 +1589,7 @@ fn drain_midi(user_data: &mut UserData) {
 /// audio API — so it is shared verbatim by the PipeWire callback (Linux) and
 /// the CoreAudio backend (macOS), and is exercised directly by the offline
 /// render tests.
-fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
+pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
     let n_frames = samples.len() / 2;
 
     // Phase 1 native-synth knob override: push the latest cutoff +
@@ -1555,7 +1625,9 @@ fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
     match user_data.synth {
         Some(SynthBackend::Oxi(ref mut s)) => s.write(&mut *samples),
         Some(SynthBackend::Sfizz(ref mut s)) => s.render(samples),
+        #[cfg(target_os = "linux")]
         Some(SynthBackend::Lv2(ref mut s)) => s.render(samples),
+        #[cfg(target_os = "linux")]
         Some(SynthBackend::Clap(ref mut s)) => s.render(samples),
         Some(SynthBackend::Native(ref mut s)) => s.render(samples),
         None => {
@@ -1620,6 +1692,7 @@ fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
     // 1. Hot-swap soundfont if a freshly loaded backend is pending.
     swap_pending_backend(user_data);
