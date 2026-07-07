@@ -6,27 +6,20 @@ edition = "2021"
 [lib]
 crate-type = ["staticlib"]
 
+# Cross-platform dependencies (build on every OS). The audio I/O backend and
+# the plugin hosts are target-gated below: PipeWire + LV2/CLAP on Linux, cpal
+# (CoreAudio) on macOS.
 [dependencies]
-pipewire = "0.10"
 crossbeam-queue = "0.3"
 # oxisynth: pure-Rust FluidSynth port. Reads SF2 and SF3 (rustysynth is SF2 only).
 oxisynth = "0.1"
 
 # sfizz (SFZ player) is an OPTIONAL backend, dlopen'd at runtime via
 # libloading — the binary does NOT link it, so the build needs no sfizz and
-# `.sfz` patches degrade gracefully when libsfizz is absent. clack-host also
-# uses libloading (to load .clap bundles).
+# `.sfz` patches degrade gracefully when libsfizz is absent. Because sfizz is
+# never linked, the sfizz.rs/sfizz_sys.rs modules compile on macOS too (the
+# dylib is simply absent at runtime). clack-host also uses libloading.
 libloading = "0.8"
-
-# Plugin hosts (LV2 + CLAP).
-# livi is the LV2 host (wraps the lilv C library; pkg-config'd at build time).
-# clack-host is the CLAP host (pure-Rust, loads .clap shared libs via libloading).
-livi = "0.7"
-# livi exposes `lv2_raw::LV2Urid` in its `Features` API but does not
-# re-export the type, so we depend on `lv2_raw` directly. Pinned to the
-# same version livi uses to avoid two copies in the build.
-lv2_raw = "0.2"
-clack-host = "0.1"
 
 # Pure-Rust DSP backbone for the native synth backend (Phase 1; see
 # docs/ROADMAP.md). Provides bandlimited oscillators
@@ -34,3 +27,24 @@ clack-host = "0.1"
 # saturation. MIT OR Apache-2.0, clean for static linking into our
 # Apache 2.0 binary.
 fundsp = "0.23"
+
+# --- Linux only: PipeWire output + LV2/CLAP plugin hosts ------------------
+# pipewire (pipewire-rs) links libpipewire and has no macOS port. livi is the
+# LV2 host and wraps the lilv C library (pkg-config'd; no macOS build). lv2_raw
+# is a livi companion (livi uses but doesn't re-export lv2_raw::LV2Urid; pinned
+# to livi's version to avoid two copies). clack-host is pure-Rust and *would*
+# build on macOS, but LV2/CLAP hosting is out of scope for the v1 macOS port
+# (macOS SynthBackend = Oxi/Sfizz/Native), so it rides the same gate.
+[target.'cfg(target_os = "linux")'.dependencies]
+pipewire = "0.10"
+livi = "0.7"
+lv2_raw = "0.2"
+clack-host = "0.1"
+
+# --- macOS only: CoreAudio output via cpal -------------------------------
+# cpal's CoreAudio backend maps BufferSize::Fixed(n) to
+# kAudioDevicePropertyBufferFrameSize — this is how polyclav dictates its own
+# buffer size on macOS. Pulls coreaudio-rs/coreaudio-sys (system frameworks;
+# no Homebrew deps).
+[target.'cfg(target_os = "macos")'.dependencies]
+cpal = "0.18.1"
