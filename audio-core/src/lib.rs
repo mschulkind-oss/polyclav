@@ -1703,6 +1703,84 @@ mod tests {
         polyclav_audio_set_latency_frames(0);
     }
 
+    /// Build an isolated `UserData` (no globals, no PipeWire) around a synth
+    /// backend, mirroring `run_audio`'s initialization. This is the offline
+    /// render harness: it lets tests drive the exact `render_block` seam the
+    /// real audio thread uses, on any platform, with no audio device.
+    fn offline_user_data(synth: SynthBackend) -> UserData {
+        let params = Arc::new(DspParams::new());
+        let mut compressor = Compressor::new();
+        let mut reverb = Reverb::new();
+        let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
+        let mut limiter = Limiter::new(SAMPLE_RATE);
+        compressor.set_amount(params.comp_amount());
+        reverb.set_mix(params.reverb_mix());
+        mastering.set_amount(params.mastering_amount());
+        limiter.set_ceiling_db(params.limiter_ceiling_db());
+        UserData {
+            sine_phase: 0.0,
+            callback_count: 0,
+            last_frames: 0,
+            synth: Some(synth),
+            midi_queue: Arc::new(ArrayQueue::new(64)),
+            reload_queue: Arc::new(ArrayQueue::new(4)),
+            last_comp_amount: params.comp_amount(),
+            last_reverb_mix: params.reverb_mix(),
+            last_mastering_amount: params.mastering_amount(),
+            last_limiter_ceiling_db: params.limiter_ceiling_db(),
+            dsp_params: params,
+            compressor,
+            reverb,
+            mastering,
+            limiter,
+        }
+    }
+
+    /// End-to-end offline render through the portable `render_block` seam:
+    /// silence before any note, audible output after a NoteOn, and every
+    /// sample finite. This is the device-free coverage that runs identically
+    /// on Linux and macOS CI — it exercises native-param push, backend
+    /// dispatch, and the full DSP chain without PipeWire or CoreAudio.
+    #[test]
+    fn render_block_native_offline_produces_finite_audio() {
+        let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+        let mut ud = offline_user_data(synth);
+
+        // Before any note: render a block and confirm it stays finite (and
+        // essentially silent — the native synth idles).
+        let mut warm = vec![0.0f32; 128 * 2];
+        render_block(&mut ud, &mut warm);
+        assert!(warm.iter().all(|s| s.is_finite()), "idle render not finite");
+
+        // Play middle C, drain it into the synth, then render ~107 ms.
+        // Queue capacity (64) comfortably holds one event; the queue returns
+        // the value on overflow (MidiEvent has no Debug), so ignore the Result
+        // exactly as the FFI push sites do.
+        let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        drain_midi(&mut ud);
+
+        let mut sumsq = 0.0f64;
+        let mut count = 0usize;
+        for _ in 0..40 {
+            let mut block = vec![0.0f32; 128 * 2];
+            render_block(&mut ud, &mut block);
+            for &s in &block {
+                assert!(s.is_finite(), "non-finite sample in rendered block");
+                sumsq += f64::from(s) * f64::from(s);
+                count += 1;
+            }
+        }
+        let rms = (sumsq / count as f64).sqrt();
+        assert!(
+            rms > 0.001,
+            "expected audible output through render_block, got rms={rms}"
+        );
+    }
+
     /// `native_resonance` defaults to the Minimoog factory 0.3 and
     /// clamps to [0.0, 0.95] (headroom below the Stilson/Smith ladder's
     /// self-oscillation instability).
