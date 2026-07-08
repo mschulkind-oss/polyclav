@@ -25,16 +25,21 @@ not supported.
 ## System libraries
 
 polyclav links against PipeWire (audio), ALSA (MIDI in via rtmidi),
-sfizz (SFZ playback), liblo (OSC), and the LV2 + CLAP plugin stacks. The
-LV2 and CLAP libraries are **not optional** — LV2 and CLAP plugin
-hosting is shipped, so `audio-core` fails to build without them. Headers
-+ libs for everything below must be present at build time.
+liblo (OSC), and the LV2 + CLAP plugin stacks at build time. The LV2 and
+CLAP libraries are **not optional** — LV2 and CLAP plugin hosting is
+shipped, so `audio-core` fails to build without them. Headers + libs for
+everything below must be present at build time.
+
+sfizz (SFZ playback) is **not** in this table on purpose: it's `dlopen`'d
+at runtime (see `audio-core/src/sfizz_sys.rs`), never linked, so no
+sfizz headers or `.pc` file are needed to build polyclav at all — see
+"Soundfonts" below for how a working `libsfizz` actually gets onto your
+system.
 
 | Component | Used for | Nix attr | Debian/Ubuntu | Fedora/RHEL | Arch |
 |---|---|---|---|---|---|
 | PipeWire dev | audio backend (Rust `pipewire` crate) | `pipewire.dev` | `libpipewire-0.3-dev` | `pipewire-devel` | `pipewire` |
 | ALSA lib dev | MIDI (rtmidi cgo) | `alsa-lib.dev` | `libasound2-dev` | `alsa-lib-devel` | `alsa-lib` |
-| sfizz | SFZ playback (C++ via cgo) | `sfizz` | `libsfizz-dev` (third-party) | `sfizz-devel` | AUR `sfizz` |
 | liblo | OSC client (XR18 mixer) | `liblo` | `liblo-dev` | `liblo-devel` | `liblo` |
 | lilv | LV2 host (`livi` crate) | `lilv` | `liblilv-dev` | `lilv-devel` | `lilv` |
 | lv2 | LV2 spec headers | `lv2` | `lv2-dev` | `lv2-devel` | `lv2` |
@@ -66,17 +71,16 @@ that file never lands in git, the hard-won details are documented here:
 - `CGO_CFLAGS` / `CGO_CXXFLAGS` — glibc-dev added via **`-idirafter`** so
   it sorts *after* gcc's own system include dirs (required for the
   `#include_next <stdlib.h>` resolution above).
-- `CGO_LDFLAGS` — `-L`/`-rpath` for sfizz, asound, and the lilv stack
-  (their `.so` files live outside the linker's default search path under
-  nix). The Rust staticlib doesn't propagate cargo's link-lib directives
-  across the staticlib boundary, so cgo links the lilv stack explicitly.
-- `PKG_CONFIG_PATH` — pipewire / sfizz / alsa-lib / lilv / lv2 / serd /
-  sord / sratom `.pc` directories.
+- `CGO_LDFLAGS` — `-L`/`-rpath` for asound and the lilv stack (their
+  `.so` files live outside the linker's default search path under nix).
+  The Rust staticlib doesn't propagate cargo's link-lib directives across
+  the staticlib boundary, so cgo links the lilv stack explicitly. sfizz
+  is deliberately absent here — it's `dlopen`'d at runtime, never linked.
+- `PKG_CONFIG_PATH` — pipewire / alsa-lib / lilv / lv2 / serd / sord /
+  sratom `.pc` directories.
 
-Two non-obvious workarounds also live there:
+One non-obvious workaround also lives there:
 
-- **sfizz `.pc` typo.** The nixpkgs `sfizz.pc` carries a `-llibsfizz`
-  typo, so we hand-link `-lsfizz` in cgo + `build.rs` to dodge it.
 - **glibc include ordering.** The `-idirafter` placement above is load
   bearing — prepending glibc-dev breaks `<cstdlib>`.
 
@@ -88,7 +92,7 @@ libraries in standard locations (`/usr/lib`, `/usr/include`,
 Quick test that your env is right:
 
 ```sh
-pkg-config --cflags --libs libpipewire-0.3 alsa sfizz lilv-0 lv2
+pkg-config --cflags --libs libpipewire-0.3 alsa lilv-0 lv2
 ```
 
 If that prints flags without error, the build will work.
@@ -104,7 +108,7 @@ just check              # the universal gate (build + clippy + vet + tests)
 
 `just check` runs a trailing `go build ./...` on purpose: `go test` only
 links cgo for packages that have test files, so without it a missing
-`-lsfizz`, `-lasound`, or `-llilv` slips past.
+`-lasound` or `-llilv` slips past.
 
 ## Soundfonts
 
@@ -135,12 +139,15 @@ installs the binary as `7zz`, not `7z` (bootstrap checks both names). If
 neither is found, bootstrap reports which packages to install rather
 than a raw "executable not found" error.
 
-On macOS, bootstrap also installs SFZ (`.sfz`) support automatically:
-sfztools' own official release is x86_64-only and can't be used by a
-native arm64 process, so bootstrap downloads polyclav's own arm64 build
-(`.github/workflows/build-sfizz-macos.yml`) to
-`~/.local/share/polyclav/lib/libsfizz.dylib` instead — no Homebrew
-formula exists for sfizz, and none is needed. See
+On macOS and Linux, bootstrap also installs SFZ (`.sfz`) support
+automatically: sfztools publishes no working prebuilt for either platform
+(their macOS release is x86_64-only and can't be used by a native arm64
+process; their Linux releases ship no binary at all), so bootstrap
+downloads polyclav's own build instead —
+`.github/workflows/build-sfizz-macos.yml` /
+`build-sfizz-linux.yml` — to `~/.local/share/polyclav/lib/libsfizz.dylib`
+or `libsfizz.so`. No Homebrew formula exists for sfizz either, so this is
+the only cross-distro-consistent path on both platforms. See
 `internal/bootstrap/sfizz.go` and `docs/MACOS_PORT.md`.
 
 ### Manual: download by hand
