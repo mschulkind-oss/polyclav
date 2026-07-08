@@ -60,5 +60,10 @@
     // ZynAddSubFX — additive/subtractive/PADsynth engine. LV2 + VST + standalone
     // (lib/lv2/ZynAddSubFX.lv2 plus 8 effect LV2s). No CLAP — host via livi-rs.
     "zynaddsubfx"
-  ]
+  ],
+
+  // Machine-specific overrides (mounts, etc.) live in yolo-jail.local.jsonc,
+  // swept into swarf/ (gitignored, not portable across machines) rather than
+  // committed here.
+  "include_if_found": ["yolo-jail.local.jsonc"]
 }
