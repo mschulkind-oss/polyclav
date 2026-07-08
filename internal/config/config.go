@@ -99,8 +99,9 @@ type VelocityConfig struct {
 // explicit, documented user opt-in.
 const DefaultWebListen = "127.0.0.1:8666"
 
-// WebConfig is the [web] block. Disabled by default — same opt-in
-// philosophy as osc mixer control (empty host = off).
+// WebConfig is the [web] block. Enabled by default (127.0.0.1 loopback
+// listen is the security boundary — see docs/WEB_UI.md "Security
+// model"); set `enabled = false` to opt out.
 type WebConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Listen  string `toml:"listen"`
@@ -186,10 +187,10 @@ func Defaults() *Config {
 				Port: 10024,
 			},
 		},
-		// Web UI off by default; loopback listen is the no-auth security
-		// boundary (docs/WEB_UI.md). MIDI.Velocity keeps its zero value:
-		// Curve "" = linear passthrough.
-		Web: WebConfig{Enabled: false, Listen: DefaultWebListen},
+		// Web UI ON by default (127.0.0.1 loopback is the no-auth security
+		// boundary, docs/WEB_UI.md); set `enabled = false` in [web] to opt
+		// out. MIDI.Velocity keeps its zero value: Curve "" = linear passthrough.
+		Web: WebConfig{Enabled: true, Listen: DefaultWebListen},
 	}
 }
 

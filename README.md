@@ -45,11 +45,12 @@ over SysEx.
   encoders, with page indicators on the bottom pad row. Code-complete,
   pending hardware verification (`docs/HARDWARE_TESTS.md`).
 - **Web dashboard** — an embedded, localhost-only web UI (`[web]` in the
-  config, off by default, `127.0.0.1:8666`): a Next.js app (static
+  config, on by default, `127.0.0.1:8666`): a Next.js app (static
   export embedded in the binary — `go build` needs no Node) with patch
   switching, all live params, mastering, the full native-synth panel, a
   velocity-curve editor with a live note monitor, validated in-browser
-  config editing, and the audition transport, plus a REST + SSE API.
+  config editing, a generic MIDI device probe/reverse-engineering tool,
+  and the audition transport, plus a REST + SSE API.
   The pre-Next single-file page remains at `/legacy`. See
   `docs/WEB_UI.md`.
 - **Velocity curves** — global `[midi.velocity]` curve (soft / linear /

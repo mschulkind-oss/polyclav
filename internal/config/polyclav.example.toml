@@ -129,13 +129,13 @@ port_match = "launchkey"
 # (See the salamander patch below for a commented example.)
 
 # [web]
-# Built-in web UI (status dashboard, controls, config editing — see
-# docs/WEB_UI.md). OFF by default, same opt-in philosophy as [osc.xr18].host.
+# Built-in web UI (status dashboard, controls, config editing, MIDI device
+# probe — see docs/WEB_UI.md). ON by default; set enabled = false to opt out.
 #
 # There is NO authentication: binding to localhost IS the security boundary.
 # The default listen address below only accepts connections from this machine.
 #
-# enabled = true
+# enabled = false  # uncomment to opt out (on by default)
 # listen  = "127.0.0.1:8666"
 #
 # To reach the UI from other devices on your LAN, listen on all interfaces:

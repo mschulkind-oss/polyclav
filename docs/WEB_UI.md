@@ -156,8 +156,8 @@ should be built once.
 
 ## Security model
 
-- `[web]` config block: `enabled = false` **by default** (same opt-in
-  philosophy as `osc.xr18.host`), `listen = "127.0.0.1:8666"`.
+- `[web]` config block: `enabled = true` **by default**, `listen = "127.0.0.1:8666"`.
+  Set `enabled = false` in `polyclav.toml` to opt out.
 - **No auth, ever-for-now (decided):** localhost binding is the security
   boundary. Setting `listen = "0.0.0.0:8666"` is the documented LAN
   opt-in — the user is explicitly allowed to make that call for their own

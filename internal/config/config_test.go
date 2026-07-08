@@ -453,11 +453,18 @@ velocity_points = [[0, 0], [90, 80], [64, 90], [127, 127]]
 
 func TestWebDefaults(t *testing.T) {
 	cfg := mustLoadTOML(t, "")
-	if cfg.Web.Enabled {
-		t.Error("web must be disabled by default")
+	if !cfg.Web.Enabled {
+		t.Error("web must be enabled by default")
 	}
 	if cfg.Web.Listen != "127.0.0.1:8666" {
 		t.Errorf("default listen: got %q, want 127.0.0.1:8666", cfg.Web.Listen)
+	}
+}
+
+func TestWebExplicitDisableHonored(t *testing.T) {
+	cfg := mustLoadTOML(t, "[web]\nenabled = false\n")
+	if cfg.Web.Enabled {
+		t.Error("explicit enabled = false must override the enabled-by-default default")
 	}
 }
 
@@ -652,8 +659,8 @@ func TestExampleConfigLoadsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("example config does not Load: %v", err)
 	}
-	if cfg.Web.Enabled || cfg.Web.Listen != DefaultWebListen {
-		t.Errorf("example must leave [web] at defaults, got %+v", cfg.Web)
+	if !cfg.Web.Enabled || cfg.Web.Listen != DefaultWebListen {
+		t.Errorf("example must leave [web] at defaults (now enabled by default), got %+v", cfg.Web)
 	}
 	if cfg.OSC.XR18.Heartbeat != nil {
 		t.Errorf("example must leave heartbeat commented (nil), got %q", *cfg.OSC.XR18.Heartbeat)
