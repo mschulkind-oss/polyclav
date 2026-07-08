@@ -42,6 +42,12 @@ import (
 // idea of "home" and the config loader's).
 const defaultSoundfontDest = "~/.local/share/polyclav/soundfonts"
 
+// defaultSfizzLibDest is where bootstrap installs polyclav's own prebuilt
+// libsfizz.dylib on macOS (see internal/bootstrap/sfizz.go) — a sibling
+// of defaultSoundfontDest, and the fixed path
+// audio-core/src/sfizz_sys.rs's macOS search list checks first.
+const defaultSfizzLibDest = "~/.local/share/polyclav/lib"
+
 func main() {
 	// Subcommand dispatch — `polyclav bootstrap [...]` runs the
 	// soundfont downloader and exits. Everything else falls through
@@ -923,6 +929,9 @@ func runBootstrap(args []string) int {
 		fmt.Fprintln(fs.Output(), "Usage: polyclav bootstrap [flags]")
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "Download the example soundfonts referenced by polyclav.example.toml.")
+		fmt.Fprintln(fs.Output(), "On macOS, also installs polyclav's own prebuilt libsfizz.dylib to")
+		fmt.Fprintln(fs.Output(), "~/.local/share/polyclav/lib/ (not affected by --dest) so SFZ patches")
+		fmt.Fprintln(fs.Output(), "work with no further steps.")
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "Flags:")
 		fs.PrintDefaults()
@@ -945,6 +954,19 @@ func runBootstrap(args []string) int {
 		SkipExisting:   *skipExisting,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap failed: %v\n", err)
+		return 1
+	}
+
+	// A no-op on every OS other than macOS. On macOS, installs polyclav's
+	// own prebuilt arm64 libsfizz.dylib (see internal/bootstrap/sfizz.go
+	// for why sfztools' official release can't be used directly) so SFZ
+	// patches work with no further steps — the whole point of folding
+	// this into bootstrap instead of leaving it as a doctor recommendation.
+	if err := bootstrap.InstallSfizzMacOS(ctx, bootstrap.SfizzLibOptions{
+		Dest:         config.ExpandHome(defaultSfizzLibDest),
+		SkipExisting: *skipExisting,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap: sfizz install failed: %v\n", err)
 		return 1
 	}
 	return 0
