@@ -1,0 +1,181 @@
+# Builds polyclav's own x86_64 libsfizz.so and publishes it as a polyclav
+# GitHub Release asset, which `polyclav bootstrap` downloads on Linux
+# (internal/bootstrap/sfizz.go). This exists because sfztools' own GitHub
+# releases ship NO Linux binary at all -- only macOS and Windows bundles --
+# so unlike the macOS case (a real but wrong-architecture binary), there is
+# nothing to fall back to except a distro package (where a third-party repo
+# happens to provide one) or building from source.
+#
+# Manual trigger only: sfizz releases infrequently, and re-running this on
+# every push would be wasteful and risks silently picking up an unreviewed
+# new sfizz version. Bump `sfizz_ref` by hand and re-run when there's a
+# reason to.
+#
+# The build itself mirrors sfztools' own tagged-release CI job
+# (.github/workflows/build.yml in sfztools/sfizz, "build_for_linux"): for a
+# tag ref they do NOT set SFIZZ_USE_SYSTEM_ABSEIL, so it (and every other
+# SFIZZ_USE_SYSTEM_* dependency: ghc-filesystem, simde, kiss_fft, pugixml,
+# cxxopts, catch) builds from the vendored git submodules -- no distro dev
+# packages needed beyond a plain C++ toolchain.
+#
+# glibc note: building on GitHub's standard ubuntu-24.04 runner would link
+# the .so against a glibc new enough to fail ("GLIBC_2.39 not found") on
+# older-but-still-common distros (Debian 11/12, Ubuntu 20.04). The `build`
+# job therefore runs inside a `debian:11` container (glibc 2.31, ~2021
+# baseline) on top of the standard runner -- the usual "build against the
+# oldest glibc you want to support" technique. libstdc++/libgcc are
+# statically linked for the same reason (dodge libstdc++ ABI drift too).
+#
+# The release-publish step needs `gh`, which isn't in the debian:11 image
+# and isn't worth installing there -- so the build runs in one job (inside
+# the container, producing an artifact) and publishing runs in a second,
+# plain-runner job (which has `gh` preinstalled) that downloads that
+# artifact. This split exists purely for that reason, not because the
+# steps are conceptually separable.
+#
+# Scope note: x86_64 only for now, matching the same "smallest first pass"
+# choice already made for the macOS arm64-only build -- GitHub's hosted
+# arm64 Linux runners exist and a matrix build is a plausible fast-follow,
+# not attempted here to keep the initial build's failure surface small.
+name: Build sfizz for Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      sfizz_ref:
+        description: 'sfztools/sfizz git tag to build (must match internal/bootstrap/sfizz.go''s sfizzVersion, tag "sfizz-linux-<ref>")'
+        required: true
+        default: '1.2.3'
+
+permissions:
+  contents: write # to create the release and upload the asset
+
+jobs:
+  build:
+    name: Build x86_64 libsfizz.so
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:11
+    timeout-minutes: 60
+    steps:
+      - name: Install build dependencies
+        run: |
+          # debian:11's docker image is a minbase debootstrap: only
+          # Priority:required packages are guaranteed present (that
+          # covers grep, but NOT find/file, which are merely
+          # Priority:important) -- so findutils and file are listed
+          # explicitly rather than assumed.
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git cmake build-essential pkg-config findutils file
+
+      - name: Checkout sfztools/sfizz
+        uses: actions/checkout@v4
+        with:
+          repository: sfztools/sfizz
+          ref: ${{ inputs.sfizz_ref }}
+          submodules: recursive
+          path: sfizz-src
+
+      - name: Configure CMake (Release, shared lib, no tests/render/JACK)
+        working-directory: sfizz-src
+        run: |
+          # SFIZZ_JACK defaults ON specifically on Linux (CMakeLists.txt:
+          # `option_ex(SFIZZ_JACK ... CMAKE_SYSTEM_NAME STREQUAL "Linux")`)
+          # and gates a find_package(JACK)-requiring standalone executable
+          # we don't want or need -- irrelevant on macOS, where it
+          # defaults OFF, which is why the macOS workflow doesn't set it.
+          cmake -B build -S . \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D CMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -D CMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -D SFIZZ_JACK=OFF \
+            -D SFIZZ_SHARED=ON \
+            -D SFIZZ_TESTS=OFF \
+            -D SFIZZ_RENDER=OFF \
+            -D SFIZZ_DEMOS=OFF \
+            -D SFIZZ_DEVTOOLS=OFF \
+            -D SFIZZ_BENCHMARKS=OFF
+
+      - name: Build
+        working-directory: sfizz-src
+        run: cmake --build build --config Release --parallel
+
+      - name: Install to a staging tree
+        working-directory: sfizz-src
+        run: |
+          DESTDIR="${{ github.workspace }}/staging" \
+            cmake --build build --config Release --target install
+
+      - name: Locate and verify the built .so
+        run: |
+          set -euo pipefail
+          SO="$(find staging -name 'libsfizz.so' -print -quit)"
+          if [ -z "$SO" ]; then
+            # Fallback in case the unversioned symlink wasn't created for
+            # some reason -- grab the real (non-symlink) file directly.
+            SO="$(find staging -name 'libsfizz*.so*' -type f -print -quit)"
+          fi
+          if [ -z "$SO" ]; then
+            echo "::error::no libsfizz*.so found under staging/ -- CMake install layout may have changed"
+            find staging -type f
+            exit 1
+          fi
+          echo "Found: $SO"
+          file "$SO"
+          # The entire point of this workflow: fail loudly, not silently,
+          # if this somehow isn't x86_64 (e.g. a future runner image
+          # change).
+          if ! file "$SO" | grep -qi 'x86-64'; then
+            echo "::error::built .so is not x86_64 -- refusing to publish a broken artifact"
+            exit 1
+          fi
+          echo "SO=$SO" >> "$GITHUB_ENV"
+
+      - name: Stage the release asset
+        run: |
+          mkdir -p release-asset
+          # cp dereferences a symlink source by default -- this copies the
+          # real bytes, so the published asset is a plain file, never a
+          # dangling symlink.
+          cp "$SO" release-asset/libsfizz.so
+          # BSD-2-Clause requires retaining the copyright/license text in
+          # redistributions of the binary.
+          cp sfizz-src/LICENSE.md release-asset/sfizz-LICENSE.md 2>/dev/null \
+            || cp sfizz-src/LICENSE release-asset/sfizz-LICENSE.md
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sfizz-linux-x86_64
+          path: release-asset
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sfizz-linux-x86_64
+          path: release-asset
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="sfizz-linux-${{ inputs.sfizz_ref }}"
+          NOTES="polyclav's own x86_64 build of sfztools/sfizz ${{ inputs.sfizz_ref }} (BSD-2-Clause), built from vendored git submodules inside a debian:11 container (glibc 2.31 baseline) for broad distro compatibility -- **not** an official sfztools release (sfztools ships no Linux binary at all). Exists for \`polyclav bootstrap\` (see internal/bootstrap/sfizz.go and audio-core/src/sfizz_sys.rs)."
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-asset/libsfizz.so release-asset/sfizz-LICENSE.md \
+              --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "sfizz $TAG (Linux x86_64, unofficial polyclav build)" \
+              --notes "$NOTES" \
+              release-asset/libsfizz.so release-asset/sfizz-LICENSE.md
+          fi
