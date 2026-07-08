@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -295,6 +296,60 @@ func TestConsentBlankDefaultsToYes(t *testing.T) {
 	if !bytes.Equal(got, body) {
 		t.Errorf("unexpected contents: %q", got)
 	}
+}
+
+func TestFind7z(t *testing.T) {
+	orig := lookPath
+	defer func() { lookPath = orig }()
+
+	t.Run("prefers 7zz when both present (macOS Homebrew's sevenzip)", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			return "/usr/bin/" + name, nil
+		}
+		got, err := find7z()
+		if err != nil {
+			t.Fatalf("find7z: %v", err)
+		}
+		if got != "/usr/bin/7zz" {
+			t.Errorf("got %q, want 7zz preferred over 7z", got)
+		}
+	})
+
+	t.Run("falls back to 7z when 7zz absent (Linux p7zip)", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "7z" {
+				return "/usr/bin/7z", nil
+			}
+			return "", exec.ErrNotFound
+		}
+		got, err := find7z()
+		if err != nil {
+			t.Fatalf("find7z: %v", err)
+		}
+		if got != "/usr/bin/7z" {
+			t.Errorf("got %q, want 7z fallback", got)
+		}
+	})
+
+	t.Run("clear actionable error when neither binary is installed", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			return "", exec.ErrNotFound
+		}
+		_, err := find7z()
+		if err == nil {
+			t.Fatal("expected an error when neither binary is present")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "7-Zip not found") {
+			t.Errorf("error should clearly say 7-Zip is missing, got: %v", err)
+		}
+		if !strings.Contains(msg, "brew install") {
+			t.Errorf("error should mention the macOS install command, got: %v", err)
+		}
+		if !strings.Contains(msg, "p7zip") {
+			t.Errorf("error should mention the Linux install command, got: %v", err)
+		}
+	})
 }
 
 func TestPartialFileCleanedOnHTTPError(t *testing.T) {

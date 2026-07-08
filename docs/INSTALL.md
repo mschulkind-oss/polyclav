@@ -128,6 +128,13 @@ Re-running is safe (existing files are skipped). A `LICENSES.txt` file
 is written to the destination directory for redistribution audits. The
 full URL/license list lives in `internal/bootstrap/spec.go`.
 
+Three FreePats packs are `.7z` archives, so bootstrap needs a 7-Zip CLI
+on `PATH`: Linux, install your distro's p7zip package (e.g.
+`apt install p7zip-full`); macOS, `brew install sevenzip` — note this
+installs the binary as `7zz`, not `7z` (bootstrap checks both names). If
+neither is found, bootstrap reports which packages to install rather
+than a raw "executable not found" error.
+
 ### Manual: download by hand
 
 Drop soundfonts anywhere — the example config uses

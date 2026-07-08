@@ -364,12 +364,47 @@ func unpackZip(archivePath, root string) error {
 	return nil
 }
 
-// unpack7z shells out to the system `7z` binary (p7zip). Required for
-// FreePats archives, which are .7z. p7zip is documented in
-// yolo-jail.jsonc and docs/INSTALL.md as a dependency for this very
-// reason.
+// sevenZipBinaryNames are the 7-Zip CLI binary names to look for, in
+// preference order. p7zip (Linux distros, nixpkgs) ships the binary as
+// `7z`. Homebrew's `sevenzip` formula on macOS ships it as `7zz` instead:
+// `7zz` is the 7-Zip engine without the plugin bundle that provides the
+// classic `7z` wrapper name, and Homebrew's formula deliberately matches
+// Debian's "7zip-standalone" package for this reason — see
+// https://github.com/orgs/Homebrew/discussions/6072. Check both so
+// either platform's install command works unmodified.
+var sevenZipBinaryNames = []string{"7zz", "7z"}
+
+// lookPath is exec.LookPath; a var so tests can force both the
+// found and not-found paths deterministically.
+var lookPath = exec.LookPath
+
+// find7z locates a usable 7-Zip binary, or returns a clear, actionable
+// error naming the install command for both platforms this project
+// supports — instead of the opaque "executable file not found in $PATH"
+// exec.Command would otherwise surface.
+func find7z() (string, error) {
+	for _, name := range sevenZipBinaryNames {
+		if path, err := lookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"7-Zip not found (looked for %s) — required to unpack .7z FreePats archives.\n"+
+			"  Linux: install your distro's p7zip package (e.g. `apt install p7zip-full`, `dnf install p7zip`, `pacman -S p7zip`)\n"+
+			"  macOS: `brew install sevenzip` (installs the binary as `7zz`, not `7z` — both names are checked)",
+		strings.Join(sevenZipBinaryNames, " or "),
+	)
+}
+
+// unpack7z shells out to a system 7-Zip binary. Required for FreePats
+// archives, which are .7z; p7zip is documented in yolo-jail.jsonc and
+// docs/INSTALL.md as a dependency for this very reason.
 func unpack7z(archivePath, root string) error {
-	return runCmd(root, "7z", "x", "-y", "-o"+root, archivePath)
+	bin, err := find7z()
+	if err != nil {
+		return err
+	}
+	return runCmd(root, bin, "x", "-y", "-o"+root, archivePath)
 }
 
 // unpackTar shells out to the system `tar` binary. flag is "-xjf"
