@@ -145,7 +145,7 @@ jobs:
             || cp sfizz-src/LICENSE release-asset/sfizz-LICENSE.md
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sfizz-linux-x86_64
           path: release-asset

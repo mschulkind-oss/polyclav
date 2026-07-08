@@ -104,7 +104,7 @@ jobs:
             --readme README.md --output-dir wheelhouse
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: polyclav-wheel-linux
           path: wheelhouse/*.whl
@@ -173,7 +173,7 @@ jobs:
             --readme README.md --output-dir wheelhouse
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: polyclav-wheel-macos
           path: wheelhouse/*.whl
@@ -201,7 +201,7 @@ jobs:
         # just uploaded (and needing the release to be fully consistent
         # yet) when this job already has the exact bytes in hand.
         if: github.event_name == 'release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: polyclav-macos-tarball
           path: dist/polyclav-macos-arm64.tar.gz
