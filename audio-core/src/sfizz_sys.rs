@@ -53,7 +53,7 @@ fn load() -> Option<SfizzApi> {
     // (dev/nix builds) and the system ldconfig cache (portable builds).
     let lib = ["libsfizz.so.1", "libsfizz.so"]
         .iter()
-        .find_map(|name| unsafe { Library::new(name) }.ok())?;
+        .find_map(|name| unsafe { Library::new(*name) }.ok())?;
     unsafe {
         macro_rules! sym {
             ($t:ty, $name:literal) => {
