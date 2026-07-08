@@ -11,70 +11,91 @@ import (
 	"time"
 )
 
-// sfztools' own official macOS release (sfizz-<ver>-macos.tar.gz) is
-// x86_64-only — their CI still targets macos-11, from before GitHub had
-// Apple Silicon runners, and was never updated. A native arm64 process
-// cannot dlopen a foreign-architecture dylib (Rosetta 2 translates whole
-// *processes* at launch, not a library loaded into an already-running
-// native one), so that tarball is useless on the Apple Silicon Macs most
-// people actually have today.
+// Neither macOS nor Linux gets a usable prebuilt libsfizz from upstream:
 //
-// polyclav therefore builds its own arm64 libsfizz.dylib
-// (.github/workflows/build-sfizz-macos.yml, on a real macos-15
-// Apple-Silicon runner, from sfztools/sfizz's vendored-submodule release
-// tree — the same tree their own tagged-release CI job builds, just on
-// newer hardware) and publishes it as a polyclav GitHub Release asset.
-// audio-core/src/sfizz_sys.rs looks for it at a fixed path under the
-// user's data dir; this file is what puts it there.
-const (
-	sfizzBuildTag   = "sfizz-macos-1.2.3"
-	sfizzAssetName  = "libsfizz.dylib"
-	sfizzAssetURL   = "https://github.com/mschulkind-oss/polyclav/releases/download/" + sfizzBuildTag + "/" + sfizzAssetName
-	sfizzLicenseURL = "https://github.com/sfztools/sfizz/blob/1.2.3/LICENSE.md" // BSD-2-Clause
-)
+//   - sfztools' own official macOS release (sfizz-<ver>-macos.tar.gz) is
+//     x86_64-only — their CI still targets macos-11, from before GitHub had
+//     Apple Silicon runners — and a native arm64 process cannot dlopen a
+//     foreign-architecture dylib (Rosetta 2 translates whole *processes* at
+//     launch, not a library loaded into an already-running native one).
+//   - Linux is worse: sfztools' GitHub releases ship no Linux binary at
+//     all, only macOS and Windows bundles.
+//
+// polyclav therefore builds its own libsfizz for each platform
+// (.github/workflows/build-sfizz-macos.yml, build-sfizz-linux.yml — from
+// sfztools/sfizz's vendored-submodule release tree, the same tree their own
+// tagged-release CI job builds) and publishes it as a polyclav GitHub
+// Release asset, one release tag per OS (sfizz-macos-<ver>,
+// sfizz-linux-<ver>, since the two are built and verified independently).
+// audio-core/src/sfizz_sys.rs looks for the result at a fixed path under
+// the user's data dir on both platforms; this file is what puts it there.
+const sfizzVersion = "1.2.3"
 
-// SfizzLibOptions controls InstallSfizzMacOS. A separate, smaller shape
-// than Options (the soundfont-pack pipeline): there is exactly one file,
-// no archive to unpack, and no license-consent prompt needed — it's
+const sfizzLicenseURL = "https://github.com/sfztools/sfizz/blob/" + sfizzVersion + "/LICENSE" // BSD-2-Clause
+
+// sfizzAssetFor returns the bootstrap-installed filename and download URL
+// for goos's prebuilt libsfizz, or ok=false if polyclav doesn't build one
+// for that platform yet.
+func sfizzAssetFor(goos string) (assetName, url string, ok bool) {
+	switch goos {
+	case "darwin":
+		return "libsfizz.dylib", "https://github.com/mschulkind-oss/polyclav/releases/download/sfizz-macos-" + sfizzVersion + "/libsfizz.dylib", true
+	case "linux":
+		return "libsfizz.so", "https://github.com/mschulkind-oss/polyclav/releases/download/sfizz-linux-" + sfizzVersion + "/libsfizz.so", true
+	default:
+		return "", "", false
+	}
+}
+
+// SfizzLibOptions controls InstallSfizzLib. A separate, smaller shape than
+// Options (the soundfont-pack pipeline): there is exactly one file, no
+// archive to unpack, and no license-consent prompt needed — it's
 // polyclav's own CI-built artifact of a BSD-2-Clause library, not
 // third-party copyrighted content the user must explicitly accept.
 type SfizzLibOptions struct {
-	// Dest is the directory libsfizz.dylib is placed in. Production
-	// default: ~/.local/share/polyclav/lib — matches the fixed path
-	// audio-core/src/sfizz_sys.rs's macOS search list checks first.
-	// Tests pass a t.TempDir().
+	// Dest is the directory the lib is placed in. Production default:
+	// ~/.local/share/polyclav/lib — matches the fixed path
+	// audio-core/src/sfizz_sys.rs checks first on both macOS and Linux.
 	Dest string
 
-	// URL overrides sfizzAssetURL; tests point this at an
-	// httptest.NewServer.
+	// URL overrides the platform-computed asset URL; tests point this at
+	// an httptest.NewServer.
 	URL string
 
+	// AssetName overrides the platform-computed destination filename;
+	// tests pin this alongside URL so they don't depend on GOOS.
+	AssetName string
+
 	// SkipExisting, when true (the default), leaves an existing file at
-	// Dest/libsfizz.dylib alone rather than re-downloading.
+	// Dest/<asset name> alone rather than re-downloading.
 	SkipExisting bool
 
 	HTTPClient *http.Client
 	Stdout     io.Writer
 }
 
-// InstallSfizzMacOS downloads polyclav's own prebuilt arm64 libsfizz.dylib
-// to opts.Dest. A no-op (returns nil immediately, no network access) on
-// every OS other than macOS.
-func InstallSfizzMacOS(ctx context.Context, opts SfizzLibOptions) error {
-	if runtime.GOOS != "darwin" {
+// InstallSfizzLib downloads polyclav's own prebuilt libsfizz to opts.Dest
+// for the current GOOS. A no-op (returns nil immediately, no network
+// access) on any platform polyclav doesn't build one for yet.
+func InstallSfizzLib(ctx context.Context, opts SfizzLibOptions) error {
+	assetName, url, ok := sfizzAssetFor(runtime.GOOS)
+	if !ok {
 		return nil
+	}
+	if opts.AssetName == "" {
+		opts.AssetName = assetName
+	}
+	if opts.URL == "" {
+		opts.URL = url
 	}
 	return installSfizzLib(ctx, opts)
 }
 
-// installSfizzLib is InstallSfizzMacOS's actual logic, split out so tests
+// installSfizzLib is InstallSfizzLib's actual logic, split out so tests
 // can exercise the download/skip/error paths deterministically on any
 // host OS — the public entry point's GOOS gate would otherwise make this
-// completely untestable from Linux CI.
+// completely untestable on a platform polyclav doesn't build for.
 func installSfizzLib(ctx context.Context, opts SfizzLibOptions) error {
-	if opts.URL == "" {
-		opts.URL = sfizzAssetURL
-	}
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 5 * time.Minute}
 	}
@@ -84,8 +105,14 @@ func installSfizzLib(ctx context.Context, opts SfizzLibOptions) error {
 	if opts.Dest == "" {
 		return fmt.Errorf("bootstrap: sfizz lib Dest is required")
 	}
+	if opts.AssetName == "" {
+		return fmt.Errorf("bootstrap: sfizz lib AssetName is required")
+	}
+	if opts.URL == "" {
+		return fmt.Errorf("bootstrap: sfizz lib URL is required")
+	}
 
-	final := filepath.Join(opts.Dest, sfizzAssetName)
+	final := filepath.Join(opts.Dest, opts.AssetName)
 	if opts.SkipExisting {
 		if _, err := os.Stat(final); err == nil {
 			fmt.Fprintf(opts.Stdout, "sfizz: already present at %s\n", final)

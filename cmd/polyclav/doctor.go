@@ -112,24 +112,28 @@ func pluginHostLines(goos string) []string {
 }
 
 // sfizzInstallHint gives a concrete, platform-specific fix for a missing
-// libsfizz — not a generic "your package manager" punt. macOS's surface is
-// narrow enough to name exactly (no Homebrew formula, but sfztools' own
-// release tarball works — see audio-core/src/sfizz_sys.rs and
-// docs/MACOS_PORT.md for how dyld finds it); Linux gets the real package
-// names per distro family instead of a vague pointer, matching
-// docs/INSTALL.md's system-libraries table.
+// libsfizz — not a generic "your package manager" punt. On macOS and
+// Linux, `polyclav bootstrap` already installs polyclav's own prebuilt
+// libsfizz automatically (internal/bootstrap/sfizz.go), so that's the
+// lead recommendation on both; the platform-specific manual fallbacks
+// below it cover someone who wants a distro/Homebrew-managed copy instead.
 func sfizzInstallHint(goos string) []string {
 	switch goos {
 	case "darwin":
 		return []string{
-			"        -> install sfizz (no Homebrew formula yet):",
-			"             download the latest sfizz-*-macos.tar.gz from",
-			"             https://github.com/sfztools/sfizz/releases and extract it to",
-			"             /usr/local, e.g.: sudo tar xzf sfizz-*-macos.tar.gz -C /",
+			"        -> run `polyclav bootstrap` to install it automatically",
+			"        (no Homebrew formula exists; sfztools' own release is",
+			"        x86_64-only and won't dlopen on Apple Silicon — see",
+			"        docs/MACOS_PORT.md). Manual alternative: download the",
+			"        latest sfizz-*-macos.tar.gz from",
+			"        https://github.com/sfztools/sfizz/releases and extract it",
+			"        to /usr/local, e.g.: sudo tar xzf sfizz-*-macos.tar.gz -C /",
 		}
 	case "linux":
 		return []string{
-			"        -> install sfizz:",
+			"        -> run `polyclav bootstrap` to install it automatically",
+			"        (sfztools publishes no Linux binary at all). Manual",
+			"        alternatives:",
 			"             Debian/Ubuntu: sudo apt install libsfizz-dev  (third-party repo)",
 			"             Fedora:        sudo dnf install sfizz-devel",
 			"             Arch:          yay -S sfizz  (AUR)",

@@ -43,9 +43,10 @@ import (
 const defaultSoundfontDest = "~/.local/share/polyclav/soundfonts"
 
 // defaultSfizzLibDest is where bootstrap installs polyclav's own prebuilt
-// libsfizz.dylib on macOS (see internal/bootstrap/sfizz.go) — a sibling
-// of defaultSoundfontDest, and the fixed path
-// audio-core/src/sfizz_sys.rs's macOS search list checks first.
+// libsfizz on macOS and Linux (see internal/bootstrap/sfizz.go) — a
+// sibling of defaultSoundfontDest, and the fixed path
+// audio-core/src/sfizz_sys.rs's bootstrap-installed-lib search checks
+// first on both platforms.
 const defaultSfizzLibDest = "~/.local/share/polyclav/lib"
 
 func main() {
@@ -929,7 +930,7 @@ func runBootstrap(args []string) int {
 		fmt.Fprintln(fs.Output(), "Usage: polyclav bootstrap [flags]")
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "Download the example soundfonts referenced by polyclav.example.toml.")
-		fmt.Fprintln(fs.Output(), "On macOS, also installs polyclav's own prebuilt libsfizz.dylib to")
+		fmt.Fprintln(fs.Output(), "On macOS and Linux, also installs polyclav's own prebuilt libsfizz to")
 		fmt.Fprintln(fs.Output(), "~/.local/share/polyclav/lib/ (not affected by --dest) so SFZ patches")
 		fmt.Fprintln(fs.Output(), "work with no further steps.")
 		fmt.Fprintln(fs.Output())
@@ -957,12 +958,13 @@ func runBootstrap(args []string) int {
 		return 1
 	}
 
-	// A no-op on every OS other than macOS. On macOS, installs polyclav's
-	// own prebuilt arm64 libsfizz.dylib (see internal/bootstrap/sfizz.go
-	// for why sfztools' official release can't be used directly) so SFZ
-	// patches work with no further steps — the whole point of folding
-	// this into bootstrap instead of leaving it as a doctor recommendation.
-	if err := bootstrap.InstallSfizzMacOS(ctx, bootstrap.SfizzLibOptions{
+	// A no-op on any OS polyclav doesn't build a prebuilt sfizz for. On
+	// macOS and Linux, installs polyclav's own prebuilt libsfizz (see
+	// internal/bootstrap/sfizz.go for why upstream's own releases can't
+	// be used directly on either platform) so SFZ patches work with no
+	// further steps — the whole point of folding this into bootstrap
+	// instead of leaving it as a doctor recommendation.
+	if err := bootstrap.InstallSfizzLib(ctx, bootstrap.SfizzLibOptions{
 		Dest:         config.ExpandHome(defaultSfizzLibDest),
 		SkipExisting: *skipExisting,
 	}); err != nil {
