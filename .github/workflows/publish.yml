@@ -1,19 +1,28 @@
 name: Publish to PyPI
 
-# Builds a portable, dynamically-linked Linux wheel and publishes it to PyPI
-# so `uvx polyclav` / `pipx install polyclav` work.
+# Builds portable, dynamically-linked Linux and macOS wheels and publishes
+# both to the same PyPI release, so `uvx polyclav` / `pipx install polyclav`
+# work on either platform.
 #
-# WHY NOT the nix flake (used by ci.yml): a nix build bakes /nix/store RUNPATHs
-# into the binary, so it only runs on a nix machine. The wheel must resolve its
-# libs the normal way — by SONAME via the user's ldconfig (FHS locations) — so
-# this job builds on a stock Ubuntu runner with apt-provided -dev libs and no
-# rpath. The resulting binary runs on any glibc distro (Fedora/Arch/Debian/...)
-# where the user has PipeWire/ALSA/lilv installed.
+# WHY NOT the nix flake (used by ci.yml) for the Linux wheel: a nix build
+# bakes /nix/store RUNPATHs into the binary, so it only runs on a nix
+# machine. The wheel must resolve its libs the normal way — by SONAME via
+# the user's ldconfig (FHS locations) — so build-linux builds on a stock
+# Ubuntu runner with apt-provided -dev libs and no rpath. The resulting
+# binary runs on any glibc distro (Fedora/Arch/Debian/...) where the user
+# has PipeWire/ALSA/lilv installed.
 #
-# The wheel is tagged manylinux_2_35 (the runner's glibc baseline) but depends
-# on the user's system audio libs — it is intentionally NOT auditwheel-bundled
-# (no bundling, no static linking). sfizz is optional (dlopen'd at runtime), so
-# it is not needed to build and not required to run.
+# The Linux wheel is tagged manylinux_2_39 (the runner's glibc baseline) but
+# depends on the user's system audio libs — it is intentionally NOT
+# auditwheel-bundled (no bundling, no static linking). sfizz is optional
+# (dlopen'd at runtime, on both platforms), so it is not needed to build and
+# not required to run.
+#
+# build-macos needs none of that: the macOS backend (cpal/CoreAudio) and v1
+# macOS patch types (native/SF2/SF3/SFZ) link nothing beyond system
+# frameworks — no Homebrew package required at all (see ci-macos.yml, which
+# proves this compiles clean with zero `brew install` steps), so the macOS
+# wheel is about as close to "just works" as a compiled binary gets.
 
 on:
   release:
@@ -29,7 +38,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-linux:
     # Ubuntu 24.04: glibc 2.39 -> manylinux_2_39. 22.04 is too old — its
     # PipeWire (0.3.48) predates the spa_video_info_raw layout the pipewire-rs
     # 0.10 crate expects, so libspa fails to compile. Verified in a container.
@@ -97,15 +106,102 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: polyclav-wheel
+          name: polyclav-wheel-linux
           path: wheelhouse/*.whl
+
+  build-macos:
+    # Apple Silicon only for now, matching the same scope call already made
+    # for the sfizz builds (build-sfizz-macos.yml) and the PyPI wheel-tag
+    # convention: an arm64-tagged wheel is simply not installable on Intel
+    # Macs (pip/uv checks the tag), so this is a real platform-coverage gap,
+    # not just a missed optimization — a macosx_x86_64 job is a plausible
+    # fast-follow, not attempted here to keep this first pass small.
+    runs-on: macos-15
+    permissions:
+      contents: write # to attach the binary tarball to the release, on a real release
+    env:
+      CGO_ENABLED: "1"
+      GOFLAGS: "-mod=mod"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Deliberately no `brew install` step — see the workflow-level comment
+      # for why the macOS backend needs nothing beyond system frameworks.
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Rust audio-core
+        run: cargo build --release --manifest-path audio-core/Cargo.toml
+
+      - name: Build binaries (native cgo, system frameworks only)
+        run: |
+          mkdir -p dist
+          for cmd in polyclav polyclav-components; do
+            go build -tags portable -trimpath -ldflags "-s -w" \
+              -o "dist/$cmd" "./cmd/$cmd"
+          done
+
+      - name: Verify portability (no Homebrew/nix paths, report dynamic deps)
+        run: |
+          set -euo pipefail
+          if otool -L dist/polyclav | grep -Eqi '/opt/homebrew|/usr/local/(Cellar|opt)|/nix/store'; then
+            echo "::error::binary links a Homebrew/nix path — not portable, a plain PyPI/Homebrew install won't have it"
+            otool -L dist/polyclav
+            exit 1
+          fi
+          echo "dynamic dependencies:"; otool -L dist/polyclav
+
+      - name: Build wheel
+        run: |
+          python3 scripts/build_wheel.py \
+            --version "${{ steps.ver.outputs.version }}" \
+            --platform-tag macosx_11_0_arm64 \
+            --binary dist/polyclav --binary dist/polyclav-components \
+            --readme README.md --output-dir wheelhouse
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: polyclav-wheel-macos
+          path: wheelhouse/*.whl
+
+      - name: Archive raw binaries (for the Homebrew tap, not PyPI)
+        # A Homebrew formula wants a plain binary tarball, not a wheel --
+        # this is a separate artifact from the wheel above for that reason,
+        # not a duplication of it.
+        run: tar czf dist/polyclav-macos-arm64.tar.gz -C dist polyclav polyclav-components
+
+      - name: Upload binary archive as a release asset
+        # Only on a real release -- workflow_dispatch dry runs have no
+        # release to attach to. This is what the Homebrew formula's `url`
+        # points at; see the tap repo for the formula itself.
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/polyclav-macos-arm64.tar.gz \
+            --repo "${{ github.repository }}" --clobber
 
   publish:
     # Only publish on a real release. Uses PyPI Trusted Publishing (OIDC) — no
     # API token. The PyPI publisher for `polyclav` is scoped to the `pypi`
     # GitHub environment, so this job must declare it — the OIDC claim must
     # match (repo mschulkind-oss/polyclav, workflow publish.yml, environment pypi).
-    needs: build
+    needs: [build-linux, build-macos]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
@@ -114,7 +210,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: polyclav-wheel
+          name: polyclav-wheel-linux
+          path: wheelhouse
+      - uses: actions/download-artifact@v4
+        with:
+          name: polyclav-wheel-macos
           path: wheelhouse
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
