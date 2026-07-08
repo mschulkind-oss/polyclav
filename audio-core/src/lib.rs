@@ -668,7 +668,12 @@ struct State {
 
 pub(crate) struct UserData {
     sine_phase: f32,
+    // Only process_audio's (Linux/PipeWire) periodic debug logging reads
+    // these; the macOS backend tracks its own local counters instead, so
+    // these would otherwise be "never read" dead code there.
+    #[cfg(target_os = "linux")]
     callback_count: u32,
+    #[cfg(target_os = "linux")]
     last_frames: usize,
     synth: Option<SynthBackend>,
     midi_queue: Arc<ArrayQueue<MidiEvent>>,
@@ -1402,7 +1407,9 @@ pub(crate) fn build_user_data() -> UserData {
 
     UserData {
         sine_phase: 0.0,
+        #[cfg(target_os = "linux")]
         callback_count: 0,
+        #[cfg(target_os = "linux")]
         last_frames: 0,
         synth,
         midi_queue: Arc::clone(midi_queue()),
@@ -1434,7 +1441,9 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     limiter.set_ceiling_db(params.limiter_ceiling_db());
     UserData {
         sine_phase: 0.0,
+        #[cfg(target_os = "linux")]
         callback_count: 0,
+        #[cfg(target_os = "linux")]
         last_frames: 0,
         synth,
         midi_queue: Arc::new(ArrayQueue::new(64)),
