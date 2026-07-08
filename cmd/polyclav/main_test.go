@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -511,6 +512,85 @@ func TestVelocitySaveSurvivesPatchChange(t *testing.T) {
 	follow()
 	if got := ctl.VelocityLabel(); !strings.HasPrefix(got, "hard") {
 		t.Fatalf("per-patch override: curve %q, want hard", got)
+	}
+}
+
+// TestEnsureConfigExistsReportsFirstRun pins the justCreated return: true
+// only when this call actually wrote the file, false when a config was
+// already there (whether valid or not) — printStartupError's message
+// choice depends on this being accurate.
+func TestEnsureConfigExistsReportsFirstRun(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "polyclav.toml")
+
+	justCreated, err := ensureConfigExists(path, logger)
+	if err != nil {
+		t.Fatalf("ensureConfigExists: %v", err)
+	}
+	if !justCreated {
+		t.Error("first call on an absent path: justCreated = false, want true")
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("config was not written: %v", statErr)
+	}
+
+	justCreated, err = ensureConfigExists(path, logger)
+	if err != nil {
+		t.Fatalf("ensureConfigExists (second call): %v", err)
+	}
+	if justCreated {
+		t.Error("second call on an existing path: justCreated = true, want false")
+	}
+}
+
+// TestPrintStartupErrorLeadsWithBootstrapOnFirstRun pins the first-run
+// message: `polyclav bootstrap` is the single leading recommendation,
+// not buried in a neutral three-way "choose one" list — this is what a
+// brand-new `uvx polyclav` / Homebrew install actually hits.
+func TestPrintStartupErrorLeadsWithBootstrapOnFirstRun(t *testing.T) {
+	mde := &config.MissingDepsError{Missing: []config.MissingDep{
+		{PatchName: "grand", PatchType: config.PatchTypeSoundfont, Path: "/x/grand.sf2"},
+	}}
+	var buf bytes.Buffer
+	printStartupError(&buf, "/x/polyclav.toml", mde, true)
+	got := buf.String()
+
+	if !strings.Contains(got, "first run") {
+		t.Errorf("expected a first-run framing, got:\n%s", got)
+	}
+	if !strings.Contains(got, "polyclav bootstrap") {
+		t.Errorf("expected polyclav bootstrap to be recommended, got:\n%s", got)
+	}
+	if strings.Contains(got, "choose one") {
+		t.Errorf("first-run message should not present bootstrap as one of several equal choices, got:\n%s", got)
+	}
+	// bootstrap must appear before the alternative options, not after.
+	if bi, ai := strings.Index(got, "polyclav bootstrap"), strings.Index(got, "native"); bi == -1 || ai == -1 || bi > ai {
+		t.Errorf("expected polyclav bootstrap before the native-patch alternative, got:\n%s", got)
+	}
+}
+
+// TestPrintStartupErrorListsAlternativesOtherwise pins the non-first-run
+// path: an existing, deliberately-edited config that's broken for some
+// other reason gets the neutral "choose one" framing, since bootstrap
+// isn't necessarily the right answer there.
+func TestPrintStartupErrorListsAlternativesOtherwise(t *testing.T) {
+	mde := &config.MissingDepsError{Missing: []config.MissingDep{
+		{PatchName: "grand", PatchType: config.PatchTypeSoundfont, Path: "/x/grand.sf2"},
+	}}
+	var buf bytes.Buffer
+	printStartupError(&buf, "/x/polyclav.toml", mde, false)
+	got := buf.String()
+
+	if !strings.Contains(got, "choose one") {
+		t.Errorf("expected the neutral choose-one framing, got:\n%s", got)
+	}
+	if !strings.Contains(got, "polyclav bootstrap") {
+		t.Errorf("expected polyclav bootstrap to still be listed as an option, got:\n%s", got)
+	}
+	if strings.Contains(got, "first run") {
+		t.Errorf("non-first-run message should not claim this is a first run, got:\n%s", got)
 	}
 }
 

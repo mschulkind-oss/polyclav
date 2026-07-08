@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -98,7 +99,8 @@ func main() {
 	// a sane starting point (rather than the previous Defaults()
 	// fallback which had zero patches and silently produced an unlit
 	// surface — see the "functioning config or refuse" story).
-	if err := ensureConfigExists(path, logger); err != nil {
+	firstRun, err := ensureConfigExists(path, logger)
+	if err != nil {
 		logger.Error("seed default config", "path", path, "err", err)
 		os.Exit(1)
 	}
@@ -111,7 +113,7 @@ func main() {
 	if err := config.Validate(cfg); err != nil {
 		var mde *config.MissingDepsError
 		if errors.As(err, &mde) {
-			printStartupError(os.Stderr, path, mde)
+			printStartupError(os.Stderr, path, mde, firstRun)
 			os.Exit(1)
 		}
 		logger.Error("validate config", "path", path, "err", err)
@@ -882,21 +884,25 @@ func buildVersion() string {
 // the embedded polyclav.example.toml there. Never overwrites an
 // existing file — only the absent case is handled. Errors from
 // permission / disk-full bubble up; on success we log an INFO line so
-// the user sees where the config landed.
-func ensureConfigExists(path string, logger *slog.Logger) error {
+// the user sees where the config landed. justCreated tells the caller
+// whether this really is a brand-new install (config didn't exist a
+// moment ago) as opposed to a pre-existing, deliberately-edited config
+// that happens to be missing deps for some other reason — printStartupError
+// uses it to decide how strongly to lead with "run polyclav bootstrap".
+func ensureConfigExists(path string, logger *slog.Logger) (justCreated bool, err error) {
 	if _, err := os.Stat(path); err == nil {
-		return nil
+		return false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat %q: %w", path, err)
+		return false, fmt.Errorf("stat %q: %w", path, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %q: %w", filepath.Dir(path), err)
+		return false, fmt.Errorf("mkdir %q: %w", filepath.Dir(path), err)
 	}
 	if err := os.WriteFile(path, config.ExampleConfig(), 0o644); err != nil {
-		return fmt.Errorf("write %q: %w", path, err)
+		return false, fmt.Errorf("write %q: %w", path, err)
 	}
 	logger.Info("wrote default config", "path", path)
-	return nil
+	return true, nil
 }
 
 // printStartupError renders a config-validation failure as a
@@ -904,15 +910,32 @@ func ensureConfigExists(path string, logger *slog.Logger) error {
 // daemon log format (key=value pairs) is unreadable for a first-run
 // user staring at a missing-soundfont message; this is the only path
 // where we step outside structured logging.
-func printStartupError(w *os.File, configPath string, mde *config.MissingDepsError) {
+//
+// firstRun (from ensureConfigExists) is the common case for anyone who
+// just installed polyclav (via `uvx polyclav`, Homebrew, or a fresh
+// clone) and ran it for the first time: the embedded example config was
+// just seeded and, predictably, its soundfonts aren't downloaded yet.
+// That's not a real error to weigh options over — it leads with the one
+// obvious fix instead of presenting it as one of three equal choices.
+func printStartupError(w io.Writer, configPath string, mde *config.MissingDepsError, firstRun bool) {
 	fmt.Fprintln(w, "polyclav cannot start: config validation failed")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, mde.Error())
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "To fix, choose one:")
-	fmt.Fprintln(w, "  - Hear sound now (no download):  keep only a native patch (type=\"native\") — needs no files")
-	fmt.Fprintln(w, "  - Download example soundfonts:   polyclav bootstrap")
-	fmt.Fprintf(w, "  - Trim broken patches:           edit %s\n", configPath)
+	if firstRun {
+		fmt.Fprintln(w, "Looks like this is your first run: get everything working with")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "    polyclav bootstrap")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "then run polyclav again. Other options:")
+		fmt.Fprintln(w, "  - Hear sound now (no download):  keep only a native patch (type=\"native\") — needs no files")
+		fmt.Fprintf(w, "  - Trim broken patches instead:    edit %s\n", configPath)
+	} else {
+		fmt.Fprintln(w, "To fix, choose one:")
+		fmt.Fprintln(w, "  - Hear sound now (no download):  keep only a native patch (type=\"native\") — needs no files")
+		fmt.Fprintln(w, "  - Download example soundfonts:   polyclav bootstrap")
+		fmt.Fprintf(w, "  - Trim broken patches:           edit %s\n", configPath)
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Documentation: docs/INSTALL.md")
 }
