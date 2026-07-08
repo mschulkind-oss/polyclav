@@ -99,7 +99,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	if !opts.AcceptLicenses {
-		if !confirm(opts.Stdin, opts.Stdout, "Download all and accept the licenses above? [y/N]: ") {
+		if !confirm(opts.Stdin, opts.Stdout, "Download all and accept the licenses above? [Y/n]: ") {
 			fmt.Fprintln(opts.Stdout, "bootstrap aborted by user")
 			return nil
 		}
@@ -133,6 +133,9 @@ func Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
+// confirm prompts and reports whether the user accepted. Defaults to
+// accept: a blank response (just Enter) counts as yes — the prompt text
+// itself must say [Y/n] to match. Only an explicit "n"/"no" refuses.
 func confirm(r io.Reader, w io.Writer, prompt string) bool {
 	fmt.Fprint(w, prompt)
 	br := bufio.NewReader(r)
@@ -141,7 +144,7 @@ func confirm(r io.Reader, w io.Writer, prompt string) bool {
 		return false
 	}
 	resp := strings.ToLower(strings.TrimSpace(line))
-	return resp == "y" || resp == "yes"
+	return resp != "n" && resp != "no"
 }
 
 // downloadAndUnpack streams the URL to a .partial file, atomically

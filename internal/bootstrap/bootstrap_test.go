@@ -254,6 +254,49 @@ func TestConsentRefusalAborts(t *testing.T) {
 	}
 }
 
+func TestConsentBlankDefaultsToYes(t *testing.T) {
+	// User just presses Enter (blank response) at the [Y/n] prompt →
+	// bootstrap must proceed, matching the prompt's stated default.
+	body := []byte("fake-sf2-payload")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	dest := t.TempDir()
+	var stdin bytes.Buffer
+	stdin.WriteString("\n")
+	var stdout bytes.Buffer
+
+	err := Run(context.Background(), Options{
+		Dest: dest,
+		Items: []Item{{
+			Name:      "fake",
+			URL:       srv.URL,
+			Archive:   ArchiveRaw,
+			OnDisk:    "f.sf2",
+			SizeBytes: int64(len(body)),
+			License:   "test",
+		}},
+		HTTPClient: srv.Client(),
+		Stdin:      &stdin,
+		Stdout:     &stdout,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v\n%s", err, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "aborted by user") {
+		t.Errorf("blank response must not abort, got:\n%s", stdout.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "f.sf2"))
+	if err != nil {
+		t.Fatalf("read final: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("unexpected contents: %q", got)
+	}
+}
+
 func TestPartialFileCleanedOnHTTPError(t *testing.T) {
 	// Mid-stream failure: server returns 500. The .partial must not
 	// be promoted to the final filename, and the partial gets
