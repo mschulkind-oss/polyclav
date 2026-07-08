@@ -31,7 +31,7 @@ All OS-audio coupling is remarkably shallow and localized. On the Rust side it l
 | **OSC (XR18 control)** | `internal/osc/client.go` | **Portable** | Pure-Go `hypebeast/go-osc` over UDP, no cgo. `liblo` in flake/jail is only the `oscsend`/`oscdump` dev CLIs — never linked into the binary. |
 | **Synth + DSP core** | oxisynth `0.1`, fundsp `0.23`, `synth/*`, `dsp/*` | **Portable** | Pure Rust, no OS coupling. Compiles and runs identically on macOS. |
 | **CLAP host** | `clack-host 0.1`, `plugin_clap.rs` | **Portable** | Pure-Rust host; loads `.clap` bundles via libloading. [clap-sys has zero deps / no headers](https://crates.io/api/v1/crates/clap-sys/0.5.0/dependencies) — the `clap` flake input is vestigial. On macOS clack-host pulls objc2-foundation (NSBundle) → needs `-framework CoreFoundation`/`Foundation`. |
-| **sfizz (optional SFZ)** | `audio-core/src/sfizz_sys.rs:53` dlopen `libsfizz.so.1`/`libsfizz.so` | **Small fix** | Add a Darwin branch for `libsfizz.dylib`. Optional backend, degrades gracefully; not a build dep. No Homebrew formula — macOS users install the [SFZTools `.pkg`](https://sfztools.github.io/sfizz/downloads/). |
+| **sfizz (optional SFZ)** | `audio-core/src/sfizz_sys.rs` dlopen, cfg-gated names: Linux `libsfizz.so.1`/`libsfizz.so`, macOS `libsfizz.1.dylib`/`libsfizz.dylib` | **Done** | No Homebrew formula, but sfztools' own [GitHub release tarball](https://github.com/sfztools/sfizz/releases) (`sfizz-<ver>-macos.tar.gz`) ships a bare `usr/local/lib/` tree with the identical versioned-SONAME + unversioned-symlink shape as Linux — extract to `/usr/local` (on dyld's default fallback search path) and a plain `dlopen("libsfizz.dylib")` finds it, no `DYLD_LIBRARY_PATH` needed. Optional backend either way; degrades gracefully if absent. |
 | **LV2 host stack** | `livi 0.7`+`lilv`, `plugin_lv2.rs`, cgo `-llilv-0 -lserd-0 -lsord-0 -lsratom-0` (`audio.go:13`), `-lzix-0` (`zix_link.go`) | **Buildable, low value** | All present as [Homebrew arm64 bottles](https://formulae.brew.sh/formula/lilv) (lilv 0.28, serd/sord/sratom, zix 0.8.2). But **LV2 plugins are rare on macOS** — AU/VST3/CLAP dominate. See §3 plugin note. |
 | **`-ldl` in cgo LDFLAGS** | `audio.go:4` | **Drop on Darwin** | No `libdl` on macOS (`dlopen` is in libSystem); `-ldl` fails the link. `-lpthread`/`-lm` are harmless libSystem no-ops. |
 | **glibc/ALSA env hacks** | `.mise.local.toml` (`-idirafter` glibc, `CPLUS_INCLUDE_PATH` alsa, `-lasound`) | **Linux-only** | glibc doesn't exist on macOS; the `#include_next <cstdlib>` problem doesn't arise with libc++/Apple SDK. Omit entirely. |
@@ -113,7 +113,7 @@ Two payoffs are already in the code: the render path has **no hard-coded block s
 - Split `internal/audio/audio.go` into `audio_linux.go` / `audio_darwin.go` (or gate the cgo preamble by build tag). There is **no seam for this today** — the preamble compiles unconditionally.
 - Darwin cgo LDFLAGS ≈ `-lpolyclav_audio_core -framework CoreAudio -framework CoreMIDI -framework AudioToolbox -framework AudioUnit -framework CoreFoundation` (plus `-framework Foundation` for clack-host's NSBundle usage), **replacing** Linux's `-lpthread -ldl -lm` + `pkg-config libpipewire-0.3 libspa-0.2`.
 - Keep the LV2 `-llilv-0 -lserd-0 -lsord-0 -lsratom-0` **only if** you keep the LV2 backend; resolve them from `/opt/homebrew/lib` instead of `/nix/store`.
-- Fix `sfizz_sys.rs:53` to try `libsfizz.dylib` on Darwin, or the SFZ backend silently stays inert on Mac.
+- ~~Fix `sfizz_sys.rs:53` to try `libsfizz.dylib` on Darwin~~ — done (cfg-gated name list; see the coupling table above).
 
 ### macOS build dependencies (Homebrew)
 
@@ -122,7 +122,7 @@ Two payoffs are already in the code: the render path has **no hard-coded block s
 | `lilv` (pulls `lv2`, `serd`, `sord`, `sratom`, `zix`, `libsndfile`) | 0.28.0 | ✅ | LV2 host stack ([formula](https://formulae.brew.sh/formula/lilv)) |
 | `liblo` | 0.36 | ✅ | OSC dev CLIs only ([formula](https://formulae.brew.sh/formula/liblo)) — not linked |
 | `pkg-config`/`pkgconf` | — | ✅ | `.pc` resolution; non-keg-only formulae symlink into `/opt/homebrew/lib/pkgconfig` (default search path), so `PKG_CONFIG_PATH` is usually unnecessary |
-| `sfizz` | — | ❌ (no formula) | Install the [SFZTools `.pkg`](https://sfztools.github.io/sfizz/downloads/) if you want `.sfz`; optional |
+| `sfizz` | 1.2.3 | ❌ (no formula) | Extract sfztools' [GitHub release tarball](https://github.com/sfztools/sfizz/releases) (`sfizz-1.2.3-macos.tar.gz`) to `/usr/local` if you want `.sfz`; optional, dlopen'd at runtime, not a build dep |
 | `clap` | — | not needed | clap-sys is hand-written, zero-dep |
 | `llvm` (libclang) | — | usually not needed | On macOS bindgen auto-detects Apple's libclang via `xcode-select`; `LIBCLANG_PATH` only needed if using Homebrew LLVM. Moot if PipeWire (the only bindgen consumer) is excluded — though coreaudio-sys also runs bindgen. |
 

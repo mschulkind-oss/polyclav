@@ -1,10 +1,21 @@
 //! Runtime (dlopen) binding to the small subset of libsfizz we use.
 //!
 //! sfizz is an OPTIONAL backend: the binary does NOT link it. We `dlopen`
-//! `libsfizz.so.1` on first use; if it is absent the SFZ backend is simply
-//! unavailable and `.sfz` patches degrade gracefully — oxisynth (SF2/SF3),
-//! the native synth, and LV2/CLAP plugins are unaffected. See `sfizz.h`
-//! (sfztools/sfizz) for the full C API.
+//! the platform's libsfizz on first use; if it is absent the SFZ backend
+//! is simply unavailable and `.sfz` patches degrade gracefully —
+//! oxisynth (SF2/SF3), the native synth, and LV2/CLAP plugins are
+//! unaffected. See `sfizz.h` (sfztools/sfizz) for the full C API.
+//!
+//! On macOS there is no Homebrew formula, but sfztools' own GitHub
+//! releases (`sfizz-<ver>-macos.tar.gz`) ship a bare `usr/local/lib/`
+//! tree with the exact same versioned-SONAME + unversioned-symlink shape
+//! as the Linux .so pair (`libsfizz.1.dylib` -> `libsfizz.<ver>.dylib`,
+//! `libsfizz.dylib` -> `libsfizz.1.dylib`), extractable straight to
+//! `/usr/local` — which is in dyld's default fallback search path, so a
+//! bare `dlopen("libsfizz.dylib")` finds it with no extra setup. (Apple
+//! Silicon Homebrew's `/opt/homebrew/lib` is NOT on that fallback path;
+//! if sfizz ever gets a Homebrew formula, installs there would need
+//! `DYLD_LIBRARY_PATH` set to be found.)
 
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
@@ -47,11 +58,19 @@ unsafe impl Sync for SfizzApi {}
 
 static API: OnceLock<Option<SfizzApi>> = OnceLock::new();
 
+// Versioned SONAME first (what a real install provides), then the
+// unversioned dev symlink. Linux resolution honours the binary's
+// RUNPATH (dev/nix builds) and the system ldconfig cache (portable
+// builds); macOS resolution goes through dyld's default fallback search
+// path (see the module doc comment for exactly how a bare "libsfizz.dylib"
+// gets found with no extra setup).
+#[cfg(target_os = "linux")]
+const LIB_NAMES: &[&str] = &["libsfizz.so.1", "libsfizz.so"];
+#[cfg(target_os = "macos")]
+const LIB_NAMES: &[&str] = &["libsfizz.1.dylib", "libsfizz.dylib"];
+
 fn load() -> Option<SfizzApi> {
-    // Versioned SONAME first (what a real install provides), then the
-    // unversioned dev symlink. Resolution honours the binary's RUNPATH
-    // (dev/nix builds) and the system ldconfig cache (portable builds).
-    let lib = ["libsfizz.so.1", "libsfizz.so"]
+    let lib = LIB_NAMES
         .iter()
         .find_map(|name| unsafe { Library::new(*name) }.ok())?;
     unsafe {
