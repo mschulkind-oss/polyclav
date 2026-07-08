@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout sfztools/sfizz
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: sfztools/sfizz
           ref: ${{ inputs.sfizz_ref }}
