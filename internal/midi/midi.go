@@ -105,6 +105,26 @@ func PortNames() ([]string, error) {
 	return portNames(ins), nil
 }
 
+// OutPortNames enumerates the currently-visible MIDI output port names.
+// Mirrors PortNames on the output side — used by tooling (the MIDI probe)
+// that needs to send to a device as well as listen to it.
+func OutPortNames() ([]string, error) {
+	drv, err := rtmididrv.New()
+	if err != nil {
+		return nil, err
+	}
+	defer drv.Close()
+	outs, err := drv.Outs()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(outs))
+	for i, p := range outs {
+		names[i] = p.String()
+	}
+	return names, nil
+}
+
 func pickPort(ins []drivers.In, match string) drivers.In {
 	idx := PickPortName(portNames(ins), match, RoleMIDI)
 	if idx < 0 {
