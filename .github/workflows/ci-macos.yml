@@ -104,28 +104,25 @@ jobs:
       - name: Go tests (device-free)
         run: go test ./...
 
-      - name: Offline-render smoke (placeholder until `render` subcommand lands)
-        # PLACEHOLDER. The `render` subcommand does not exist yet (this is part of
-        # the port). Once it does, this becomes a real gate: render a couple of
-        # seconds of audio to a WAV entirely offline (no device opened) and assert
-        # the file is non-empty. Guarded on `render --help` so it no-ops (warning,
-        # not failure) until the subcommand ships.
+      - name: Offline-render smoke (device-free WAV gate)
+        # Renders a couple of seconds of the native synth to a WAV entirely
+        # offline — NO audio device is opened — exercising the Go -> cgo ->
+        # audio-core render_block path end to end on the CoreAudio-linked binary.
+        # (Non-silence is asserted separately by the `render_offline_ffi_fills_buffer`
+        # Rust test in the cargo-test step; here we prove the Go/WAV plumbing.)
         run: |
           set -euo pipefail
           go build -o bin/polyclav ./cmd/polyclav
-          if ./bin/polyclav render --help >/dev/null 2>&1; then
-            out="${RUNNER_TEMP}/smoke.wav"
-            # Intended shape: fixed-length offline render of a known patch to WAV.
-            ./bin/polyclav render --seconds 2 --out "$out"
-            # BSD stat on macOS uses -f%z for size (GNU's -c%s does NOT work here).
-            if [ ! -s "$out" ]; then
-              echo "::error::offline render produced an empty/missing WAV at $out"
-              exit 1
-            fi
-            echo "offline render OK: $(stat -f%z "$out") bytes -> $out"
-          else
-            echo "::warning::render subcommand not implemented yet — skipping offline-render smoke (placeholder)"
+          out="${RUNNER_TEMP}/smoke.wav"
+          ./bin/polyclav render --seconds 2 --out "$out"
+          # BSD stat on macOS uses -f%z for size (GNU's -c%s does NOT work here).
+          size=$(stat -f%z "$out")
+          # 44-byte RIFF/WAVE header + PCM: a real 2 s stereo render is ~384 KB.
+          if [ "$size" -le 44 ]; then
+            echo "::error::offline render produced an empty/header-only WAV ($size bytes) at $out"
+            exit 1
           fi
+          echo "offline render OK: $size bytes -> $out"
 
       - name: Debug over SSH on failure (tmate)
         # Only spawns when an earlier step failed. limit-access-to-actor: true

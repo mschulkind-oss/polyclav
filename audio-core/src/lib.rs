@@ -1419,6 +1419,93 @@ pub(crate) fn build_user_data() -> UserData {
     }
 }
 
+/// Build a [`UserData`] around `synth` with FRESH (non-global) lock-free
+/// queues — isolated from the live audio thread's globals. Portable; used by
+/// the offline renderer (`polyclav_render_offline`) and the offline tests.
+pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
+    let params = Arc::new(DspParams::new());
+    let mut compressor = Compressor::new();
+    let mut reverb = Reverb::new();
+    let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
+    let mut limiter = Limiter::new(SAMPLE_RATE);
+    compressor.set_amount(params.comp_amount());
+    reverb.set_mix(params.reverb_mix());
+    mastering.set_amount(params.mastering_amount());
+    limiter.set_ceiling_db(params.limiter_ceiling_db());
+    UserData {
+        sine_phase: 0.0,
+        callback_count: 0,
+        last_frames: 0,
+        synth,
+        midi_queue: Arc::new(ArrayQueue::new(64)),
+        reload_queue: Arc::new(ArrayQueue::new(4)),
+        last_comp_amount: params.comp_amount(),
+        last_reverb_mix: params.reverb_mix(),
+        last_mastering_amount: params.mastering_amount(),
+        last_limiter_ceiling_db: params.limiter_ceiling_db(),
+        dsp_params: params,
+        compressor,
+        reverb,
+        mastering,
+        limiter,
+    }
+}
+
+/// Offline (no-device) render: the native `engine` synth playing
+/// `note`/`velocity` held from t=0, through the full DSP chain, written to
+/// `out` as interleaved stereo f32. Renders in 1024-frame blocks (like a real
+/// callback) so block-boundary behaviour is exercised. No audio device, no
+/// global state — powers `polyclav render` and the CI offline-render gate, on
+/// every platform.
+///
+/// Returns 0 on success, 2 on a bad/unknown `engine` string, 3 if `out` is
+/// NULL or `n_frames` is 0.
+///
+/// # Safety
+/// `engine` must be a valid NUL-terminated C string; `out` must point to at
+/// least `n_frames * 2` writable `f32`s.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_render_offline(
+    engine: *const c_char,
+    note: u8,
+    velocity: u8,
+    out: *mut f32,
+    n_frames: u32,
+) -> i32 {
+    if out.is_null() || n_frames == 0 {
+        return 3;
+    }
+    let engine = match unsafe { CStr::from_ptr(engine) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+    let synth = match SynthBackend::load_native(engine) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("audio-core: render_offline load failed: {e}");
+            return 2;
+        }
+    };
+    let mut ud = build_offline_user_data(Some(synth));
+    let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+        channel: 0,
+        note,
+        velocity,
+    });
+    drain_midi(&mut ud);
+
+    let total = n_frames as usize;
+    let samples = unsafe { std::slice::from_raw_parts_mut(out, total * 2) };
+    let chunk_frames = 1024usize;
+    let mut done = 0usize;
+    while done < total {
+        let this = chunk_frames.min(total - done);
+        render_block(&mut ud, &mut samples[done * 2..(done + this) * 2]);
+        done += this;
+    }
+    0
+}
+
 #[cfg(target_os = "linux")]
 fn run_audio(
     quit_flag: Arc<AtomicBool>,
@@ -1781,32 +1868,50 @@ mod tests {
     /// render harness: it lets tests drive the exact `render_block` seam the
     /// real audio thread uses, on any platform, with no audio device.
     fn offline_user_data(synth: SynthBackend) -> UserData {
-        let params = Arc::new(DspParams::new());
-        let mut compressor = Compressor::new();
-        let mut reverb = Reverb::new();
-        let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
-        let mut limiter = Limiter::new(SAMPLE_RATE);
-        compressor.set_amount(params.comp_amount());
-        reverb.set_mix(params.reverb_mix());
-        mastering.set_amount(params.mastering_amount());
-        limiter.set_ceiling_db(params.limiter_ceiling_db());
-        UserData {
-            sine_phase: 0.0,
-            callback_count: 0,
-            last_frames: 0,
-            synth: Some(synth),
-            midi_queue: Arc::new(ArrayQueue::new(64)),
-            reload_queue: Arc::new(ArrayQueue::new(4)),
-            last_comp_amount: params.comp_amount(),
-            last_reverb_mix: params.reverb_mix(),
-            last_mastering_amount: params.mastering_amount(),
-            last_limiter_ceiling_db: params.limiter_ceiling_db(),
-            dsp_params: params,
-            compressor,
-            reverb,
-            mastering,
-            limiter,
-        }
+        build_offline_user_data(Some(synth))
+    }
+
+    /// `polyclav_render_offline` fills the caller's buffer with audible, finite
+    /// audio from the native synth — the device-free path behind `polyclav
+    /// render` and the CI offline-render gate. Also pins the null / zero-length
+    /// guards and the bad-engine error code.
+    #[test]
+    fn render_offline_ffi_fills_buffer() {
+        let engine = std::ffi::CString::new("minimoog").unwrap();
+        let n_frames: u32 = 4800; // 0.1 s at 48 kHz
+        let mut buf = vec![0.0f32; n_frames as usize * 2];
+        let rc = unsafe {
+            polyclav_render_offline(engine.as_ptr(), 60, 100, buf.as_mut_ptr(), n_frames)
+        };
+        assert_eq!(rc, 0, "render_offline returned error {rc}");
+        assert!(buf.iter().all(|s| s.is_finite()), "non-finite sample");
+        let rms = (buf
+            .iter()
+            .map(|s| f64::from(*s) * f64::from(*s))
+            .sum::<f64>()
+            / buf.len() as f64)
+            .sqrt();
+        assert!(
+            rms > 0.001,
+            "expected audible offline render, got rms={rms}"
+        );
+
+        // Guards: null out or zero frames -> 3; unknown engine -> 2.
+        assert_eq!(
+            unsafe {
+                polyclav_render_offline(engine.as_ptr(), 60, 100, std::ptr::null_mut(), n_frames)
+            },
+            3
+        );
+        assert_eq!(
+            unsafe { polyclav_render_offline(engine.as_ptr(), 60, 100, buf.as_mut_ptr(), 0) },
+            3
+        );
+        let bad = std::ffi::CString::new("nope").unwrap();
+        assert_eq!(
+            unsafe { polyclav_render_offline(bad.as_ptr(), 60, 100, buf.as_mut_ptr(), n_frames) },
+            2
+        );
     }
 
     /// End-to-end offline render through the portable `render_block` seam:

@@ -58,6 +58,15 @@ int32_t polyclav_audio_set_clap_plugin(const char *bundle_path, const char *plug
  * `engine` is NULL or not valid UTF-8, 3 if the engine name is unknown. */
 int32_t polyclav_audio_set_native_patch(const char *engine);
 
+/* Offline (no-device) render: the native `engine` synth playing note/velocity
+ * held from t=0, through the full DSP chain, written to `out` as interleaved
+ * stereo f32 (48 kHz). `out` must hold at least n_frames*2 floats. Powers
+ * `polyclav render` and the CI offline-render gate; works on every platform,
+ * opens no audio device. Returns 0 on success, 2 on a bad/unknown engine, 3 if
+ * out is NULL or n_frames is 0. */
+int32_t polyclav_render_offline(const char *engine, uint8_t note, uint8_t velocity,
+                                float *out, uint32_t n_frames);
+
 /* MIDI event push (Go -> Rust audio thread, lock-free, drops on queue full). */
 void polyclav_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
 void polyclav_midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity);

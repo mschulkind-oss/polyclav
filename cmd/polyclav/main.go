@@ -51,6 +51,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "doctor" {
 		os.Exit(runDoctor(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "render" {
+		os.Exit(runRender(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
 		printVersion()
 		return

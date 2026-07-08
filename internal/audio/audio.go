@@ -77,6 +77,35 @@ func SetSoundfont(path string) {
 	C.polyclav_audio_set_soundfont(cpath)
 }
 
+// RenderOffline renders the native `engine` synth playing note/velocity held
+// from t=0, through the full DSP chain, into an interleaved-stereo f32 buffer
+// (48 kHz), opening NO audio device. Returns the samples (len nFrames*2) or an
+// error. This is the device-free path behind `polyclav render` and the CI
+// offline-render gate; it works identically on Linux and macOS.
+func RenderOffline(engine string, note, velocity byte, nFrames int) ([]float32, error) {
+	if nFrames <= 0 {
+		return nil, fmt.Errorf("render offline: nFrames must be positive, got %d", nFrames)
+	}
+	buf := make([]float32, nFrames*2)
+	cEngine := C.CString(engine)
+	defer C.free(unsafe.Pointer(cEngine))
+	rc := C.polyclav_render_offline(
+		cEngine,
+		C.uint8_t(note),
+		C.uint8_t(velocity),
+		(*C.float)(unsafe.Pointer(&buf[0])),
+		C.uint32_t(nFrames),
+	)
+	switch rc {
+	case 0:
+		return buf, nil
+	case 2:
+		return nil, fmt.Errorf("render offline: unknown engine %q", engine)
+	default:
+		return nil, fmt.Errorf("render offline: audio-core error code %d", int(rc))
+	}
+}
+
 // SetLatencyFrames requests the audio buffer size in frames — polyclav's
 // own latency knob. Clamped to [16, 8192] in Rust; 0 selects the default
 // (128, ~2.7 ms at 48 kHz). It is a request, not a guarantee: the effective
