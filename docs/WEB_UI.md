@@ -10,9 +10,10 @@
 > replaces it. Dev workflow: `just web-setup` / `web-dev` / `web-build`
 > / `web-check` and `hivemind Procfile.dev`. The phased plan below is
 > complete — read on for the design record and decisions. Companion
-> doc: `docs/VELOCITY_CURVES.md`. Tech choices follow the portfolio
-> standards (Next.js frontend, pnpm + biome + tsc, hivemind for dev
-> processes).
+> docs: `docs/VELOCITY_CURVES.md` and `docs/MIDI_PROBE.md` (the
+> `/midi-probe` page — a generic MIDI device reverse-engineering tool).
+> Tech choices follow the portfolio standards (Next.js frontend, pnpm +
+> biome + tsc, hivemind for dev processes).
 
 ## Goal
 

@@ -52,7 +52,7 @@ over SysEx.
   config editing, a generic MIDI device probe/reverse-engineering tool,
   and the audition transport, plus a REST + SSE API.
   The pre-Next single-file page remains at `/legacy`. See
-  `docs/WEB_UI.md`.
+  `docs/WEB_UI.md` and `docs/MIDI_PROBE.md` (the device probe).
 - **Velocity curves** — global `[midi.velocity]` curve (soft / linear /
   hard / custom gamma, or 2–16 control points, + output clamp) with
   per-patch overrides, so every patch responds to your keybed the way
