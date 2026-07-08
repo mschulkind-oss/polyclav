@@ -59,8 +59,20 @@ jobs:
       - name: Configure CMake (Release, shared lib, no tests/render/JACK)
         working-directory: sfizz-src
         run: |
+          # cmake/SfizzConfig.cmake's `PROJECT_SYSTEM_PROCESSOR MATCHES
+          # "(arm.*)"` branch adds -mfpu=neon -mfloat-abi=hard, which are
+          # 32-bit-ARM-only flags -- clang rejects them for the
+          # arm64-apple-darwin target, since that regex also matches
+          # "arm64". Their own CI never hits this because it still builds
+          # on x86_64 (macos-11), which takes the sibling x86 branch
+          # instead. SfizzConfig.cmake only derives PROJECT_SYSTEM_PROCESSOR
+          # `if(NOT PROJECT_SYSTEM_PROCESSOR)`, so pre-seeding it as a cache
+          # var here skips their broken branch entirely; NEON sources build
+          # unconditionally either way (NEON is baseline on AArch64, no
+          # explicit compiler flag needed).
           cmake -B build -S . \
             -D CMAKE_BUILD_TYPE=Release \
+            -D PROJECT_SYSTEM_PROCESSOR=aarch64 \
             -D SFIZZ_SHARED=ON \
             -D SFIZZ_TESTS=OFF \
             -D SFIZZ_RENDER=OFF \
