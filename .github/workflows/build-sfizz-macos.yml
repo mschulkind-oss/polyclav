@@ -70,9 +70,18 @@ jobs:
           # var here skips their broken branch entirely; NEON sources build
           # unconditionally either way (NEON is baseline on AArch64, no
           # explicit compiler flag needed).
+          # The vendored external/atomic_queue header calls
+          # `Base::template do_pop_any(...)` / `do_push_any(...)` without an
+          # explicit <...> argument list after the `template` disambiguator.
+          # The Clang bundled with this runner image now hard-errors on that
+          # via -Wmissing-template-arg-list-after-template-kw (older Clang
+          # tolerated it); this is a third-party vendor-drop issue, not
+          # polyclav's or sfizz's own code, so silence it at the compiler
+          # level rather than patching the vendored header.
           cmake -B build -S . \
             -D CMAKE_BUILD_TYPE=Release \
             -D PROJECT_SYSTEM_PROCESSOR=aarch64 \
+            -D CMAKE_CXX_FLAGS=-Wno-error=missing-template-arg-list-after-template-kw \
             -D SFIZZ_SHARED=ON \
             -D SFIZZ_TESTS=OFF \
             -D SFIZZ_RENDER=OFF \
