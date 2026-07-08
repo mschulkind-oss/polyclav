@@ -21,6 +21,7 @@ import (
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
+	"github.com/mschulkind-oss/polyclav/internal/midiprobe"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
 )
@@ -43,6 +44,7 @@ type Deps struct {
 	Registry   controls.Registry
 	Player     *player.Player         // may be nil → player endpoints return 503
 	Devices    DeviceStates           // may be nil → device states report "unknown"
+	Probe      *midiprobe.Session     // may be nil → probe endpoints return 503
 	ConfigTOML func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
 	ConfigPath string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
 	// SetGlobalVelocity (may be nil) tells the daemon its global
@@ -112,6 +114,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/player", s.handlePlayerPlay)
 	s.mux.HandleFunc("POST /api/player/stop", s.handlePlayerStop)
 	s.mux.HandleFunc("POST /api/player/tempo", s.handlePlayerTempo)
+	s.routesProbe() // probe.go: /api/probe/* (generic MIDI device reverse-engineering tool)
 }
 
 // Handler returns the routed handler, for tests and for callers that

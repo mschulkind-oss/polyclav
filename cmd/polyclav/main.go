@@ -25,6 +25,7 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 	"github.com/mschulkind-oss/polyclav/internal/midi"
+	"github.com/mschulkind-oss/polyclav/internal/midiprobe"
 	"github.com/mschulkind-oss/polyclav/internal/osc"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
@@ -540,6 +541,7 @@ func main() {
 	// serve failure (port in use, bad listen addr) is logged, not fatal:
 	// the hardware surfaces keep working without the browser one.
 	if cfg.Web.Enabled {
+		probe := midiprobe.NewSession(hub, logger)
 		srv := web.New(web.Deps{
 			Logger:     logger,
 			Controls:   ctl,
@@ -547,6 +549,7 @@ func main() {
 			Registry:   registry,
 			Player:     plr,
 			Devices:    sup,
+			Probe:      probe,
 			ConfigTOML: func() ([]byte, error) { return os.ReadFile(path) },
 			ConfigPath: path,
 			// Keeps the daemon's global velocity spec in sync with a
