@@ -124,3 +124,63 @@ export interface VelocityPutResponse {
   curve: string;
   saved: boolean;
 }
+
+// ---- MIDI probe (internal/web/probe.go, internal/midiprobe) -------------
+// Field names are camelCase here (probe.go's own JSON tags), unlike the
+// rest of this file's daemon API which is snake_case — probe.go is a
+// separate, newer surface that intentionally didn't inherit that
+// convention (see docs/MIDI_PROBE.md).
+
+export interface ProbePorts {
+  ins: string[];
+  outs: string[];
+}
+
+export interface ProbeStatus {
+  active: boolean;
+  inPort?: string;
+  outPort?: string;
+  startedAt?: string;
+  eventCount: number;
+  bufferCap: number;
+  labeling: boolean;
+  labelText?: string;
+  labelEndsAt?: string;
+}
+
+/** "probe-event" SSE payload / GET /api/probe/events entries. */
+export interface ProbeEvent {
+  seq: number;
+  time: string;
+  port: string;
+  kind: string;
+  raw: string;
+  channel?: number;
+  data1?: number;
+  data2?: number;
+  bend?: number;
+  label?: string;
+}
+
+export interface IdentityResult {
+  requestSentAt: string;
+  replyRaw?: string;
+  receivedAt?: string;
+  manufacturerId?: string;
+  manufacturerName?: string;
+  familyCode?: string;
+  modelNumber?: string;
+  versionBytes?: string;
+  timedOut: boolean;
+}
+
+export interface DeviceProfile {
+  exportedAt: string;
+  inPort: string;
+  outPort: string;
+  allInPorts: string[];
+  allOutPorts: string[];
+  identity?: IdentityResult;
+  events: ProbeEvent[];
+  distinctLabels: string[];
+}

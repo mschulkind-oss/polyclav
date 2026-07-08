@@ -3,7 +3,15 @@
 // serves both /app/ and /api/; in dev, next.config.ts rewrites /api/*
 // to the daemon on 127.0.0.1:8666.
 
-import type { Clip, PlayerState, Status, VelocityPutResponse } from "./types";
+import type {
+  Clip,
+  IdentityResult,
+  PlayerState,
+  ProbePorts,
+  ProbeStatus,
+  Status,
+  VelocityPutResponse,
+} from "./types";
 
 async function request(method: string, url: string, body?: unknown): Promise<Response | null> {
   try {
@@ -88,6 +96,32 @@ export const api = {
 
   /** PUT /api/velocity — returns the raw Response so callers can show 400/409 bodies. */
   velocityPut: (body: unknown): Promise<Response | null> => request("PUT", "/api/velocity", body),
+
+  // ---- MIDI probe (docs/MIDI_PROBE.md) ----------------------------------
+
+  probePorts: async (): Promise<ProbePorts | null> =>
+    json<ProbePorts>(await request("GET", "/api/probe/ports")),
+
+  probeStatus: async (): Promise<ProbeStatus | null> =>
+    json<ProbeStatus>(await request("GET", "/api/probe/status")),
+
+  /** Returns the raw Response so callers can show 404/409 bodies (unknown port / already connected). */
+  probeConnect: (inPort: string, outPort: string, bufferCap?: number): Promise<Response | null> =>
+    request("POST", "/api/probe/connect", { inPort, outPort, bufferCap }),
+
+  probeDisconnect: (): Promise<Response | null> => request("POST", "/api/probe/disconnect"),
+
+  /** Returns the raw Response so callers can show 400/409 bodies (empty label / already labeling / not connected). */
+  probeLabel: (label: string, windowMs: number): Promise<Response | null> =>
+    request("POST", "/api/probe/label", { label, windowMs }),
+
+  probeIdentity: async (timeoutMs: number): Promise<IdentityResult | null> =>
+    json<IdentityResult>(await request("POST", "/api/probe/identity", { timeoutMs })),
+
+  /** Returns the raw Response so callers can show 400/409 bodies (bad hex / not connected). */
+  probeSend: (hex: string): Promise<Response | null> => request("POST", "/api/probe/send", { hex }),
+
+  /** GET /api/probe/export is a plain download link (server sets Content-Disposition), not fetched here. */
 };
 
 export type { VelocityPutResponse };

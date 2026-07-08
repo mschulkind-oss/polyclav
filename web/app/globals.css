@@ -342,3 +342,88 @@ details summary {
     Menlo,
     monospace;
 }
+
+/* top nav (web/app/layout.tsx) — present on every page */
+nav.topnav {
+  display: flex;
+  gap: 4px;
+  padding: 6px 22px 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+nav.topnav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 10px;
+  border-radius: 6px 6px 0 0;
+}
+nav.topnav a:hover {
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* MIDI probe (docs/MIDI_PROBE.md) — live event log */
+.probe-log {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.probe-log table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.probe-log th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  text-align: left;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.probe-log td {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.probe-log tr:last-child td {
+  border-bottom: none;
+}
+.probe-time,
+.probe-decoded {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ev-kind {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+.ev-note {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.ev-cc {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ev-sysex {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.ev-pitchbend,
+.ev-other {
+  color: var(--muted);
+}
