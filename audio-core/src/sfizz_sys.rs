@@ -6,16 +6,21 @@
 //! oxisynth (SF2/SF3), the native synth, and LV2/CLAP plugins are
 //! unaffected. See `sfizz.h` (sfztools/sfizz) for the full C API.
 //!
-//! On macOS there is no Homebrew formula, but sfztools' own GitHub
-//! releases (`sfizz-<ver>-macos.tar.gz`) ship a bare `usr/local/lib/`
-//! tree with the exact same versioned-SONAME + unversioned-symlink shape
-//! as the Linux .so pair (`libsfizz.1.dylib` -> `libsfizz.<ver>.dylib`,
-//! `libsfizz.dylib` -> `libsfizz.1.dylib`), extractable straight to
-//! `/usr/local` — which is in dyld's default fallback search path, so a
-//! bare `dlopen("libsfizz.dylib")` finds it with no extra setup. (Apple
-//! Silicon Homebrew's `/opt/homebrew/lib` is NOT on that fallback path;
-//! if sfizz ever gets a Homebrew formula, installs there would need
-//! `DYLD_LIBRARY_PATH` set to be found.)
+//! On macOS, `polyclav bootstrap` installs polyclav's own prebuilt arm64
+//! build (see `internal/bootstrap/sfizz.go`) to a fixed path under the
+//! user's data dir, tried first — sfztools' own official macOS release
+//! (`sfizz-<ver>-macos.tar.gz`) is x86_64-only (their CI still targets
+//! macos-11, from before GitHub had Apple Silicon runners), and a native
+//! arm64 process cannot dlopen a foreign-architecture dylib, so that
+//! upstream tarball is useless on the Apple Silicon Macs most people
+//! actually have. If someone manually installs a working libsfizz
+//! themselves, the bare-name fallback below still finds it: extracting
+//! sfztools' tarball to `/usr/local` (on dyld's default fallback search
+//! path) makes a bare `dlopen("libsfizz.dylib")` succeed with no extra
+//! setup — this just isn't architecture-correct on its own for most
+//! machines today. (Apple Silicon Homebrew's `/opt/homebrew/lib` is NOT
+//! on that fallback path; if sfizz ever gets a Homebrew formula, installs
+//! there would need `DYLD_LIBRARY_PATH` set to be found.)
 
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
@@ -63,16 +68,41 @@ static API: OnceLock<Option<SfizzApi>> = OnceLock::new();
 // RUNPATH (dev/nix builds) and the system ldconfig cache (portable
 // builds); macOS resolution goes through dyld's default fallback search
 // path (see the module doc comment for exactly how a bare "libsfizz.dylib"
-// gets found with no extra setup).
+// gets found with no extra setup) -- but find_library() below tries
+// polyclav's own bootstrap-installed build first on macOS.
 #[cfg(target_os = "linux")]
 const LIB_NAMES: &[&str] = &["libsfizz.so.1", "libsfizz.so"];
 #[cfg(target_os = "macos")]
 const LIB_NAMES: &[&str] = &["libsfizz.1.dylib", "libsfizz.dylib"];
 
-fn load() -> Option<SfizzApi> {
-    let lib = LIB_NAMES
+/// polyclav bootstrap's own prebuilt arm64 libsfizz.dylib
+/// (`internal/bootstrap/sfizz.go`) at its fixed install path. See the
+/// module doc comment for why this exists instead of relying on any
+/// system-wide location.
+#[cfg(target_os = "macos")]
+fn load_bootstrapped_lib() -> Option<Library> {
+    let home = std::env::var_os("HOME")?;
+    let path = std::path::Path::new(&home).join(".local/share/polyclav/lib/libsfizz.dylib");
+    unsafe { Library::new(&path) }.ok()
+}
+
+/// Locates and dlopen's libsfizz: on macOS, polyclav's own
+/// bootstrap-installed build first, then the bare system-search names on
+/// either platform.
+fn find_library() -> Option<Library> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(lib) = load_bootstrapped_lib() {
+            return Some(lib);
+        }
+    }
+    LIB_NAMES
         .iter()
-        .find_map(|name| unsafe { Library::new(*name) }.ok())?;
+        .find_map(|name| unsafe { Library::new(*name) }.ok())
+}
+
+fn load() -> Option<SfizzApi> {
+    let lib = find_library()?;
     unsafe {
         macro_rules! sym {
             ($t:ty, $name:literal) => {
