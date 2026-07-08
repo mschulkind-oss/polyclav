@@ -187,7 +187,7 @@ jobs:
       - name: Upload binary archive as a release asset
         # Only on a real release -- workflow_dispatch dry runs have no
         # release to attach to. This is what the Homebrew formula's `url`
-        # points at; see the tap repo for the formula itself.
+        # points at.
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -195,6 +195,118 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/polyclav-macos-arm64.tar.gz \
             --repo "${{ github.repository }}" --clobber
+
+      - name: Upload binary archive as a build artifact
+        # For update-homebrew-tap below -- avoids re-fetching the asset it
+        # just uploaded (and needing the release to be fully consistent
+        # yet) when this job already has the exact bytes in hand.
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: polyclav-macos-tarball
+          path: dist/polyclav-macos-arm64.tar.gz
+
+  update-homebrew-tap:
+    # mschulkind-oss/homebrew-tap is one shared tap for the whole
+    # portfolio (no per-project taps) -- HOMEBREW_TAP_TOKEN is an
+    # org-level secret scoped to it. polyclav doesn't use goreleaser (its
+    # `brews:` section would write the formula directly on release), so
+    # this job does the equivalent by hand: open a PR against the tap
+    # with the updated Formula/polyclav.rb, mirroring the "manual PR"
+    # path other non-goreleaser projects in the portfolio use. Merge is
+    # manual, same as those.
+    needs: build-macos
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS binary archive
+        uses: actions/download-artifact@v4
+        with:
+          name: polyclav-macos-tarball
+          path: dist
+
+      - name: Compute release info
+        id: info
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum dist/polyclav-macos-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/polyclav-macos-arm64.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: mschulkind-oss/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Write Formula/polyclav.rb
+        # Apple Silicon only, matching the one macOS artifact build-macos
+        # actually produces -- an on_linux/Intel block pointing at a
+        # binary that doesn't exist would be worse than no formula at all.
+        run: |
+          cat > tap/Formula/polyclav.rb <<EOF
+          # frozen_string_literal: true
+
+          # Maintained by polyclav's .github/workflows/publish.yml -- not
+          # hand-edited, and not GoReleaser-generated (polyclav doesn't use
+          # goreleaser). Regenerated on every release.
+          class Polyclav < Formula
+            desc "Live-piano host: MIDI keyboard -> soundfont/plugin synthesis -> CoreAudio"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${{ steps.info.outputs.version }}"
+            license "Apache-2.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${{ steps.info.outputs.url }}"
+                sha256 "${{ steps.info.outputs.sha256 }}"
+
+                def install
+                  bin.install "polyclav"
+                  bin.install "polyclav-components"
+                end
+              else
+                odie "polyclav's Homebrew formula only supports Apple Silicon (arm64) for now."
+              end
+            end
+
+            def caveats
+              <<~EOS
+                First run needs soundfonts (and SFZ support): run
+                  polyclav bootstrap
+                before starting polyclav for the first time.
+              EOS
+            end
+
+            test do
+              system "#{bin}/polyclav", "--version"
+            end
+          end
+          EOF
+
+      - name: Open a PR against the tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.info.outputs.version }}"
+          BRANCH="polyclav-$VERSION"
+          git config user.name "polyclav-release-bot"
+          git config user.email "actions@github.com"
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+          git checkout -b "$BRANCH"
+          git add Formula/polyclav.rb
+          git commit -m "polyclav $VERSION"
+          git push origin "$BRANCH"
+          if gh pr view "$BRANCH" --repo mschulkind-oss/homebrew-tap >/dev/null 2>&1; then
+            echo "PR already open for $BRANCH"
+          else
+            gh pr create --repo mschulkind-oss/homebrew-tap \
+              --head "$BRANCH" \
+              --title "polyclav $VERSION" \
+              --body "Auto-generated by polyclav's publish.yml for the $VERSION release. macOS arm64 only for now."
+          fi
 
   publish:
     # Only publish on a real release. Uses PyPI Trusted Publishing (OIDC) — no
