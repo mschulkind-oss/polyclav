@@ -1,0 +1,134 @@
+# Builds polyclav's own arm64 libsfizz.dylib and publishes it as a
+# polyclav GitHub Release asset, which `polyclav bootstrap` downloads on
+# macOS (internal/bootstrap/sfizz.go). This exists because sfztools' own
+# official macOS release (sfizz-<ver>-macos.tar.gz) is x86_64-only -- their
+# CI still targets macos-11, from before GitHub had Apple Silicon runners
+# -- and a native arm64 process cannot dlopen a foreign-architecture
+# dylib (Rosetta 2 translates whole *processes* at launch, not a library
+# loaded into an already-running native one).
+#
+# Manual trigger only: sfizz releases infrequently, and re-running this on
+# every push would be wasteful (macOS CI minutes bill at 10x) and risks
+# silently picking up an unreviewed new sfizz version. Bump `sfizz_ref`
+# by hand and re-run when there's a reason to.
+#
+# The build itself mirrors sfztools' own tagged-release CI job
+# (.github/workflows/build.yml in sfztools/sfizz, "build_for_macos"): for
+# a tag ref they do NOT set SFIZZ_USE_SYSTEM_ABSEIL, so it (and every
+# other SFIZZ_USE_SYSTEM_* dependency: ghc-filesystem, simde, kiss_fft,
+# pugixml, cxxopts, catch) builds from the vendored git submodules --
+# zero Homebrew installs needed. Running on macos-15 (Apple Silicon)
+# instead of their macos-11 is the ENTIRE fix: with no
+# CMAKE_OSX_ARCHITECTURES override, CMake targets the runner's native
+# arch, which is arm64 here and x86_64 there.
+#
+# Scope note: this produces an arm64-only dylib (matching the dominant
+# current Mac architecture and the goal of unblocking Apple Silicon
+# users, where upstream offers nothing at all). A universal
+# (arm64+x86_64) build is a plausible future enhancement
+# (CMAKE_OSX_ARCHITECTURES="arm64;x86_64") once this simpler pipeline is
+# proven; not attempted in the first pass to keep the initial build's
+# failure surface small.
+name: Build sfizz for macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      sfizz_ref:
+        description: 'sfztools/sfizz git tag to build (must match internal/bootstrap/sfizz.go''s sfizzBuildTag "sfizz-macos-<ref>")'
+        required: true
+        default: '1.2.3'
+
+permissions:
+  contents: write # to create the release and upload the asset
+
+jobs:
+  build:
+    name: Build arm64 libsfizz.dylib
+    runs-on: macos-15 # Apple Silicon -- see docs/MACOS_PORT.md
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sfztools/sfizz
+        uses: actions/checkout@v4
+        with:
+          repository: sfztools/sfizz
+          ref: ${{ inputs.sfizz_ref }}
+          submodules: recursive
+          path: sfizz-src
+
+      - name: Configure CMake (Release, shared lib, no tests/render/JACK)
+        working-directory: sfizz-src
+        run: |
+          cmake -B build -S . \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D SFIZZ_SHARED=ON \
+            -D SFIZZ_TESTS=OFF \
+            -D SFIZZ_RENDER=OFF \
+            -D SFIZZ_DEMOS=OFF \
+            -D SFIZZ_DEVTOOLS=OFF \
+            -D SFIZZ_BENCHMARKS=OFF
+
+      - name: Build
+        working-directory: sfizz-src
+        run: cmake --build build --config Release --parallel
+
+      - name: Install to a staging tree
+        working-directory: sfizz-src
+        run: |
+          DESTDIR="${{ github.workspace }}/staging" \
+            cmake --build build --config Release --target install
+
+      - name: Locate and verify the built dylib
+        run: |
+          set -euo pipefail
+          DYLIB="$(find staging -name 'libsfizz.dylib' -print -quit)"
+          if [ -z "$DYLIB" ]; then
+            # Fallback in case the unversioned symlink wasn't created for
+            # some reason -- grab the real (non-symlink) file directly.
+            DYLIB="$(find staging -name 'libsfizz*.dylib' -type f -print -quit)"
+          fi
+          if [ -z "$DYLIB" ]; then
+            echo "::error::no libsfizz*.dylib found under staging/ -- CMake install layout may have changed"
+            find staging -type f
+            exit 1
+          fi
+          echo "Found: $DYLIB"
+          file "$DYLIB"
+          # The entire point of this workflow: fail loudly, not silently,
+          # if this somehow isn't arm64 (e.g. a future GitHub runner image
+          # change, or an accidental CMAKE_OSX_ARCHITECTURES override).
+          if ! file "$DYLIB" | grep -q 'arm64'; then
+            echo "::error::built dylib is not arm64 -- refusing to publish a broken artifact"
+            exit 1
+          fi
+          echo "DYLIB=$DYLIB" >> "$GITHUB_ENV"
+
+      - name: Stage the release asset
+        run: |
+          mkdir -p release-asset
+          # cp dereferences a symlink source by default -- this copies the
+          # real bytes, so the published asset is a plain file, never a
+          # dangling symlink.
+          cp "$DYLIB" release-asset/libsfizz.dylib
+          # BSD-2-Clause requires retaining the copyright/license text in
+          # redistributions of the binary.
+          cp sfizz-src/LICENSE.md release-asset/sfizz-LICENSE.md 2>/dev/null \
+            || cp sfizz-src/LICENSE release-asset/sfizz-LICENSE.md
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="sfizz-macos-${{ inputs.sfizz_ref }}"
+          NOTES="polyclav's own arm64 build of sfztools/sfizz ${{ inputs.sfizz_ref }} (BSD-2-Clause), built from vendored git submodules on a macos-15 Apple-Silicon runner -- **not** an official sfztools release. sfztools' own macOS release is x86_64-only and cannot be dlopen'd by a native arm64 process; this exists to fix that for \`polyclav bootstrap\` (see internal/bootstrap/sfizz.go and audio-core/src/sfizz_sys.rs)."
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-asset/libsfizz.dylib release-asset/sfizz-LICENSE.md \
+              --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "sfizz $TAG (macOS arm64, unofficial polyclav build)" \
+              --notes "$NOTES" \
+              release-asset/libsfizz.dylib release-asset/sfizz-LICENSE.md
+          fi

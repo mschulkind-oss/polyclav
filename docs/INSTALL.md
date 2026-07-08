@@ -135,6 +135,14 @@ installs the binary as `7zz`, not `7z` (bootstrap checks both names). If
 neither is found, bootstrap reports which packages to install rather
 than a raw "executable not found" error.
 
+On macOS, bootstrap also installs SFZ (`.sfz`) support automatically:
+sfztools' own official release is x86_64-only and can't be used by a
+native arm64 process, so bootstrap downloads polyclav's own arm64 build
+(`.github/workflows/build-sfizz-macos.yml`) to
+`~/.local/share/polyclav/lib/libsfizz.dylib` instead — no Homebrew
+formula exists for sfizz, and none is needed. See
+`internal/bootstrap/sfizz.go` and `docs/MACOS_PORT.md`.
+
 ### Manual: download by hand
 
 Drop soundfonts anywhere — the example config uses
