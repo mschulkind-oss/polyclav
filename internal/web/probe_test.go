@@ -128,9 +128,9 @@ func TestProbeExportNothingCaptured(t *testing.T) {
 func TestProbeFullLoopbackThroughHTTP(t *testing.T) {
 	f, probe := newProbeFixture(t)
 
-	ins, outs, err := probe.ListPorts()
-	if err != nil || len(ins) == 0 || len(outs) == 0 {
-		t.Skipf("no MIDI ports to test against (ins=%v outs=%v err=%v)", ins, outs, err)
+	ins, outs := probe.ListPorts()
+	if len(ins) == 0 || len(outs) == 0 {
+		t.Skipf("no MIDI ports to test against (ins=%v outs=%v)", ins, outs)
 	}
 	name := ""
 	for _, in := range ins {

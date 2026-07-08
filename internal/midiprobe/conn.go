@@ -47,9 +47,14 @@ func openConn(inName, outName string) (rawConn, error) {
 		return nil, fmt.Errorf("midi driver: %w", err)
 	}
 
+	// A failure here (e.g. no ALSA sequencer present at all — some minimal
+	// CI runners have no /dev/snd/seq) is, from the caller's perspective,
+	// indistinguishable from "that port doesn't exist": either way there
+	// is nothing to connect to. Map both to ErrPortNotFound so callers get
+	// one consistent, actionable error regardless of the underlying cause.
 	ins, err := drv.Ins()
 	if err != nil {
-		return nil, fmt.Errorf("enumerate midi ins: %w", err)
+		return nil, fmt.Errorf("%w: enumerate midi ins: %v", ErrPortNotFound, err)
 	}
 	var in drivers.In
 	for _, p := range ins {
@@ -64,7 +69,7 @@ func openConn(inName, outName string) (rawConn, error) {
 
 	outs, err := drv.Outs()
 	if err != nil {
-		return nil, fmt.Errorf("enumerate midi outs: %w", err)
+		return nil, fmt.Errorf("%w: enumerate midi outs: %v", ErrPortNotFound, err)
 	}
 	var out drivers.Out
 	for _, p := range outs {

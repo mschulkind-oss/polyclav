@@ -53,6 +53,12 @@ type Session struct {
 	// open is overridable in tests to inject a fake rawConn with no real
 	// MIDI hardware involved; production code always uses openConn.
 	open func(inName, outName string) (rawConn, error)
+	// listIns/listOuts default to midi.PortNames/midi.OutPortNames;
+	// overridable in tests to deterministically exercise ListPorts'
+	// degrade-on-failure behavior without depending on whether this host
+	// actually has a MIDI subsystem.
+	listIns  func() ([]string, error)
+	listOuts func() ([]string, error)
 
 	mu            sync.Mutex
 	active        bool
@@ -77,21 +83,28 @@ func NewSession(hub *controls.Hub, logger *slog.Logger) *Session {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Session{hub: hub, logger: logger, open: openConn}
+	return &Session{hub: hub, logger: logger, open: openConn, listIns: midi.PortNames, listOuts: midi.OutPortNames}
 }
 
 // ListPorts enumerates the currently-visible MIDI input and output port
 // names. Safe to call whether or not a Session is currently connected.
-func (s *Session) ListPorts() (ins, outs []string, err error) {
-	ins, err = midi.PortNames()
+// Degrades to empty lists — never an error — if the underlying MIDI
+// subsystem can't even initialize (e.g. no ALSA sequencer present at all,
+// as on some minimal CI runners): from this tool's perspective that's
+// indistinguishable from "zero devices," and this is a diagnostic/UI
+// endpoint, not a startup-critical path.
+func (s *Session) ListPorts() (ins, outs []string) {
+	ins, err := s.listIns()
 	if err != nil {
-		return nil, nil, fmt.Errorf("list input ports: %w", err)
+		s.logger.Warn("midiprobe: list input ports failed, reporting none", "err", err)
+		ins = nil
 	}
-	outs, err = midi.OutPortNames()
+	outs, err = s.listOuts()
 	if err != nil {
-		return nil, nil, fmt.Errorf("list output ports: %w", err)
+		s.logger.Warn("midiprobe: list output ports failed, reporting none", "err", err)
+		outs = nil
 	}
-	return ins, outs, nil
+	return ins, outs
 }
 
 // Start opens the exact-named in/out ports and begins recording. bufferCap
@@ -331,7 +344,7 @@ func (s *Session) Export() (DeviceProfile, error) {
 	copy(events, s.events)
 	s.mu.Unlock()
 
-	ins, outs, _ := s.ListPorts() // best-effort context; enumeration errors don't block export
+	ins, outs := s.ListPorts() // best-effort context; never blocks export
 
 	var labels []string
 	seen := map[string]struct{}{}

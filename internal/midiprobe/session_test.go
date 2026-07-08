@@ -295,6 +295,39 @@ func TestSessionExportNothingCaptured(t *testing.T) {
 	}
 }
 
+// TestSessionListPortsNeverErrors pins ListPorts' degrade-gracefully
+// contract: even in an environment with no MIDI subsystem available at
+// all (no ALSA sequencer, as on some minimal CI runners — confirmed by a
+// real CI failure this test now guards against), it must return empty
+// slices rather than an error. This uses the REAL midi.PortNames()/
+// OutPortNames() (not a fake), so it genuinely exercises whatever this
+// host provides — including the "nothing available" case.
+func TestSessionListPortsNeverErrors(t *testing.T) {
+	s := NewSession(nil, nil)
+	ins, outs := s.ListPorts() // must not panic regardless of what's available
+	_ = ins
+	_ = outs
+}
+
+// TestSessionListPortsDegradesOnEnumerationFailure deterministically
+// forces the exact failure this jail can't reproduce with real hardware
+// (a real CI run hit it: a runner with no ALSA sequencer at all, so
+// midi.PortNames/OutPortNames themselves return an error, not just an
+// empty list) and confirms ListPorts degrades to nil/nil rather than
+// erroring or panicking.
+func TestSessionListPortsDegradesOnEnumerationFailure(t *testing.T) {
+	s := NewSession(nil, nil)
+	s.listIns = func() ([]string, error) { return nil, errors.New("no ALSA sequencer") }
+	s.listOuts = func() ([]string, error) { return nil, errors.New("no ALSA sequencer") }
+	ins, outs := s.ListPorts()
+	if ins != nil {
+		t.Errorf("ins = %v, want nil on enumeration failure", ins)
+	}
+	if outs != nil {
+		t.Errorf("outs = %v, want nil on enumeration failure", outs)
+	}
+}
+
 func TestSessionExportAfterCapture(t *testing.T) {
 	s, fake := newTestSession()
 	if err := s.Start("In", "Out", 0); err != nil {
@@ -322,12 +355,12 @@ func TestSessionExportAfterCapture(t *testing.T) {
 	if len(profile.DistinctLabels) != 1 || profile.DistinctLabels[0] != "Knob 1" {
 		t.Errorf("distinct labels = %v", profile.DistinctLabels)
 	}
-	// Export enumerates live ports too (best-effort context) — in this
-	// jail that's real ALSA enumeration (e.g. "Midi Through"), so just
-	// assert it didn't error into a nil/empty-with-panic state.
-	if profile.AllInPorts == nil {
-		t.Error("AllInPorts should be populated (even if just the virtual through port)")
-	}
+	// Export enumerates live ports too (best-effort context, via the real
+	// ListPorts/rtmididrv, not the fakeConn). Not asserted further here:
+	// whether any ports are visible is environment-dependent (some CI
+	// runners have no ALSA sequencer at all) and ListPorts degrades that
+	// to an empty result rather than an error — already exercised by
+	// TestSessionListPortsNeverErrors below.
 }
 
 func TestSessionStartResetsHistoryOnFreshConnect(t *testing.T) {

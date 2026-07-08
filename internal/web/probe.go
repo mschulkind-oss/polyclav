@@ -53,11 +53,7 @@ func (s *Server) handleProbePorts(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "midi probe not available")
 		return
 	}
-	ins, outs, err := s.deps.Probe.ListPorts()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	ins, outs := s.deps.Probe.ListPorts()
 	writeJSON(w, http.StatusOK, map[string][]string{"ins": ins, "outs": outs})
 }
 
