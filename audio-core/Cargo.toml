@@ -19,7 +19,7 @@ oxisynth = "0.1"
 # `.sfz` patches degrade gracefully when libsfizz is absent. Because sfizz is
 # never linked, the sfizz.rs/sfizz_sys.rs modules compile on macOS too (the
 # dylib is simply absent at runtime). clack-host also uses libloading.
-libloading = "0.8"
+libloading = "0.9"
 
 # Pure-Rust DSP backbone for the native synth backend (Phase 1; see
 # docs/ROADMAP.md). Provides bandlimited oscillators

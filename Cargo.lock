@@ -196,7 +196,7 @@ checksum = "2a3e2891319937507e5d1c85e853de54abbf1939bdee0aa81079fab2cbc5eb15"
 dependencies = [
  "clack-common",
  "clap-sys",
- "libloading",
+ "libloading 0.8.9",
  "objc2-foundation",
 ]
 
@@ -208,7 +208,7 @@ checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -664,6 +664,16 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -1144,7 +1154,7 @@ dependencies = [
  "cpal",
  "crossbeam-queue",
  "fundsp",
- "libloading",
+ "libloading 0.9.0",
  "livi",
  "lv2_raw",
  "oxisynth",
