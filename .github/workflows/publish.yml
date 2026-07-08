@@ -220,7 +220,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS binary archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: polyclav-macos-tarball
           path: dist
@@ -320,11 +320,11 @@ jobs:
     permissions:
       id-token: write # PyPI Trusted Publishing (OIDC)
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: polyclav-wheel-linux
           path: wheelhouse
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: polyclav-wheel-macos
           path: wheelhouse
