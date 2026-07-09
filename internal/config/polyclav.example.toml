@@ -77,12 +77,21 @@ path = "~/.local/share/polyclav/soundfonts/YDP-GrandPiano-SF2-20160804/YDP-Grand
 latency_frames = 0
 
 [midi]
-# Case-insensitive substring matched against ALSA-seq MIDI input port names.
-# The Launchkey 61 MK4 enumerates as "Launchkey MK4 61 MIDI" (keys, wheels,
-# pads) and "Launchkey MK4 61 DAW" (transport, knobs, faders) — the default
-# "launchkey" picks the first match (the MIDI port).
-# Set "" to open the first available input regardless of name.
-port_match = "launchkey"
+# By default (empty), EVERY connected MIDI keyboard sends notes — no
+# config needed, plug in and play. A Launchkey's DAW control-surface
+# port is excluded automatically (it's not a source of notes); a
+# Launchkey's own MIDI port and any other keyboard's port are not.
+#
+# Set a case-insensitive substring here to restrict input to ports whose
+# name contains it instead — e.g. "yamaha" to only listen to a Yamaha
+# keyboard even with others plugged in. An explicit match also bypasses
+# the DAW-port exclusion: set port_match = "DAW" to bind OSC bindings
+# (see [[osc.xr18.bindings]] below) to a Launchkey's raw knob/fader CC
+# stream instead of note input.
+#
+# Launchkey knobs/pads/screen/transport are unaffected by this setting —
+# they're auto-detected whenever a Launchkey is plugged in, regardless.
+port_match = ""
 
 # [midi.velocity]
 # Global velocity curve — reshapes incoming NoteOn velocity before it reaches

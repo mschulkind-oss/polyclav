@@ -460,9 +460,7 @@ func main() {
 
 	supCfg := supervisor.Config{
 		Launchkey: launchkey.ReconcilerConfig{
-			PortMatch:    cfg.MIDI.PortMatch,
 			PollInterval: 1 * time.Second,
-			OnMIDIEvent:  onMIDIEvent,
 			OnDAWEvent:   onDAWEvent,
 			// The callbacks run inside the supervisor's reconciler
 			// goroutines, which start strictly after `sup` is assigned —
@@ -484,6 +482,16 @@ func main() {
 			Timeout:       3 * time.Second,
 			MissThreshold: 3,
 			OnStateChange: func(state string) { publishDeviceState("xr18", state) },
+		},
+		// Reads note input from every connected keyboard by default
+		// (cfg.MIDI.PortMatch empty) instead of one user-picked device —
+		// Launchkey extras (knobs/pads/screen/transport) are unaffected,
+		// handled independently above via the Launchkey-only
+		// ReconcilerConfig, which auto-detects on its own fixed string.
+		MIDI: midi.MultiplexerConfig{
+			Match:        cfg.MIDI.PortMatch,
+			PollInterval: 1 * time.Second,
+			Sink:         onMIDIEvent,
 		},
 	}
 	sup = supervisor.New(logger, supCfg)

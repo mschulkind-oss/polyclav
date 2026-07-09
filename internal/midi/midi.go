@@ -227,6 +227,21 @@ func PickPortName(names []string, match string, role Role) int {
 	return -1
 }
 
+// looksLikeDAWPort reports whether name matches the DAW sub-port naming
+// heuristic from Role/PickPortName's doc comment above: a name
+// containing "daw", or the "midi 2" alternate suffix some kernels use
+// for a device's second (DAW) port when names are otherwise ambiguous.
+//
+// Used by Multiplexer to exclude Launchkey-style control-surface ports
+// from the generic multi-device note listener when no explicit Match
+// filter is set — a control surface's CC/SysEx stream isn't note data,
+// and the Launchkey reconciler (internal/launchkey) already owns that
+// port on its own, fixed detection string.
+func looksLikeDAWPort(name string) bool {
+	ln := strings.ToLower(name)
+	return strings.Contains(ln, "daw") || strings.Contains(ln, "midi 2")
+}
+
 func portNames(ins []drivers.In) []string {
 	out := make([]string, len(ins))
 	for i, in := range ins {

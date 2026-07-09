@@ -54,8 +54,17 @@ type SoundfontConfig struct {
 }
 
 type MIDIConfig struct {
-	// PortMatch is a substring (case-insensitive) matched against MIDI
-	// input port names. Empty = first available. Defaults to "launchkey".
+	// PortMatch is an OPTIONAL restriction on note input. Empty (the
+	// default) means every connected MIDI keyboard sends notes — internal/midi.Multiplexer
+	// opens every currently-present input port except ones that look
+	// like a Launchkey-style DAW control-surface port (see
+	// looksLikeDAWPort). Set a case-insensitive substring here to
+	// restrict to only ports whose name contains it — e.g. to bind OSC
+	// to a Launchkey's raw DAW CC stream via `port_match = "DAW"`
+	// (docs/USER_GUIDE.md), a non-empty match is honored as-is and does
+	// NOT get the DAW-port exclusion. Launchkey extras (knobs/pads/
+	// screen/transport) are unaffected by this field — they're
+	// auto-detected by internal/launchkey.Reconciler independently.
 	PortMatch string `toml:"port_match"`
 	// Velocity is the global default velocity curve applied to incoming
 	// NoteOn velocities (see docs/VELOCITY_CURVES.md). The zero value
@@ -176,7 +185,7 @@ const (
 func Defaults() *Config {
 	return &Config{
 		Soundfont: SoundfontConfig{Path: ""},
-		MIDI:      MIDIConfig{PortMatch: "launchkey"},
+		MIDI:      MIDIConfig{}, // PortMatch "" = every connected keyboard sends notes
 		OSC: OSCConfig{
 			XR18: XR18Config{
 				// Empty host = OSC mixer control disabled by default. A

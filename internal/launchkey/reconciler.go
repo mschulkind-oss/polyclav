@@ -2,7 +2,6 @@ package launchkey
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -13,15 +12,24 @@ import (
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
-	"github.com/mschulkind-oss/polyclav/internal/midi"
 )
+
+// launchkeyMatch is the fixed substring this package uses to
+// auto-detect a Launchkey's DAW control-surface ports. It's
+// intentionally NOT user-configurable: [midi].port_match now controls
+// the generic multi-keyboard note listener instead (see
+// internal/midi.Multiplexer), and the whole point of that split is that
+// Launchkey extras (knobs/pads/screen/transport) just work whenever a
+// Launchkey is plugged in, without any config. Note input from the
+// Launchkey's own MIDI-role port is no longer this package's concern —
+// the Multiplexer already picks it up (it isn't DAW-role, so it isn't
+// excluded), which is why Reconciler no longer opens midi.Listen itself.
+const launchkeyMatch = "launchkey"
 
 // ReconcilerConfig configures the Launchkey hotplug reconciler.
 type ReconcilerConfig struct {
-	PortMatch    string
 	PollInterval time.Duration
 
-	OnMIDIEvent  func(midi.Event)
 	OnDAWEvent   func(driver.Event)
 	OnReconnect  func()
 	OnDisconnect func()
@@ -29,10 +37,10 @@ type ReconcilerConfig struct {
 	// PortLister enumerates current MIDI input port names. Tests inject a
 	// fake; production uses rtmidi.
 	PortLister func() ([]string, error)
-	// Opener opens a joint MIDI+DAW connection. Tests inject a fake;
-	// production uses openReal.
+	// Opener opens the DAW control-surface connection. Tests inject a
+	// fake; production uses openReal.
 	Opener func(ctx context.Context, logger *slog.Logger, portMatch string,
-		midiSink midi.Sink, dawSink func(driver.Event)) (Connection, error)
+		dawSink func(driver.Event)) (Connection, error)
 }
 
 // Connection is one live joint MIDI+DAW connection to the keyboard.
@@ -117,7 +125,7 @@ func (r *Reconciler) tick(ctx context.Context) {
 		r.logger.Warn("launchkey port list", "err", err)
 		return
 	}
-	present := portPresent(names, r.cfg.PortMatch)
+	present := portPresent(names, launchkeyMatch)
 
 	r.mu.Lock()
 	state := r.state
@@ -143,17 +151,12 @@ func (r *Reconciler) tick(ctx context.Context) {
 }
 
 func (r *Reconciler) tryOpen(ctx context.Context) {
-	midiSink := func(ev midi.Event) {
-		if r.cfg.OnMIDIEvent != nil {
-			r.cfg.OnMIDIEvent(ev)
-		}
-	}
 	dawSink := func(ev driver.Event) {
 		if r.cfg.OnDAWEvent != nil {
 			r.cfg.OnDAWEvent(ev)
 		}
 	}
-	conn, err := r.cfg.Opener(ctx, r.logger, r.cfg.PortMatch, midiSink, dawSink)
+	conn, err := r.cfg.Opener(ctx, r.logger, launchkeyMatch, dawSink)
 	if err != nil {
 		r.logger.Warn("launchkey open", "err", err)
 		return
@@ -162,7 +165,7 @@ func (r *Reconciler) tryOpen(ctx context.Context) {
 	r.conn = &conn
 	r.state = "active"
 	r.mu.Unlock()
-	r.logger.Info("launchkey connected", "port_match", r.cfg.PortMatch)
+	r.logger.Info("launchkey connected")
 	if r.cfg.OnReconnect != nil {
 		r.cfg.OnReconnect()
 	}
@@ -248,9 +251,8 @@ func defaultPortLister() ([]string, error) {
 }
 
 func openReal(ctx context.Context, logger *slog.Logger, portMatch string,
-	midiSink midi.Sink, dawSink func(driver.Event)) (Connection, error) {
+	dawSink func(driver.Event)) (Connection, error) {
 
-	midiCtx, cancelMIDI := context.WithCancel(ctx)
 	dawCtx, cancelDAW := context.WithCancel(ctx)
 	lost := make(chan struct{})
 	var lostOnce sync.Once
@@ -258,21 +260,9 @@ func openReal(ctx context.Context, logger *slog.Logger, portMatch string,
 
 	d, err := driver.Open(dawCtx, logger, portMatch)
 	if err != nil {
-		cancelMIDI()
 		cancelDAW()
 		return Connection{}, fmt.Errorf("daw open: %w", err)
 	}
-
-	midiDone := make(chan struct{})
-	go func() {
-		defer close(midiDone)
-		if err := midi.Listen(midiCtx, logger, portMatch, midiSink); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				logger.Warn("launchkey midi listen exited", "err", err)
-			}
-		}
-		signalLost()
-	}()
 
 	dawDone := make(chan struct{})
 	go func() {
@@ -286,10 +276,8 @@ func openReal(ctx context.Context, logger *slog.Logger, portMatch string,
 	}()
 
 	closeFn := func() {
-		cancelMIDI()
 		cancelDAW()
 		_ = d.Close()
-		<-midiDone
 		<-dawDone
 	}
 

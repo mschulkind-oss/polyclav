@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
-	"github.com/mschulkind-oss/polyclav/internal/midi"
 )
 
 type fakeRig struct {
@@ -47,7 +46,7 @@ func (f *fakeRig) lister() ([]string, error) {
 }
 
 func (f *fakeRig) opener(_ context.Context, _ *slog.Logger, _ string,
-	_ midi.Sink, _ func(driver.Event)) (Connection, error) {
+	_ func(driver.Event)) (Connection, error) {
 	if f.openFailErr != nil {
 		return Connection{}, f.openFailErr
 	}
@@ -75,7 +74,6 @@ func newTestReconciler(rig *fakeRig) *Reconciler {
 	return NewReconciler(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ReconcilerConfig{
-			PortMatch:    "launchkey",
 			PollInterval: 5 * time.Millisecond,
 			OnReconnect:  func() { rig.reconnect.Add(1) },
 			OnDisconnect: func() { rig.disconnect.Add(1) },
