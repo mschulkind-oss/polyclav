@@ -125,6 +125,28 @@ export interface VelocityPutResponse {
   saved: boolean;
 }
 
+// ---- MIDI devices panel (internal/web/mididevices.go) -------------------
+
+/** "notes" (sending), "daw" (Launchkey control surface, never a note source),
+ * "ignored" (in the ignore list), "restricted" (port_match set and this
+ * port doesn't match it) -- mirrors internal/midi.PortStatus exactly. */
+export type MIDIDeviceStatus = "notes" | "daw" | "ignored" | "restricted";
+
+export interface MIDIDevice {
+  name: string;
+  status: MIDIDeviceStatus;
+}
+
+export interface MIDIDevicesResponse {
+  devices: MIDIDevice[];
+  match: string;
+}
+
+export interface MIDIDevicesPutResponse {
+  ignore: string[];
+  saved: boolean;
+}
+
 // ---- MIDI probe (internal/web/probe.go, internal/midiprobe) -------------
 // Field names are camelCase here (probe.go's own JSON tags), unlike the
 // rest of this file's daemon API which is snake_case — probe.go is a

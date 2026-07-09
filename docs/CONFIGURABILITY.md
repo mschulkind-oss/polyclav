@@ -81,6 +81,20 @@ even if one was also plugged in. They're now fully independent:
   its own fixed, non-configurable `"launchkey"` match
   (`internal/launchkey/reconciler.go`'s `launchkeyMatch` constant).
 
+Added since: per-device exclusion, so `port_match`'s all-or-nothing
+substring restriction isn't the only knob. `MIDIConfig.IgnoreDevices`
+(`[midi].ignore_devices`) is a denylist of exact port names, layered on top
+of Match/the DAW exclusion — deliberately opt-out, not opt-in, so a newly
+plugged-in keyboard never needs to be added anywhere first. Three surfaces
+edit the same list: the config field itself, `--midi-ignore` (CLI, one-off,
+override-not-merge like `--web`), and the web UI's MIDI devices panel
+(`GET`/`PUT /api/midi/devices`, live via `Multiplexer.SetIgnore` +
+optional config-file save — same contract as the velocity editor).
+`polyclav midi list` prints every connected port with its live
+classification (`internal/midi.ClassifyPorts`, shared with the web GET
+handler so the two surfaces can't disagree) so there's never any guessing
+at exact names for either mechanism.
+
 One transport-level assumption, separate from any device: all MIDI I/O goes
 through **rtmidi/ALSA-seq** (`gitlab.com/gomidi/midi/v2/drivers/rtmididrv`).
 There's no PipeWire-native MIDI path; hotplug detection works by polling

@@ -266,11 +266,43 @@ other keyboard.
 
 Set a case-insensitive substring here to restrict note input to matching
 port(s) instead — e.g. only listen to one keyboard even with others plugged
-in. To find port names:
+in. To find exact port names, no guessing required:
 
 ```sh
-aconnect -l                # list ALSA-seq clients/ports
+polyclav midi list
 ```
+
+prints every currently-connected port with its live classification (`ok`
+sends notes, `daw` is a Launchkey control surface, `ignored`/`restricted`
+per your config) — `aconnect -l` also works (ALSA-specific, no
+classification) if you just want a raw port list.
+
+#### `ignore_devices` — excluding specific keyboards
+
+`ignore_devices` is a **denylist**, not an allowlist: list exact port names
+(case-insensitive, copy them from `polyclav midi list`) to exclude from note
+input on top of `port_match`/the DAW exclusion. A device plugged in later
+that ISN'T in this list just works — you never need to add anything to make
+a new keyboard send notes, only to silence one you already have.
+
+```toml
+[midi]
+ignore_devices = ["Some Other Keyboard"]
+```
+
+Three equivalent ways to change it:
+
+- Edit `polyclav.toml` directly (above) — takes effect on restart.
+- `polyclav --midi-ignore "name one,name two"` — a one-off CLI override for
+  this run only, replacing (not merging with) the config file's list.
+- The web UI's **MIDI devices** panel (`[web]` must be enabled): a live
+  checkbox per connected port, backed by `GET`/`PUT /api/midi/devices`.
+  Unchecking a box calls `Multiplexer.SetIgnore` immediately (no restart);
+  **Save** additionally writes `ignore_devices` back into `polyclav.toml`,
+  in a clearly marked `# BEGIN/END polyclav-managed ignore_devices` block —
+  same explicit-save contract as the velocity curve editor. DAW-role and
+  `port_match`-restricted ports show in the list but aren't checkable
+  (toggling either wouldn't change anything).
 
 The Launchkey MK4 enumerates as **two** ports — `"Launchkey MK4 61 MIDI"`
 (keys, wheels, pads) and `"Launchkey MK4 61 DAW"` (transport, knobs, faders).
@@ -800,7 +832,7 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 | Symptom | Fix |
 |---------|-----|
 | **No audio.** | Confirm your sink is visible (`pw-cli ls Node \| grep -i sink`) and that PipeWire is the running audio server. Note polyclav *refuses to boot* when a patch's soundfont is missing (it lists the files and exits 1) — so if the daemon is running, the problem is routing, not files. |
-| **No MIDI.** | Run `aconnect -l` and confirm your keyboard is listed. `[midi].port_match` defaults to `""`, which reads every connected keyboard — if you've set it to something, confirm it's actually a substring of your port name (case-insensitive), or clear it. |
+| **No MIDI.** | Run `polyclav midi list` (or `aconnect -l`) and confirm your keyboard is listed and classified `ok`. `restricted` means `[midi].port_match` doesn't match its name (clear it or fix the substring); `ignored` means it's in `[midi].ignore_devices` or was unchecked in the web UI's MIDI devices panel. |
 | **Knobs/faders do nothing.** | These are the Launchkey's DAW-port CCs, auto-detected independently of `[midi].port_match` — unaffected by that setting either way. If they're still silent, confirm a Launchkey is actually connected: the startup log's "launchkey connected" line, or the web UI's device status chip if `[web]` is enabled. |
 | **Latency feels high.** | See `AGENTS.md` → "Latency tuning". For the XR18, the host-side WirePlumber rule pinning `period-size=128, period-num=3, headroom=0` is what gets you to ~8 ms round-trip. |
 | **Build fails on the Rust side.** | Check the env-var pins in `mise.toml` (`LIBCLANG_PATH`, `CPLUS_INCLUDE_PATH`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`, `C_INCLUDE_PATH`). See `AGENTS.md` → "Toolchain quirks pinned in mise.toml". |

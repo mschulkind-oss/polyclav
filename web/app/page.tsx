@@ -3,6 +3,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { ConfigCard } from "@/components/ConfigCard";
 import { MasteringCard } from "@/components/MasteringCard";
+import { MIDIDevicesCard } from "@/components/MIDIDevicesCard";
 import { ParamsCard } from "@/components/ParamsCard";
 import { PatchGrid } from "@/components/PatchGrid";
 import { Section } from "@/components/Section";
@@ -248,6 +249,9 @@ export default function Page() {
             onActive={(label) => dispatch({ t: "velocity", label })}
             noteSink={noteSink}
           />
+        </Section>
+        <Section title="MIDI devices">
+          <MIDIDevicesCard />
         </Section>
         {dash.player && clips && clips.length > 0 ? (
           <Section title="Audition">

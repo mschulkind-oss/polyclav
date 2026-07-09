@@ -202,6 +202,30 @@ select {
   font-size: 12px;
   margin: 6px 0 0;
 }
+.midi-device-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.midi-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.midi-device-row:last-child {
+  border-bottom: none;
+}
+.midi-device-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.midi-device-disabled {
+  color: var(--muted);
+}
 .transport-controls {
   display: flex;
   align-items: center;

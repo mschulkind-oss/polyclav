@@ -6,6 +6,7 @@
 import type {
   Clip,
   IdentityResult,
+  MIDIDevicesResponse,
   PlayerState,
   ProbePorts,
   ProbeStatus,
@@ -97,6 +98,14 @@ export const api = {
   /** PUT /api/velocity — returns the raw Response so callers can show 400/409 bodies. */
   velocityPut: (body: unknown): Promise<Response | null> => request("PUT", "/api/velocity", body),
 
+  /** GET /api/midi/devices — every currently-connected port + its classification. */
+  midiDevices: async (): Promise<MIDIDevicesResponse | null> =>
+    json<MIDIDevicesResponse>(await request("GET", "/api/midi/devices")),
+
+  /** PUT /api/midi/devices {ignore, save} — returns the raw Response so callers can show 404/409/503 bodies. */
+  midiDevicesPut: (ignore: string[], save: boolean): Promise<Response | null> =>
+    request("PUT", "/api/midi/devices", { ignore, save }),
+
   // ---- MIDI probe (docs/MIDI_PROBE.md) ----------------------------------
 
   probePorts: async (): Promise<ProbePorts | null> =>
@@ -124,4 +133,4 @@ export const api = {
   /** GET /api/probe/export is a plain download link (server sets Content-Disposition), not fetched here. */
 };
 
-export type { VelocityPutResponse };
+export type { MIDIDevicesResponse, VelocityPutResponse };

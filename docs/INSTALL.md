@@ -166,9 +166,13 @@ polyclav's developed-against rig is a **Novation Launchkey 61 MK4** plus a
 You don't need either to use polyclav:
 
 - **MIDI keyboard.** Every class-compliant MIDI keyboard connected sends
-  notes by default — plug in and play, no config needed. Set
-  `[midi].port_match` to a substring only if you want to restrict input
-  to specific device(s) instead.
+  notes by default — plug in and play, no config needed. Run
+  `polyclav midi list` to see exact port names with their live
+  classification. Set `[midi].port_match` to a substring to restrict input
+  to specific device(s), or `[midi].ignore_devices` (exact names, a
+  denylist) to exclude specific ones instead — also editable live from
+  `--midi-ignore` or the web UI's MIDI devices panel (see
+  `docs/USER_GUIDE.md`).
 - **Audio interface.** Anything PipeWire enumerates. The default sink
   is fine — no XR18-specific routing is required.
 - **Launchkey-specific code paths** (DAW driver, pad colors, screen,

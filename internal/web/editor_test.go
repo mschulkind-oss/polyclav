@@ -22,6 +22,15 @@ import (
 // (read path) like main does.
 func newConfigFixture(t *testing.T, content string) (*fixture, string) {
 	t.Helper()
+	return newConfigFixtureWith(t, content, nil)
+}
+
+// newConfigFixtureWith is newConfigFixture plus an extra Deps mod (e.g.
+// wiring a fake MIDIDevices) applied after the config-path wiring, so
+// callers needing both a real config file AND another dep fake (see
+// mididevices_test.go) don't need to duplicate the temp-file setup.
+func newConfigFixtureWith(t *testing.T, content string, extra func(*Deps)) (*fixture, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "polyclav.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
@@ -29,6 +38,9 @@ func newConfigFixture(t *testing.T, content string) (*fixture, string) {
 	f := newFixture(t, func(d *Deps) {
 		d.ConfigPath = path
 		d.ConfigTOML = func() ([]byte, error) { return os.ReadFile(path) }
+		if extra != nil {
+			extra(d)
+		}
 	})
 	return f, path
 }
