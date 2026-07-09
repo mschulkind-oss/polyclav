@@ -21,6 +21,7 @@ import (
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
+	"github.com/mschulkind-oss/polyclav/internal/midi"
 	"github.com/mschulkind-oss/polyclav/internal/midiprobe"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
@@ -56,12 +57,17 @@ type Deps struct {
 	Controls    *controls.Controls
 	Hub         *controls.Hub
 	Registry    controls.Registry
-	Player      *player.Player         // may be nil → player endpoints return 503
-	Devices     DeviceStates           // may be nil → device states report "unknown"
-	MIDIDevices MIDIDevices            // may be nil → /api/midi/devices endpoints return 503
-	Probe       *midiprobe.Session     // may be nil → probe endpoints return 503
-	ConfigTOML  func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
-	ConfigPath  string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
+	Player      *player.Player // may be nil → player endpoints return 503
+	Devices     DeviceStates   // may be nil → device states report "unknown"
+	MIDIDevices MIDIDevices    // may be nil → /api/midi/devices endpoints return 503
+	// MIDIPortLister enumerates current MIDI input port names for GET
+	// /api/midi/devices. Defaults to midi.PortNames (real rtmidi
+	// enumeration); tests inject a fake so they never touch a real ALSA
+	// sequencer / CoreMIDI client.
+	MIDIPortLister func() ([]string, error)
+	Probe          *midiprobe.Session     // may be nil → probe endpoints return 503
+	ConfigTOML     func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
+	ConfigPath     string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
 	// SetGlobalVelocity (may be nil) tells the daemon its global
 	// [midi.velocity] spec changed. The velocity save path calls it
 	// AFTER a successful config-file write — and ONLY then — so the
@@ -105,6 +111,9 @@ func New(deps Deps) *Server {
 	}
 	if deps.Hub == nil {
 		deps.Hub = controls.NewHub()
+	}
+	if deps.MIDIPortLister == nil {
+		deps.MIDIPortLister = midi.PortNames
 	}
 	s := &Server{deps: deps, mux: http.NewServeMux()}
 	s.routes()

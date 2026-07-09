@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -10,11 +11,12 @@ import (
 )
 
 // fakeMIDIDevices implements MIDIDevices with an in-memory ignore list —
-// no real rtmidi/hardware needed. GET still calls the real
-// midi.PortNames() (untestable device enumeration is a thin, honest
-// boundary here; see handleMIDIDevicesGet), so these tests only assert
-// on Match/Ignore/SetIgnore plumbing and the save-path file mutation,
-// not on any particular real port showing up.
+// no real rtmidi/hardware needed. GET's port enumeration is injected
+// separately via Deps.MIDIPortLister (see newFixture's mod callback in
+// each test below), so these tests never touch a real ALSA sequencer /
+// CoreMIDI client -- doing so is exactly what broke this suite on a
+// GitHub Actions runner with no ALSA sequencer device at all (works in
+// a dev jail with real hardware access, 500s in plain CI).
 type fakeMIDIDevices struct {
 	mu     sync.Mutex
 	match  string
@@ -55,16 +57,80 @@ func TestMIDIDevicesGetUnavailableWithoutDeps(t *testing.T) {
 }
 
 func TestMIDIDevicesGetReportsMatch(t *testing.T) {
+	// Empty Match (the default mode) is what actually exercises DAW-port
+	// exclusion -- an explicit Match (e.g. "yamaha") deliberately bypasses
+	// it (see classifyOne), so a non-matching DAW port there would show
+	// as "restricted", not "daw". Assert the match field is reported
+	// verbatim, and separately exercise DAW classification in default mode.
 	md := &fakeMIDIDevices{match: "yamaha"}
-	f := newFixture(t, func(d *Deps) { d.MIDIDevices = md })
+	f := newFixture(t, func(d *Deps) {
+		d.MIDIDevices = md
+		d.MIDIPortLister = func() ([]string, error) {
+			return []string{"Yamaha Keyboard MIDI In", "Some Other Synth"}, nil
+		}
+	})
 	rec := f.do(t, "GET", "/api/midi/devices", nil)
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
 	if m["match"] != "yamaha" {
 		t.Errorf("expected match=yamaha, got %v", m)
 	}
-	if _, ok := m["devices"]; !ok {
-		t.Errorf("expected a devices array in the response, got %v", m)
+	devices, ok := m["devices"].([]any)
+	if !ok || len(devices) != 2 {
+		t.Fatalf("expected 2 devices, got %v", m["devices"])
+	}
+	first := devices[0].(map[string]any)
+	if first["name"] != "Yamaha Keyboard MIDI In" || first["status"] != "notes" {
+		t.Errorf("expected the Yamaha port classified as notes, got %v", first)
+	}
+	second := devices[1].(map[string]any)
+	if second["name"] != "Some Other Synth" || second["status"] != "restricted" {
+		t.Errorf("expected the non-matching port classified as restricted, got %v", second)
+	}
+}
+
+// TestMIDIDevicesGetClassifiesDAWPortInDefaultMode covers the empty-Match
+// mode's DAW-port exclusion specifically, complementing the explicit-Match
+// case above.
+func TestMIDIDevicesGetClassifiesDAWPortInDefaultMode(t *testing.T) {
+	md := &fakeMIDIDevices{}
+	f := newFixture(t, func(d *Deps) {
+		d.MIDIDevices = md
+		d.MIDIPortLister = func() ([]string, error) {
+			return []string{"Yamaha Keyboard MIDI In", "Launchkey MK4 61 DAW In"}, nil
+		}
+	})
+	rec := f.do(t, "GET", "/api/midi/devices", nil)
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	devices := m["devices"].([]any)
+	second := devices[1].(map[string]any)
+	if second["name"] != "Launchkey MK4 61 DAW In" || second["status"] != "daw" {
+		t.Errorf("expected the DAW port classified as daw in default mode, got %v", second)
+	}
+}
+
+// TestMIDIDevicesGetDegradesGracefullyOnEnumerationFailure pins the
+// regression this fixes: no ALSA sequencer / CoreMIDI client available
+// at all (not "zero ports", a hard enumeration error) must report an
+// empty device list with 200, not a 500 -- matching
+// internal/midiprobe's established graceful-degradation convention, and
+// keeping the dashboard usable on a machine with no working MIDI
+// subsystem.
+func TestMIDIDevicesGetDegradesGracefullyOnEnumerationFailure(t *testing.T) {
+	md := &fakeMIDIDevices{match: ""}
+	f := newFixture(t, func(d *Deps) {
+		d.MIDIDevices = md
+		d.MIDIPortLister = func() ([]string, error) {
+			return nil, errors.New("can't open default MIDI in: no ALSA sequencer")
+		}
+	})
+	rec := f.do(t, "GET", "/api/midi/devices", nil)
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	devices, ok := m["devices"].([]any)
+	if !ok || len(devices) != 0 {
+		t.Errorf("expected an empty devices array, got %v", m["devices"])
 	}
 }
 

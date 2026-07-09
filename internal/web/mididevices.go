@@ -31,10 +31,16 @@ func (s *Server) handleMIDIDevicesGet(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "midi devices not available")
 		return
 	}
-	names, err := midi.PortNames()
+	// Enumeration failure (no ALSA sequencer / CoreMIDI client available
+	// at all -- distinct from "zero ports connected") degrades to an
+	// empty list rather than a hard error, matching internal/midiprobe's
+	// established graceful-degradation convention: a dashboard endpoint
+	// should stay usable on a machine with no working MIDI subsystem, not
+	// 500 just because this one signal is unavailable.
+	names, err := s.deps.MIDIPortLister()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "enumerate midi ports: "+err.Error())
-		return
+		s.deps.Logger.Warn("midi devices: enumerate ports failed, reporting none", "err", err)
+		names = nil
 	}
 	infos := midi.ClassifyPorts(names, s.deps.MIDIDevices.Match(), s.deps.MIDIDevices.Ignore())
 	out := make([]midiDeviceJSON, len(infos))
