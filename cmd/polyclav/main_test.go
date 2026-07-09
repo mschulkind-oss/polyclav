@@ -78,6 +78,41 @@ func TestApplyWebFlag(t *testing.T) {
 	}
 }
 
+// TestApplyMIDIIgnoreFlag mirrors TestApplyWebFlag: an empty flag leaves
+// the config's own [midi].ignore_devices untouched; a non-empty flag
+// REPLACES it (not merges), split on commas with surrounding whitespace
+// trimmed and empty entries dropped.
+func TestApplyMIDIIgnoreFlag(t *testing.T) {
+	cases := []struct {
+		name    string
+		initial []string
+		flag    string
+		want    []string
+	}{
+		{"empty flag leaves config's list alone", []string{"Existing Synth"}, "", []string{"Existing Synth"}},
+		{"empty flag leaves nil alone", nil, "", nil},
+		{"single name replaces", []string{"Existing Synth"}, "New Synth", []string{"New Synth"}},
+		{"comma-separated names, whitespace trimmed", nil, " Synth A , Synth B ", []string{"Synth A", "Synth B"}},
+		{"empty entries between commas are dropped", nil, "Synth A,,Synth B", []string{"Synth A", "Synth B"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.MIDI.IgnoreDevices = tc.initial
+			applyMIDIIgnoreFlag(cfg, tc.flag)
+			got := cfg.MIDI.IgnoreDevices
+			if len(got) != len(tc.want) {
+				t.Fatalf("IgnoreDevices = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("IgnoreDevices[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestResolveVelocity(t *testing.T) {
 	tests := []struct {
 		name       string

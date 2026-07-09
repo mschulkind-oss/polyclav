@@ -65,6 +65,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "render" {
 		os.Exit(runRender(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "midi" {
+		os.Exit(runMIDI(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
 		printVersion()
 		return
@@ -76,6 +79,7 @@ func main() {
 	playLoop := flag.Bool("loop", false, "loop the --play clip until shutdown")
 	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
 	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in polyclav.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
+	midiIgnoreFlag := flag.String("midi-ignore", "", "comma-separated exact MIDI device names to exclude from note input, overriding [midi].ignore_devices in polyclav.toml for this run (see `polyclav midi list` for exact names)")
 	flag.Parse()
 
 	if *showVersion {
@@ -147,6 +151,7 @@ func main() {
 		xr18Host = "(disabled)"
 	}
 	applyWebFlag(cfg, *webFlag)
+	applyMIDIIgnoreFlag(cfg, *midiIgnoreFlag)
 	// Same treatment for the web UI (off by default) and the global
 	// velocity curve. The curve resolved here is the [midi.velocity]
 	// default only — per-patch overrides are re-resolved on every patch
@@ -490,6 +495,7 @@ func main() {
 		// ReconcilerConfig, which auto-detects on its own fixed string.
 		MIDI: midi.MultiplexerConfig{
 			Match:        cfg.MIDI.PortMatch,
+			Ignore:       cfg.MIDI.IgnoreDevices,
 			PollInterval: 1 * time.Second,
 			Sink:         onMIDIEvent,
 		},
@@ -581,15 +587,16 @@ func main() {
 	if cfg.Web.Enabled {
 		probe := midiprobe.NewSession(hub, logger)
 		srv := web.New(web.Deps{
-			Logger:     logger,
-			Controls:   ctl,
-			Hub:        hub,
-			Registry:   registry,
-			Player:     plr,
-			Devices:    sup,
-			Probe:      probe,
-			ConfigTOML: func() ([]byte, error) { return os.ReadFile(path) },
-			ConfigPath: path,
+			Logger:      logger,
+			Controls:    ctl,
+			Hub:         hub,
+			Registry:    registry,
+			Player:      plr,
+			Devices:     sup,
+			MIDIDevices: sup.MIDI(),
+			Probe:       probe,
+			ConfigTOML:  func() ([]byte, error) { return os.ReadFile(path) },
+			ConfigPath:  path,
 			// Keeps the daemon's global velocity spec in sync with a
 			// velocity curve SAVED to the config file, so the patch
 			// follower's re-resolve installs the saved curve instead of
@@ -786,6 +793,25 @@ func applyWebFlag(cfg *config.Config, val string) {
 	if cfg.Web.Listen == "" {
 		cfg.Web.Listen = "127.0.0.1:8666"
 	}
+}
+
+// applyMIDIIgnoreFlag overlays the --midi-ignore CLI flag onto the
+// loaded config, following the same override-not-merge convention as
+// applyWebFlag: an empty flag leaves cfg.MIDI.IgnoreDevices as loaded
+// from the config file; a non-empty flag REPLACES it entirely for this
+// run (not merged with the file's list) — the CLI always wins, same as
+// --web replacing (not toggling) the listen address.
+func applyMIDIIgnoreFlag(cfg *config.Config, val string) {
+	if val == "" {
+		return
+	}
+	var names []string
+	for _, n := range strings.Split(val, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	cfg.MIDI.IgnoreDevices = names
 }
 
 // globalVelocity is a goroutine-safe holder for the daemon's global
