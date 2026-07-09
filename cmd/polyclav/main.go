@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -113,11 +114,23 @@ func main() {
 	if err := config.Validate(cfg); err != nil {
 		var mde *config.MissingDepsError
 		if errors.As(err, &mde) {
-			printStartupError(os.Stderr, path, mde, firstRun)
+			if firstRun && promptRunBootstrapNow(os.Stdin, os.Stdout, mde) {
+				bctx, bstop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+				newCfg, berr := runFirstRunBootstrap(bctx, path, os.Stdin, os.Stdout, os.Stderr)
+				bstop()
+				if berr != nil {
+					fmt.Fprintf(os.Stderr, "polyclav cannot start: %v\n", berr)
+					os.Exit(1)
+				}
+				cfg = newCfg
+			} else {
+				printStartupError(os.Stderr, path, mde, firstRun)
+				os.Exit(1)
+			}
+		} else {
+			logger.Error("validate config", "path", path, "err", err)
 			os.Exit(1)
 		}
-		logger.Error("validate config", "path", path, "err", err)
-		os.Exit(1)
 	}
 	// Empty xr18_host means OSC mixer control is disabled (the default);
 	// surface that explicitly so the startup log is unambiguous.
@@ -938,6 +951,91 @@ func printStartupError(w io.Writer, configPath string, mde *config.MissingDepsEr
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Documentation: docs/INSTALL.md")
+}
+
+// isInteractiveTTY reports whether f is a real terminal. It gates the
+// first-run auto-bootstrap offer below so a non-interactive invocation
+// (piped stdin, a service manager, CI) never blocks on a prompt nobody
+// can answer, and never silently launches a network-downloading,
+// disk-writing operation either — only a real human at a real prompt
+// can say yes.
+func isInteractiveTTY(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// promptYN prints prompt and reads one line from r; a blank response
+// (just Enter) counts as yes, matching the "[Y/n]" convention and
+// bootstrap's own confirm(). Unlike that one, ANY read error — including
+// EOF — counts as no here: bootstrap's confirm() defaults EOF to accept
+// because the user already explicitly typed the `bootstrap` subcommand,
+// but this prompt fires on its own from a bare `polyclav` invocation, so
+// silence must never be read as consent.
+func promptYN(r io.Reader, w io.Writer, prompt string) bool {
+	fmt.Fprint(w, prompt)
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	resp := strings.ToLower(strings.TrimSpace(line))
+	return resp != "n" && resp != "no"
+}
+
+// promptRunBootstrapNow shows the missing-deps summary and asks,
+// on a real terminal only, whether to run bootstrap right now. Returns
+// false without printing or prompting at all when stdin isn't a real
+// terminal — the caller falls back to the static printStartupError
+// message in that case, same as before this existed.
+func promptRunBootstrapNow(stdin *os.File, stdout io.Writer, mde *config.MissingDepsError) bool {
+	if !isInteractiveTTY(stdin) {
+		return false
+	}
+	fmt.Fprintln(stdout, mde.Error())
+	fmt.Fprintln(stdout)
+	return promptYN(stdin, stdout, "Run `polyclav bootstrap` now to download soundfonts + sfizz? [Y/n]: ")
+}
+
+// runFirstRunBootstrap is the state-changing half of the first-run
+// offer, split out from promptRunBootstrapNow so it's testable without
+// a real terminal — it assumes the user already said yes. Runs
+// bootstrap (soundfonts, chaining into its own license-consent prompt
+// over the same stdin/stdout — deliberately not AcceptLicenses:true, so
+// this stays one continuous prompt-and-confirm session rather than
+// silently skipping that consent) and the sfizz install, then reloads
+// and re-validates the config so the caller can continue starting the
+// daemon with it directly instead of telling the user to run polyclav
+// again themselves.
+func runFirstRunBootstrap(ctx context.Context, path string, stdin io.Reader, stdout, stderr io.Writer) (*config.Config, error) {
+	if err := bootstrap.Run(ctx, bootstrap.Options{
+		Dest:         config.ExpandHome(defaultSoundfontDest),
+		SkipExisting: true,
+		Stdin:        stdin,
+		Stdout:       stdout,
+		Stderr:       stderr,
+	}); err != nil {
+		return nil, fmt.Errorf("bootstrap: %w", err)
+	}
+	if err := bootstrap.InstallSfizzLib(ctx, bootstrap.SfizzLibOptions{
+		Dest:         config.ExpandHome(defaultSfizzLibDest),
+		SkipExisting: true,
+		Stdout:       stdout,
+	}); err != nil {
+		return nil, fmt.Errorf("sfizz install: %w", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("reload config: %w", err)
+	}
+	if err := config.Validate(cfg); err != nil {
+		return nil, fmt.Errorf("still not runnable after bootstrap: %w", err)
+	}
+	return cfg, nil
 }
 
 // runBootstrap dispatches to the bootstrap package after parsing its

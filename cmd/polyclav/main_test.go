@@ -621,3 +621,84 @@ func TestResolveVelocityPointsApply(t *testing.T) {
 		t.Errorf("patch identity points: Apply(64) = %d, want 64", got)
 	}
 }
+
+// TestIsInteractiveTTYFalseForPipeAndNil pins the safe-default side of
+// the first-run auto-bootstrap gate: anything that isn't a real
+// terminal — a pipe (the only kind of non-TTY *os.File a test can
+// fabricate portably) or a nil file — must read as non-interactive, so
+// the caller never blocks on unanswerable input or launches a
+// state-changing operation without a real human able to say yes.
+func TestIsInteractiveTTYFalseForPipeAndNil(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	if isInteractiveTTY(r) {
+		t.Error("a pipe must not report as an interactive TTY")
+	}
+	if isInteractiveTTY(nil) {
+		t.Error("nil must not report as an interactive TTY")
+	}
+}
+
+// TestPromptYN pins the yes/no parsing: blank (just Enter) counts as
+// yes per the "[Y/n]" convention, "n"/"no" (any case, trimmed) count as
+// no, and any read error — including a bare EOF with no trailing
+// newline — counts as no. This deliberately differs from bootstrap's
+// own confirm(), which defaults EOF to yes; see promptYN's doc comment
+// for why.
+func TestPromptYN(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"explicit yes", "y\n", true},
+		{"blank counts as yes", "\n", true},
+		{"explicit no", "n\n", false},
+		{"no word", "no\n", false},
+		{"case insensitive no", "NO\n", false},
+		{"whitespace-padded no", "  n  \n", false},
+		{"EOF with no newline at all", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			got := promptYN(strings.NewReader(tc.input), &out, "prompt: ")
+			if got != tc.want {
+				t.Errorf("promptYN(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+			if !strings.Contains(out.String(), "prompt: ") {
+				t.Errorf("expected the prompt text to be written, got %q", out.String())
+			}
+		})
+	}
+}
+
+// TestPromptRunBootstrapNowSkipsPromptWhenNotInteractive pins the outer
+// gate end to end: given a non-TTY stdin, no prompt is printed and no
+// read is attempted (the pipe's write end is deliberately never
+// written to — a blocking read would hang the test), and the function
+// returns false immediately.
+func TestPromptRunBootstrapNowSkipsPromptWhenNotInteractive(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	mde := &config.MissingDepsError{Missing: []config.MissingDep{
+		{PatchName: "grand", PatchType: config.PatchTypeSoundfont, Path: "/x/grand.sf2"},
+	}}
+	var out bytes.Buffer
+	if promptRunBootstrapNow(r, &out, mde) {
+		t.Error("expected false for a non-interactive stdin")
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected nothing printed when skipping the prompt, got %q", out.String())
+	}
+}
