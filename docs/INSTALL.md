@@ -165,13 +165,18 @@ polyclav's developed-against rig is a **Novation Launchkey 61 MK4** plus a
 **Behringer XR18** (USB audio class-compliant; OSC over the network).
 You don't need either to use polyclav:
 
-- **MIDI keyboard.** Any class-compliant MIDI keyboard works for the
-  basic synth path. The `[midi].port_match` substring picks the input.
+- **MIDI keyboard.** Every class-compliant MIDI keyboard connected sends
+  notes by default — plug in and play, no config needed. Set
+  `[midi].port_match` to a substring only if you want to restrict input
+  to specific device(s) instead.
 - **Audio interface.** Anything PipeWire enumerates. The default sink
   is fine — no XR18-specific routing is required.
 - **Launchkey-specific code paths** (DAW driver, pad colors, screen,
-  per-patch knob state) light up only if the Launchkey is detected.
-  Without it they stay idle; the audio + MIDI path still works.
+  per-patch knob state) light up only if a Launchkey is detected —
+  auto-detected independently of `port_match`, so plugging in a
+  Launchkey alongside other keyboards gets you both: everyone's notes,
+  plus the Launchkey's own knobs/pads/screen. Without one, those extras
+  stay idle; the audio + MIDI path still works.
 
 For low-latency on an XR18, install a WirePlumber rule under
 `~/.config/wireplumber/wireplumber.conf.d/`, pinning:

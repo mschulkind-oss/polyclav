@@ -251,11 +251,22 @@ inline comments.
 The validation is strict: every patch's external dependency (soundfont file,
 plugin bundle) must resolve at startup, or polyclav exits 1.
 
-### `[midi]` — picking the right port
+### `[midi]` — which keyboards send notes
 
-`port_match` is a case-insensitive substring matched against ALSA-seq input
-port names; `""` opens the first available input. To find your keyboard's
-port name:
+`port_match` is OPTIONAL and defaults to `""`: every connected MIDI keyboard
+sends notes, with no config needed. `internal/midi.Multiplexer` opens every
+currently-present input port and closes/reopens them independently as
+devices hotplug — unplugging one keyboard never affects another already
+playing.
+
+A Launchkey's DAW control-surface port (see below) is excluded automatically
+in this default, name-agnostic mode — it isn't a source of notes. Everything
+else, including a Launchkey's own MIDI port, is treated the same as any
+other keyboard.
+
+Set a case-insensitive substring here to restrict note input to matching
+port(s) instead — e.g. only listen to one keyboard even with others plugged
+in. To find port names:
 
 ```sh
 aconnect -l                # list ALSA-seq clients/ports
@@ -263,9 +274,14 @@ aconnect -l                # list ALSA-seq clients/ports
 
 The Launchkey MK4 enumerates as **two** ports — `"Launchkey MK4 61 MIDI"`
 (keys, wheels, pads) and `"Launchkey MK4 61 DAW"` (transport, knobs, faders).
-The default `"launchkey"` match picks the first, which is the MIDI port. If you
-want the knobs/faders/transport stream instead, match `"DAW"` explicitly — but
-note the bindings below assume the DAW port's CC layout.
+An explicit `port_match` bypasses the DAW-port exclusion (it's an intentional
+restriction, not the generic default), so `port_match = "DAW"` binds note
+input to the DAW port's raw CC stream instead — useful for OSC bindings that
+want the knobs/faders as CC sources (the bindings below assume that layout).
+
+**Launchkey knobs/pads/screen/transport are unaffected by `port_match`
+either way** — `internal/launchkey.Reconciler` auto-detects a Launchkey on
+its own fixed `"launchkey"` match, entirely independent of this config.
 
 ### `[web]` — the browser dashboard
 
@@ -784,8 +800,8 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 | Symptom | Fix |
 |---------|-----|
 | **No audio.** | Confirm your sink is visible (`pw-cli ls Node \| grep -i sink`) and that PipeWire is the running audio server. Note polyclav *refuses to boot* when a patch's soundfont is missing (it lists the files and exits 1) — so if the daemon is running, the problem is routing, not files. |
-| **No MIDI.** | Run `aconnect -l` and confirm your keyboard is listed. Make sure `[midi].port_match` is a substring of the port name (case-insensitive); set it to `""` to grab the first available input. |
-| **Knobs/faders do nothing.** | The Launchkey exposes keys/pads on its MIDI port and knobs/faders on its DAW port. If you matched the MIDI port, the DAW-port CCs never arrive — see `[midi]` above. |
+| **No MIDI.** | Run `aconnect -l` and confirm your keyboard is listed. `[midi].port_match` defaults to `""`, which reads every connected keyboard — if you've set it to something, confirm it's actually a substring of your port name (case-insensitive), or clear it. |
+| **Knobs/faders do nothing.** | These are the Launchkey's DAW-port CCs, auto-detected independently of `[midi].port_match` — unaffected by that setting either way. If they're still silent, confirm a Launchkey is actually connected: the startup log's "launchkey connected" line, or the web UI's device status chip if `[web]` is enabled. |
 | **Latency feels high.** | See `AGENTS.md` → "Latency tuning". For the XR18, the host-side WirePlumber rule pinning `period-size=128, period-num=3, headroom=0` is what gets you to ~8 ms round-trip. |
 | **Build fails on the Rust side.** | Check the env-var pins in `mise.toml` (`LIBCLANG_PATH`, `CPLUS_INCLUDE_PATH`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`, `C_INCLUDE_PATH`). See `AGENTS.md` → "Toolchain quirks pinned in mise.toml". |
 | **Daemon ignored my config change.** | Did you `overmind restart polyclav`? The daemon reads config only at startup. |

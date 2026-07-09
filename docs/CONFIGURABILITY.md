@@ -25,7 +25,7 @@ four hardware seams are at least partly configurable. The honest picture:
 | Seam | How coupled today | Configurable now? |
 |------|-------------------|-------------------|
 | **Audio out** (PipeWire sink) | Not coupled — uses the default sink | ✅ Fully generic (any PipeWire device) |
-| **MIDI keyboard in** | `port_match` substring; **but** the port picker hardcodes the Launchkey "MIDI vs DAW dual-port" model | 🟡 Substring works; dual-port assumption is Launchkey-shaped |
+| **MIDI keyboard in** | `internal/midi.Multiplexer` reads every connected keyboard by default; `port_match` is an optional restriction, no longer coupled to Launchkey detection | ✅ Fully generic — any class-compliant keyboard(s), simultaneously |
 | **OSC mixer out** | Arbitrary `[[osc.xr18.bindings]]` (already generic mappings); **but** XR18 naming, default port, and `/xinfo` heartbeat are X-Air-specific | 🟡 Bindings generic; discovery/naming hardwired |
 | **Control surface** (knobs/pads/screen/transport) | A dedicated `internal/launchkey` driver speaking MK4 SysEx + fixed CC/note maps, plus hardcoded knob→function and pad→patch logic in `main.go` | 🔴 Effectively Launchkey-only |
 
@@ -55,23 +55,31 @@ device-coupling one, but it would bite anyone running a 44.1 kHz interface.
 **Verdict:** no work needed for device-genericness; flag the sample-rate
 constant separately.
 
-### 1.2 MIDI keyboard in — substring match, Launchkey-shaped picker 🟡
+### 1.2 MIDI keyboard in — generic multi-device note input ✅
 
 Configurable surface:
 
 - `internal/config/config.go` — `MIDIConfig.PortMatch` (`[midi].port_match`),
-  default `"launchkey"`. Empty string = first available input.
+  default `""`. Empty = every connected keyboard sends notes
+  (`internal/midi.Multiplexer` opens every present input port except ones
+  that look DAW-role); a non-empty substring restricts to matching port(s)
+  instead, bypassing the DAW-role exclusion (an explicit ask is trusted).
 
-Where it leaks Launchkey assumptions:
+Fixed as of 2026-07-09: note input and Launchkey detection used to be one
+coupled `port_match` string — a non-Launchkey keyboard produced zero notes
+until you retargeted `port_match`, and doing so lost Launchkey detection
+even if one was also plugged in. They're now fully independent:
 
-- `internal/midi/midi.go:156` `PickPortName(names, match, role)` encodes the
-  **dual-port model**: a Launchkey exposes *two* ALSA-seq ports — a `…MIDI`
-  port (keys, wheels, pads) and a `…DAW` port (transport, knobs, faders).
-  The picker resolves `RoleMIDI` to the port containing `"midi"` (but not
-  `"daw"`) and `RoleDAW` to the port containing `"daw"`
-  (`internal/midi/midi.go:170-196`). A plain class-compliant keyboard with a
-  single port still works for *notes* (RoleMIDI falls through to an index
-  tiebreaker), but the whole DAW/control half assumes the Launchkey topology.
+- `internal/midi.Multiplexer` (new) is a hotplug reconciler for *every*
+  currently-present port at once, each with its own listener goroutine —
+  unplugging one keyboard doesn't affect others. `looksLikeDAWPort`
+  (`internal/midi/midi.go`) is the only Launchkey-shaped assumption left in
+  this half, and it's just an exclusion heuristic for the default case, not
+  a requirement.
+- `internal/launchkey.Reconciler` no longer opens `midi.Listen` at all — it
+  owns only the DAW control-surface half (`driver.Open`), auto-detected on
+  its own fixed, non-configurable `"launchkey"` match
+  (`internal/launchkey/reconciler.go`'s `launchkeyMatch` constant).
 
 One transport-level assumption, separate from any device: all MIDI I/O goes
 through **rtmidi/ALSA-seq** (`gitlab.com/gomidi/midi/v2/drivers/rtmididrv`).
@@ -79,8 +87,8 @@ There's no PipeWire-native MIDI path; hotplug detection works by polling
 ALSA port names once a second. Fine on any modern Linux, but it's a seam to
 keep in mind if PipeWire MIDI ever becomes the target.
 
-**Verdict:** notes-only keyboards mostly work today. The dual-port logic is
-the coupling, and it's entangled with the control-surface story (§1.4).
+**Verdict:** done. The remaining Launchkey coupling is entirely in the
+control-surface story (§1.4), not note input.
 
 ### 1.3 OSC mixer out — generic bindings, X-Air-specific everything-else 🟡
 
