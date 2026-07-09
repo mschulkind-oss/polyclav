@@ -242,3 +242,153 @@ func TestMultiplexerRunShutsDownAllPortsOnCancel(t *testing.T) {
 		t.Error("Run's shutdown must close every open port")
 	}
 }
+
+// ---- Ignore (denylist) --------------------------------------------------
+
+func TestMultiplexerIgnoreExcludesAtConstruction(t *testing.T) {
+	rig := newFakeMuxRig()
+	rig.setNames([]string{"Keyboard A", "Keyboard B"})
+	m := NewMultiplexer(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		MultiplexerConfig{
+			PollInterval: 5 * time.Millisecond,
+			Sink:         func(Event) {},
+			PortLister:   rig.lister,
+			Opener:       rig.opener,
+			Ignore:       []string{"Keyboard A"},
+		},
+	)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard B") }, "B opens")
+	time.Sleep(30 * time.Millisecond)
+	if rig.isActive("Keyboard A") {
+		t.Error("Keyboard A must be excluded per the initial Ignore list")
+	}
+	if got := m.PortCount(); got != 1 {
+		t.Errorf("PortCount = %d, want 1", got)
+	}
+}
+
+func TestMultiplexerSetIgnoreClosesAlreadyOpenPort(t *testing.T) {
+	rig := newFakeMuxRig()
+	rig.setNames([]string{"Keyboard A", "Keyboard B"})
+	m := newTestMultiplexer(rig, "", nil)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	waitMuxCondition(t, func() bool { return m.PortCount() == 2 }, "both ports open")
+
+	m.SetIgnore([]string{"Keyboard A"})
+	waitMuxCondition(t, func() bool { return !rig.isActive("Keyboard A") }, "A closes once ignored")
+	if !rig.isActive("Keyboard B") {
+		t.Error("ignoring A must not affect B")
+	}
+	if got := m.PortCount(); got != 1 {
+		t.Errorf("PortCount after SetIgnore = %d, want 1", got)
+	}
+
+	// Un-ignoring re-opens it, live, without a restart.
+	m.SetIgnore(nil)
+	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard A") }, "A reopens once un-ignored")
+	if got := m.PortCount(); got != 2 {
+		t.Errorf("PortCount after un-ignoring = %d, want 2", got)
+	}
+}
+
+func TestMultiplexerSetIgnoreIsCaseInsensitiveExactMatch(t *testing.T) {
+	rig := newFakeMuxRig()
+	rig.setNames([]string{"Keyboard A"})
+	m := newTestMultiplexer(rig, "", nil)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard A") }, "A opens")
+
+	// A substring of the name must NOT ignore it (exact match only).
+	m.SetIgnore([]string{"Keyboard"})
+	time.Sleep(30 * time.Millisecond)
+	if !rig.isActive("Keyboard A") {
+		t.Error("a substring in Ignore must not exclude a port -- exact match only")
+	}
+
+	// Different case, exact name, must ignore it.
+	m.SetIgnore([]string{"keyboard a"})
+	waitMuxCondition(t, func() bool { return !rig.isActive("Keyboard A") }, "A closes on case-insensitive exact match")
+}
+
+func TestMultiplexerIgnoreRoundTrip(t *testing.T) {
+	m := NewMultiplexer(slog.New(slog.NewTextHandler(io.Discard, nil)), MultiplexerConfig{
+		Sink: func(Event) {},
+	})
+	if got := m.Ignore(); len(got) != 0 {
+		t.Errorf("Ignore() on a fresh Multiplexer = %v, want empty", got)
+	}
+	m.SetIgnore([]string{"Some Synth", "Other Synth"})
+	got := m.Ignore()
+	want := []string{"Some Synth", "Other Synth"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("Ignore() = %v, want %v (original case, input order preserved)", got, want)
+	}
+}
+
+func TestMultiplexerMatch(t *testing.T) {
+	m := NewMultiplexer(slog.New(slog.NewTextHandler(io.Discard, nil)), MultiplexerConfig{
+		Match: "yamaha",
+		Sink:  func(Event) {},
+	})
+	if got := m.Match(); got != "yamaha" {
+		t.Errorf("Match() = %q, want %q", got, "yamaha")
+	}
+}
+
+// ---- ClassifyPorts / classifyOne -----------------------------------------
+
+func TestClassifyPortsDefaultMode(t *testing.T) {
+	names := []string{"Launchkey MK4 61 MIDI In", "Launchkey MK4 61 DAW In", "Yamaha P-125"}
+	got := ClassifyPorts(names, "", []string{"Yamaha P-125"})
+	want := map[string]PortStatus{
+		"Launchkey MK4 61 MIDI In": PortSendingNotes,
+		"Launchkey MK4 61 DAW In":  PortDAWOnly,
+		"Yamaha P-125":             PortIgnored,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ClassifyPorts returned %d entries, want %d", len(got), len(want))
+	}
+	for _, info := range got {
+		if info.Status != want[info.Name] {
+			t.Errorf("%s: status = %s, want %s", info.Name, info.Status, want[info.Name])
+		}
+	}
+}
+
+func TestClassifyPortsExplicitMatch(t *testing.T) {
+	names := []string{"Launchkey MK4 61 MIDI In", "Launchkey MK4 61 DAW In", "Yamaha P-125"}
+	// An explicit Match bypasses the DAW exclusion (docs/USER_GUIDE.md's
+	// port_match = "DAW" workflow) -- the DAW port is "restricted" only
+	// if it doesn't match, never re-labeled "daw" once Match is set.
+	got := ClassifyPorts(names, "launchkey", nil)
+	want := map[string]PortStatus{
+		"Launchkey MK4 61 MIDI In": PortSendingNotes,
+		"Launchkey MK4 61 DAW In":  PortSendingNotes,
+		"Yamaha P-125":             PortRestricted,
+	}
+	for _, info := range got {
+		if info.Status != want[info.Name] {
+			t.Errorf("%s: status = %s, want %s", info.Name, info.Status, want[info.Name])
+		}
+	}
+}
+
+func TestClassifyPortsIgnoreCaseInsensitiveExact(t *testing.T) {
+	got := ClassifyPorts([]string{"Some Synth"}, "", []string{"some synth"})
+	if len(got) != 1 || got[0].Status != PortIgnored {
+		t.Errorf("ClassifyPorts with a different-case exact ignore entry = %+v, want PortIgnored", got)
+	}
+
+	got = ClassifyPorts([]string{"Some Synth"}, "", []string{"Some"})
+	if len(got) != 1 || got[0].Status != PortSendingNotes {
+		t.Errorf("ClassifyPorts with a substring-only ignore entry = %+v, want PortSendingNotes (exact match only)", got)
+	}
+}

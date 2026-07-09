@@ -66,6 +66,17 @@ type MIDIConfig struct {
 	// screen/transport) are unaffected by this field — they're
 	// auto-detected by internal/launchkey.Reconciler independently.
 	PortMatch string `toml:"port_match"`
+	// IgnoreDevices lists exact MIDI input port names (case-insensitive)
+	// to exclude from note input, on top of PortMatch/the default
+	// DAW-port exclusion. Empty (the default) ignores nothing.
+	//
+	// Deliberately a DENYLIST, not an allowlist: a fresh device plugged
+	// in later just works without needing to be added here first — the
+	// user opts specific ALREADY-CONNECTED devices out, not in. `polyclav
+	// midi list` shows exact names to copy in; the web UI's devices panel
+	// (GET/PUT /api/midi/devices) edits this same list live, optionally
+	// persisting it back into this field via a managed block.
+	IgnoreDevices []string `toml:"ignore_devices"`
 	// Velocity is the global default velocity curve applied to incoming
 	// NoteOn velocities (see docs/VELOCITY_CURVES.md). The zero value
 	// (Curve == "") means linear passthrough. Per-patch overrides live on

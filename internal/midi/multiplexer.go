@@ -28,6 +28,15 @@ type MultiplexerConfig struct {
 	// independently via its own fixed detection string.
 	Match string
 
+	// Ignore lists exact port names (case-insensitive) to exclude from
+	// note input on top of Match/the DAW exclusion — a denylist, not an
+	// allowlist: a device NOT in this list just works the moment it's
+	// plugged in, without needing to be added anywhere first. This is
+	// only the INITIAL value seeded at construction; SetIgnore replaces
+	// it live thereafter (the web UI's devices panel calls it on a
+	// running daemon — see internal/web's /api/midi/devices).
+	Ignore []string
+
 	PollInterval time.Duration
 
 	// Sink receives every parsed MIDI event from every currently-open
@@ -65,8 +74,10 @@ type Multiplexer struct {
 	logger *slog.Logger
 	cfg    MultiplexerConfig
 
-	mu    sync.Mutex
-	ports map[string]*muxPort
+	mu     sync.Mutex
+	ports  map[string]*muxPort
+	ignore []string        // as given (original case) — for display/persistence
+	lower  map[string]bool // lowercased mirror of ignore — for fast case-insensitive lookup
 }
 
 type muxPort struct {
@@ -93,8 +104,42 @@ func NewMultiplexer(logger *slog.Logger, cfg MultiplexerConfig) *Multiplexer {
 		logger: logger,
 		cfg:    cfg,
 		ports:  make(map[string]*muxPort),
+		ignore: append([]string(nil), cfg.Ignore...),
+		lower:  lowerSet(cfg.Ignore),
 	}
 }
+
+func lowerSet(names []string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[strings.ToLower(n)] = true
+	}
+	return set
+}
+
+// SetIgnore replaces the live ignore list (exact, case-insensitive
+// device names). Safe to call from any goroutine — the web UI's PUT
+// /api/midi/devices handler calls it directly on a running daemon. Takes
+// effect on the next poll tick (at most PollInterval away), same as any
+// other hotplug change; it does not force an immediate re-tick.
+func (m *Multiplexer) SetIgnore(names []string) {
+	m.mu.Lock()
+	m.ignore = append([]string(nil), names...)
+	m.lower = lowerSet(names)
+	m.mu.Unlock()
+}
+
+// Ignore reports the currently-active ignore list, in the original case
+// it was set with.
+func (m *Multiplexer) Ignore() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.ignore...)
+}
+
+// Match reports the configured restriction substring — immutable after
+// construction, so no lock is needed.
+func (m *Multiplexer) Match() string { return m.cfg.Match }
 
 // PortCount reports how many ports are currently open.
 func (m *Multiplexer) PortCount() int {
@@ -138,7 +183,11 @@ func (m *Multiplexer) tick(ctx context.Context) {
 		m.logger.Warn("midi multiplexer port list", "err", err)
 		return
 	}
-	wanted := m.wantedPorts(names)
+
+	m.mu.Lock()
+	lower := m.lower
+	m.mu.Unlock()
+	wanted := m.wantedPorts(names, lower)
 
 	m.mu.Lock()
 	var toCancel []*muxPort
@@ -164,22 +213,78 @@ func (m *Multiplexer) tick(ctx context.Context) {
 	}
 }
 
-// wantedPorts applies Match (or, absent Match, the DAW-role exclusion)
-// to the currently-enumerated port names.
-func (m *Multiplexer) wantedPorts(names []string) map[string]bool {
-	wanted := make(map[string]bool, len(names))
+// wantedPorts applies Match (or, absent Match, the DAW-role exclusion),
+// then subtracts lower (a snapshot of the live ignore set — see
+// SetIgnore) from the currently-enumerated port names.
+func (m *Multiplexer) wantedPorts(names []string, lower map[string]bool) map[string]bool {
 	needle := strings.ToLower(m.cfg.Match)
+	wanted := make(map[string]bool, len(names))
 	for _, n := range names {
-		if needle != "" {
-			if !strings.Contains(strings.ToLower(n), needle) {
-				continue
-			}
-		} else if looksLikeDAWPort(n) {
-			continue
+		if classifyOne(n, needle, lower) == PortSendingNotes {
+			wanted[n] = true
 		}
-		wanted[n] = true
 	}
 	return wanted
+}
+
+// PortStatus classifies a currently-enumerated MIDI input port for
+// display (the `polyclav midi list` CLI and the web devices panel) —
+// purely descriptive, never consulted by wantedPorts itself (which
+// shares classifyOne, the one place the actual decision is made).
+type PortStatus string
+
+const (
+	// PortSendingNotes: not excluded by Match, the DAW heuristic, or
+	// Ignore — this port is currently feeding the synth.
+	PortSendingNotes PortStatus = "notes"
+	// PortDAWOnly: excluded by the default DAW-role heuristic (only
+	// reachable when Match is empty) — a Launchkey control-surface
+	// port, never a note source regardless of Ignore.
+	PortDAWOnly PortStatus = "daw"
+	// PortIgnored: would otherwise send notes, but is in the Ignore list.
+	PortIgnored PortStatus = "ignored"
+	// PortRestricted: Match is set and this port's name doesn't contain it.
+	PortRestricted PortStatus = "restricted"
+)
+
+// PortInfo is one classified port name, for display only.
+type PortInfo struct {
+	Name   string
+	Status PortStatus
+}
+
+// ClassifyPorts classifies every name in names against match/ignore,
+// sharing classifyOne with wantedPorts so the CLI (`polyclav midi list`)
+// and the web devices panel can never disagree with what the
+// Multiplexer is actually doing. ignore is matched case-insensitively
+// and exactly (not substring), same as SetIgnore.
+func ClassifyPorts(names []string, match string, ignore []string) []PortInfo {
+	lower := lowerSet(ignore)
+	needle := strings.ToLower(match)
+	out := make([]PortInfo, len(names))
+	for i, n := range names {
+		out[i] = PortInfo{Name: n, Status: classifyOne(n, needle, lower)}
+	}
+	return out
+}
+
+// classifyOne is the single source of truth behind both wantedPorts'
+// pass/fail decision and ClassifyPorts' descriptive label. needle is
+// already lowercased (the caller's match, or "" for the default mode);
+// lower is a lowercased ignore-name set.
+func classifyOne(name, needle string, lower map[string]bool) PortStatus {
+	ln := strings.ToLower(name)
+	if needle != "" {
+		if !strings.Contains(ln, needle) {
+			return PortRestricted
+		}
+	} else if looksLikeDAWPort(name) {
+		return PortDAWOnly
+	}
+	if lower[ln] {
+		return PortIgnored
+	}
+	return PortSendingNotes
 }
 
 func (m *Multiplexer) open(ctx context.Context, name string) {
