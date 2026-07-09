@@ -544,6 +544,36 @@ func TestEnsureConfigExistsReportsFirstRun(t *testing.T) {
 	}
 }
 
+// TestIsStockExampleConfig pins the regression this exists for: a user
+// who ran polyclav once (seeding the example config), didn't bootstrap,
+// and runs it again — ensureConfigExists's justCreated is false on that
+// second run (correctly — it didn't just create anything), but the
+// config is still exactly the untouched example, so the auto-bootstrap
+// offer needs to fire anyway. Only an actual edit should turn it off.
+func TestIsStockExampleConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "polyclav.toml")
+
+	if isStockExampleConfig(path) {
+		t.Error("a missing file must not report as the stock example config")
+	}
+
+	if err := os.WriteFile(path, config.ExampleConfig(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isStockExampleConfig(path) {
+		t.Error("a byte-identical copy of the embedded example must report as stock")
+	}
+
+	edited := append(append([]byte{}, config.ExampleConfig()...), '\n')
+	if err := os.WriteFile(path, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isStockExampleConfig(path) {
+		t.Error("even a trivial edit (trailing newline) must not report as stock")
+	}
+}
+
 // TestPrintStartupErrorLeadsWithBootstrapOnFirstRun pins the first-run
 // message: `polyclav bootstrap` is the single leading recommendation,
 // not buried in a neutral three-way "choose one" list — this is what a

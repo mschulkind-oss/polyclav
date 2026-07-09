@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -114,7 +115,14 @@ func main() {
 	if err := config.Validate(cfg); err != nil {
 		var mde *config.MissingDepsError
 		if errors.As(err, &mde) {
-			if firstRun && promptRunBootstrapNow(os.Stdin, os.Stdout, mde) {
+			// firstRun alone stops being true forever after the very
+			// first invocation ever touches this path — but a user who
+			// ran polyclav once, didn't bootstrap, and is running it
+			// again is in exactly the same situation: an unmodified
+			// example config with no soundfonts downloaded yet.
+			// isStockExampleConfig catches that case too.
+			offerBootstrap := firstRun || isStockExampleConfig(path)
+			if offerBootstrap && promptRunBootstrapNow(os.Stdin, os.Stdout, mde) {
 				bctx, bstop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 				newCfg, berr := runFirstRunBootstrap(bctx, path, os.Stdin, os.Stdout, os.Stderr)
 				bstop()
@@ -124,7 +132,7 @@ func main() {
 				}
 				cfg = newCfg
 			} else {
-				printStartupError(os.Stderr, path, mde, firstRun)
+				printStartupError(os.Stderr, path, mde, offerBootstrap)
 				os.Exit(1)
 			}
 		} else {
@@ -916,6 +924,24 @@ func ensureConfigExists(path string, logger *slog.Logger) (justCreated bool, err
 	}
 	logger.Info("wrote default config", "path", path)
 	return true, nil
+}
+
+// isStockExampleConfig reports whether the file at path is still
+// byte-identical to the embedded example config — i.e. the user hasn't
+// customized [[patches]] at all. Unlike ensureConfigExists's justCreated
+// (true only for the exact process invocation that wrote the file, and
+// never again after that), this stays true across every subsequent run
+// until the user actually edits the config, which is what the
+// auto-bootstrap offer really needs: someone who ran polyclav once,
+// declined or never got to bootstrap, and is running it again is in the
+// same "unmodified example, no soundfonts yet" situation as their very
+// first run.
+func isStockExampleConfig(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(data, config.ExampleConfig())
 }
 
 // printStartupError renders a config-validation failure as a
