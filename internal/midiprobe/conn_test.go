@@ -1,6 +1,7 @@
 package midiprobe
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,10 +9,10 @@ import (
 )
 
 // TestRealConnLoopback exercises the PRODUCTION openConn/realConn path (not
-// the fake) against a genuine MIDI round trip, using whatever software
-// loopback port the host happens to expose (on Linux, ALSA's built-in
-// "Midi Through" virtual patchbay port routes anything sent to its output
-// back out its own input — no physical hardware or manual setup needed).
+// the fake) against a genuine MIDI round trip, using ALSA's built-in "Midi
+// Through" virtual patchbay port on Linux (routes anything sent to its
+// output back out its own input — no physical hardware or manual setup
+// needed) — the ONLY port name this test will ever touch.
 //
 // This is deliberately best-effort: it is the ONLY test in this package
 // that opens a real MIDI port, and environments differ (a minimal
@@ -23,6 +24,18 @@ import (
 // risk in the port design: whether drivers.ListenConfig{SysEx: true}
 // genuinely delivers raw SysEx bytes end-to-end through rtmidi/ALSA, not
 // just in the fake.
+//
+// Matching by name (not just "any port present in both the in and out
+// lists") is load-bearing, not cosmetic: a REAL MIDI device (a keyboard,
+// a mixer, anything USB-MIDI-class-compliant) also normally exposes both
+// an in and an out port, so "bidirectional" alone does not mean "software
+// loopback." internal/web's equivalent test (probe_test.go) once used
+// exactly that looser check with no name filter and a missing early
+// break, and on a machine with real hardware attached it silently
+// connected to and sent a live message to whatever real device happened
+// to sort last in the port list — confirmed 2026-07-11, audible output on
+// a real Launchkey/XR18/CASIO setup during a routine `go test ./...` run.
+// Never loosen this back to a bare "in == out" match.
 func TestRealConnLoopback(t *testing.T) {
 	ins, err := midi.PortNames()
 	if err != nil {
@@ -36,11 +49,11 @@ func TestRealConnLoopback(t *testing.T) {
 		t.Skipf("no MIDI ports available to test against (ins=%v outs=%v)", ins, outs)
 	}
 
-	// Prefer a port present in both lists (a self-loopback, e.g. ALSA's
-	// "Midi Through") over pairing two unrelated ports, which would not
-	// actually round-trip.
 	name := ""
 	for _, in := range ins {
+		if !strings.Contains(strings.ToLower(in), "midi through") {
+			continue
+		}
 		for _, out := range outs {
 			if in == out {
 				name = in
@@ -52,7 +65,8 @@ func TestRealConnLoopback(t *testing.T) {
 		}
 	}
 	if name == "" {
-		t.Skip("no port name common to both the input and output lists (no obvious loopback candidate)")
+		t.Skip(`no port named "Midi Through" found in both the input and output lists -- ` +
+			"this test only ever targets that specific known-safe virtual loopback, never real hardware")
 	}
 
 	conn, err := openConn(name, name)

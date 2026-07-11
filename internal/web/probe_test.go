@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,12 +120,23 @@ func TestProbeExportNothingCaptured(t *testing.T) {
 }
 
 // TestProbeFullLoopbackThroughHTTP drives the ENTIRE HTTP surface against a
-// real MIDI connection, using whatever software loopback port the host
-// exposes (see internal/midiprobe's TestRealConnLoopback for why ALSA's
-// "Midi Through" qualifies on Linux). Skip-guarded on any failure so it
-// never blocks CI on a machine without one (e.g. macOS, where CoreMIDI has
-// no built-in equivalent) — it only adds confidence where a loopback
-// exists.
+// real MIDI connection, using ALSA's built-in "Midi Through" virtual
+// patchbay port on Linux — the ONLY port name this test will ever touch.
+// Skip-guarded whenever that specific port isn't found, so it never blocks
+// CI on a machine without one (e.g. macOS, where CoreMIDI has no built-in
+// equivalent) — it only adds confidence where a loopback exists.
+//
+// Matching by name (not just "any port present in both the in and out
+// lists") is load-bearing, not cosmetic: a REAL MIDI device (a keyboard,
+// a mixer, anything USB-MIDI-class-compliant) also normally exposes both
+// an in and an out port, so "bidirectional" alone does not mean
+// "software loopback." An earlier version of this loop had no name check
+// AND no early break, so on any machine with real hardware attached it
+// silently connected to and sent a live raw CC message
+// (POST /api/probe/send) to whatever real device happened to sort last in
+// the port list — confirmed 2026-07-11 when it fired on a real Launchkey/
+// XR18/CASIO setup during a routine `go test ./...` run and produced
+// audible output. Never loosen this back to a bare "in == out" match.
 func TestProbeFullLoopbackThroughHTTP(t *testing.T) {
 	f, probe := newProbeFixture(t)
 
@@ -134,14 +146,22 @@ func TestProbeFullLoopbackThroughHTTP(t *testing.T) {
 	}
 	name := ""
 	for _, in := range ins {
+		if !strings.Contains(strings.ToLower(in), "midi through") {
+			continue
+		}
 		for _, out := range outs {
 			if in == out {
 				name = in
+				break
 			}
+		}
+		if name != "" {
+			break
 		}
 	}
 	if name == "" {
-		t.Skip("no self-loopback port name found")
+		t.Skip(`no port named "Midi Through" found in both the in and out lists -- ` +
+			"this test only ever targets that specific known-safe virtual loopback, never real hardware")
 	}
 
 	rec := f.do(t, "POST", "/api/probe/connect", map[string]any{"inPort": name, "outPort": name})
