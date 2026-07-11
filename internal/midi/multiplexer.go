@@ -39,6 +39,17 @@ type MultiplexerConfig struct {
 
 	PollInterval time.Duration
 
+	// IdleThreshold, if > 0, arms a per-port idle watchdog: once an open
+	// port has gone this long with no inbound traffic, one Warn-level
+	// incident is logged (idle duration, port name, current port list)
+	// and then suppressed until fresh traffic arrives on that port. Not a
+	// confident "wedged" detector — a keyboard nobody's touching is
+	// normal — it exists purely so a real device-level wedge (see the
+	// 2026-07-11 Launchkey investigation) leaves a timestamped record of
+	// when the silence started, instead of needing to be caught live.
+	// 0 disables it.
+	IdleThreshold time.Duration
+
 	// Sink receives every parsed MIDI event from every currently-open
 	// port. Shared across all ports — events carry no per-port identity,
 	// matching the existing Event shape (callers that care about origin
@@ -78,11 +89,23 @@ type Multiplexer struct {
 	ports  map[string]*muxPort
 	ignore []string        // as given (original case) — for display/persistence
 	lower  map[string]bool // lowercased mirror of ignore — for fast case-insensitive lookup
+
+	// lastPortNames backs the port-list-changed debug log in tick() —
+	// only ever touched from the Run() goroutine, so no lock needed.
+	lastPortNames []string
 }
 
 type muxPort struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// activityMu guards the idle-watchdog state below (see
+	// MultiplexerConfig.IdleThreshold) — written from the port's own
+	// listener goroutine (via the wrapped sink in open()), read from
+	// checkIdle() on the Run() goroutine.
+	activityMu  sync.Mutex
+	lastEventAt time.Time
+	idleAlerted bool
 }
 
 // NewMultiplexer builds a Multiplexer with defaults filled in.
@@ -166,6 +189,7 @@ func (m *Multiplexer) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	m.tick(ctx)
+	m.checkIdle()
 	for {
 		select {
 		case <-ctx.Done():
@@ -173,6 +197,7 @@ func (m *Multiplexer) Run(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			m.tick(ctx)
+			m.checkIdle()
 		}
 	}
 }
@@ -182,6 +207,10 @@ func (m *Multiplexer) tick(ctx context.Context) {
 	if err != nil {
 		m.logger.Warn("midi multiplexer port list", "err", err)
 		return
+	}
+	if !equalStrings(names, m.lastPortNames) {
+		m.logger.Debug("midi multiplexer port list changed", "ports", names)
+		m.lastPortNames = append([]string(nil), names...)
 	}
 
 	m.mu.Lock()
@@ -290,16 +319,29 @@ func classifyOne(name, needle string, lower map[string]bool) PortStatus {
 func (m *Multiplexer) open(ctx context.Context, name string) {
 	portCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	self := &muxPort{cancel: cancel, done: done}
+	self := &muxPort{cancel: cancel, done: done, lastEventAt: time.Now()}
 
 	m.mu.Lock()
 	m.ports[name] = self
 	m.mu.Unlock()
 
 	m.logger.Info("midi multiplexer port opened", "port", name)
+	// Wrap the shared sink to stamp this port's own liveness (see
+	// MultiplexerConfig.IdleThreshold) before forwarding — events carry
+	// no per-port identity of their own, so this is the only place that
+	// knows which port an event just arrived on.
+	wrappedSink := func(ev Event) {
+		self.activityMu.Lock()
+		self.lastEventAt = time.Now()
+		self.idleAlerted = false
+		self.activityMu.Unlock()
+		if m.cfg.Sink != nil {
+			m.cfg.Sink(ev)
+		}
+	}
 	go func() {
 		defer close(done)
-		err := m.cfg.Opener(portCtx, m.logger, name, m.cfg.Sink)
+		err := m.cfg.Opener(portCtx, m.logger, name, wrappedSink)
 
 		m.mu.Lock()
 		if m.ports[name] == self {
@@ -313,6 +355,52 @@ func (m *Multiplexer) open(ctx context.Context, name string) {
 			m.logger.Info("midi multiplexer port closed", "port", name)
 		}
 	}()
+}
+
+// checkIdle implements MultiplexerConfig.IdleThreshold — see its doc
+// comment. No-op per port when disabled or already alerted for the
+// current silent stretch.
+func (m *Multiplexer) checkIdle() {
+	if m.cfg.IdleThreshold <= 0 {
+		return
+	}
+	m.mu.Lock()
+	ports := make(map[string]*muxPort, len(m.ports))
+	for name, p := range m.ports {
+		ports[name] = p
+	}
+	m.mu.Unlock()
+
+	for name, p := range ports {
+		p.activityMu.Lock()
+		idle := time.Since(p.lastEventAt)
+		shouldAlert := idle >= m.cfg.IdleThreshold && !p.idleAlerted
+		if shouldAlert {
+			p.idleAlerted = true
+		}
+		p.activityMu.Unlock()
+		if !shouldAlert {
+			continue
+		}
+		names, _ := m.cfg.PortLister()
+		m.logger.Warn("midi multiplexer idle watchdog: no traffic for a while",
+			"port", name, "idle", idle.Round(time.Second), "current_ports", names)
+	}
+}
+
+// equalStrings reports whether a and b have the same elements in the
+// same order — good enough for the port-list-changed debug log, which
+// only needs to notice a difference, not classify it.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Multiplexer) closeAll() {

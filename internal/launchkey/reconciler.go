@@ -30,6 +30,20 @@ const launchkeyMatch = "launchkey"
 type ReconcilerConfig struct {
 	PollInterval time.Duration
 
+	// IdleThreshold, if > 0, arms an idle watchdog: once the DAW
+	// connection has gone this long with no inbound traffic (see
+	// driver.Driver.LastEventAt) while still nominally "active", one
+	// Warn-level incident is logged (idle duration, recent outbound
+	// sends, current port list) and then suppressed until a fresh event
+	// arrives. This is NOT a confident "it's wedged" detector — going
+	// quiet on the DAW port is completely normal if you're just playing
+	// notes and not touching a knob/pad/transport button. It exists so
+	// that if a real wedge (see docs/ — 2026-07-11 investigation) happens
+	// again, there's a timestamped record of when the silence started and
+	// what was sent right before it, instead of needing to catch it live.
+	// 0 disables it.
+	IdleThreshold time.Duration
+
 	OnDAWEvent   func(driver.Event)
 	OnReconnect  func()
 	OnDisconnect func()
@@ -61,6 +75,16 @@ type Reconciler struct {
 	mu    sync.Mutex
 	state string
 	conn  *Connection
+
+	// idleAlerted/lastSeenEvent back the idle watchdog (see
+	// ReconcilerConfig.IdleThreshold) — edge-triggered so one silent
+	// stretch logs exactly once, not every poll tick.
+	idleAlerted   bool
+	lastSeenEvent time.Time
+
+	// lastPortNames backs the port-list-changed debug log in tick() —
+	// only ever touched from the Run() goroutine, so no lock needed.
+	lastPortNames []string
 }
 
 // NewReconciler builds a Reconciler with defaults filled in.
@@ -94,6 +118,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	r.tick(ctx)
+	r.checkIdle()
 
 	for {
 		lost := r.connLostChan()
@@ -103,9 +128,11 @@ func (r *Reconciler) Run(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			r.tick(ctx)
+			r.checkIdle()
 		case <-lost:
 			r.disconnect()
 			r.tick(ctx)
+			r.checkIdle()
 		}
 	}
 }
@@ -124,6 +151,10 @@ func (r *Reconciler) tick(ctx context.Context) {
 	if err != nil {
 		r.logger.Warn("launchkey port list", "err", err)
 		return
+	}
+	if !equalStrings(names, r.lastPortNames) {
+		r.logger.Debug("launchkey port list changed", "ports", names)
+		r.lastPortNames = append([]string(nil), names...)
 	}
 	present := portPresent(names, launchkeyMatch)
 
@@ -221,6 +252,77 @@ func (r *Reconciler) SetPadColor(row, col int, color components.Color) error {
 		return nil
 	}
 	return conn.Driver.SetPadColor(row, col, color)
+}
+
+// checkIdle implements ReconcilerConfig.IdleThreshold — see its doc
+// comment. No-op when disabled, not connected, or already alerted for
+// the current silent stretch.
+func (r *Reconciler) checkIdle() {
+	if r.cfg.IdleThreshold <= 0 {
+		return
+	}
+	r.mu.Lock()
+	conn := r.conn
+	active := r.state == "active"
+	r.mu.Unlock()
+	if !active || conn == nil || conn.Driver == nil {
+		return
+	}
+
+	last := conn.Driver.LastEventAt()
+	r.mu.Lock()
+	if !last.Equal(r.lastSeenEvent) {
+		r.lastSeenEvent = last
+		r.idleAlerted = false
+	}
+	idle := time.Since(last)
+	shouldAlert := idle >= r.cfg.IdleThreshold && !r.idleAlerted
+	if shouldAlert {
+		r.idleAlerted = true
+	}
+	r.mu.Unlock()
+	if !shouldAlert {
+		return
+	}
+
+	names, _ := r.cfg.PortLister()
+	r.logger.Warn("launchkey idle watchdog: no DAW-port traffic for a while",
+		"idle", idle.Round(time.Second),
+		"recent_sends", formatSends(conn.Driver.RecentSends()),
+		"current_ports", names,
+	)
+}
+
+// formatSends renders a driver.SendRecord ring buffer as one compact
+// string for a structured log field — "HH:MM:SS.mmm HEXBYTES | ..."
+// oldest first.
+func formatSends(sends []driver.SendRecord) string {
+	if len(sends) == 0 {
+		return "(none)"
+	}
+	var b strings.Builder
+	for i, s := range sends {
+		if i > 0 {
+			b.WriteString(" | ")
+		}
+		fmt.Fprintf(&b, "%s % X", s.At.Format("15:04:05.000"), s.Msg)
+	}
+	return b.String()
+}
+
+// equalStrings reports whether a and b have the same elements in the
+// same order — good enough for the port-list-changed debug log, which
+// only needs to notice a difference, not classify it.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func portPresent(names []string, match string) bool {

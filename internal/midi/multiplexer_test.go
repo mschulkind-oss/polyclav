@@ -1,9 +1,11 @@
 package midi
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -330,6 +332,86 @@ func TestMultiplexerIgnoreRoundTrip(t *testing.T) {
 	want := []string{"Some Synth", "Other Synth"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("Ignore() = %v, want %v (original case, input order preserved)", got, want)
+	}
+}
+
+// ---- idle watchdog --------------------------------------------------------
+
+// syncBuffer wraps bytes.Buffer with a mutex so a test can safely read log
+// output written from the Multiplexer's own Run() goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestMultiplexerIdleWatchdogFiresOnceThenStaysQuiet(t *testing.T) {
+	rig := newFakeMuxRig()
+	var logBuf syncBuffer
+	m := NewMultiplexer(
+		slog.New(slog.NewTextHandler(&logBuf, nil)),
+		MultiplexerConfig{
+			PollInterval:  5 * time.Millisecond,
+			IdleThreshold: 20 * time.Millisecond,
+			Sink:          func(Event) {},
+			PortLister:    rig.lister,
+			Opener:        rig.opener,
+		},
+	)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	rig.setNames([]string{"Some Synth"})
+	waitMuxCondition(t, func() bool { return rig.isActive("Some Synth") }, "port opens")
+
+	// fakeMuxRig.opener sends exactly one event at open time, then goes
+	// silent -- past IdleThreshold, one incident line should appear.
+	waitMuxCondition(t, func() bool {
+		return strings.Contains(logBuf.String(), "midi multiplexer idle watchdog")
+	}, "idle watchdog fires")
+
+	// Edge-triggered: staying silent well past another threshold window
+	// must NOT produce a second incident line.
+	time.Sleep(60 * time.Millisecond)
+	got := strings.Count(logBuf.String(), "midi multiplexer idle watchdog")
+	if got != 1 {
+		t.Errorf("idle watchdog log count = %d, want exactly 1 (edge-triggered)", got)
+	}
+}
+
+func TestMultiplexerIdleWatchdogDisabledByDefault(t *testing.T) {
+	rig := newFakeMuxRig()
+	var logBuf syncBuffer
+	m := NewMultiplexer(
+		slog.New(slog.NewTextHandler(&logBuf, nil)),
+		MultiplexerConfig{
+			PollInterval: 5 * time.Millisecond,
+			// IdleThreshold left at zero: watchdog must stay off.
+			Sink:       func(Event) {},
+			PortLister: rig.lister,
+			Opener:     rig.opener,
+		},
+	)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	rig.setNames([]string{"Some Synth"})
+	waitMuxCondition(t, func() bool { return rig.isActive("Some Synth") }, "port opens")
+	time.Sleep(50 * time.Millisecond)
+
+	if strings.Contains(logBuf.String(), "idle watchdog") {
+		t.Error("idle watchdog logged with IdleThreshold=0 (should be disabled)")
 	}
 }
 

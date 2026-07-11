@@ -78,6 +78,40 @@ func TestApplyWebFlag(t *testing.T) {
 	}
 }
 
+func TestParseLogLevel(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    slog.Level
+		wantErr bool
+	}{
+		{"debug", slog.LevelDebug, false},
+		{"DEBUG", slog.LevelDebug, false},
+		{"info", slog.LevelInfo, false},
+		{"", slog.LevelInfo, false},
+		{"warn", slog.LevelWarn, false},
+		{"warning", slog.LevelWarn, false},
+		{"error", slog.LevelError, false},
+		{"bogus", 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := parseLogLevel(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseLogLevel(%q): want error, got nil", tc.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseLogLevel(%q): unexpected error: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseLogLevel(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestApplyMIDIIgnoreFlag mirrors TestApplyWebFlag: an empty flag leaves
 // the config's own [midi].ignore_devices untouched; a non-empty flag
 // REPLACES it (not merges), split on commas with surrounding whitespace

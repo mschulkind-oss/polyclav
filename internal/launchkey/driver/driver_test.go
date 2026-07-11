@@ -3,6 +3,7 @@ package driver
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 )
@@ -338,5 +339,67 @@ func TestDisplayConfigCancelEncoder(t *testing.T) {
 	want2 := []byte{0xF0, 0x00, 0x20, 0x29, 0x02, 0x14, 0x04, 0x1C, 0x00, 0xF7}
 	if !bytes.Equal(got2, want2) {
 		t.Errorf("encoder-cancel target 0x1C: got % X, want % X", got2, want2)
+	}
+}
+
+// ---- activity tracking (idle watchdog + send ring buffer) -----------------
+//
+// These exercise recordSend/recordEvent directly against a bare &Driver{}
+// (no real rtmidi connection needed — Open() is hardware-only, but the
+// bookkeeping these back is plain data) since internal/launchkey's fake
+// test rig always uses Driver: nil (see reconciler_test.go), which can't
+// reach this logic at all.
+
+func TestRecentSendsOrderAndCopy(t *testing.T) {
+	d := &Driver{}
+	msg := []byte{0x90, 0x40, 0x7F}
+	d.recordSend(msg)
+	d.recordSend([]byte{0xB0, 0x01, 0x02})
+
+	// Mutating the original slice after recording must not affect the
+	// stored copy.
+	msg[0] = 0xFF
+
+	got := d.RecentSends()
+	if len(got) != 2 {
+		t.Fatalf("RecentSends() len = %d, want 2", len(got))
+	}
+	if !bytes.Equal(got[0].Msg, []byte{0x90, 0x40, 0x7F}) {
+		t.Errorf("RecentSends()[0].Msg = % X, want 90 40 7F (unaffected by later mutation)", got[0].Msg)
+	}
+	if !bytes.Equal(got[1].Msg, []byte{0xB0, 0x01, 0x02}) {
+		t.Errorf("RecentSends()[1].Msg = % X, want B0 01 02", got[1].Msg)
+	}
+	if got[0].At.After(got[1].At) {
+		t.Error("RecentSends() not oldest-first")
+	}
+}
+
+func TestRecentSendsCapsAtRingSize(t *testing.T) {
+	d := &Driver{}
+	for i := 0; i < sendRingCap+10; i++ {
+		d.recordSend([]byte{byte(i)})
+	}
+	got := d.RecentSends()
+	if len(got) != sendRingCap {
+		t.Fatalf("RecentSends() len = %d, want %d (capped)", len(got), sendRingCap)
+	}
+	// The oldest sendRingCap+10 - sendRingCap = 10 records must have been
+	// evicted, so the first surviving one is byte(10).
+	if got[0].Msg[0] != 10 {
+		t.Errorf("RecentSends()[0].Msg[0] = %d, want 10 (oldest 10 evicted)", got[0].Msg[0])
+	}
+	if last := got[len(got)-1].Msg[0]; last != byte(sendRingCap+9) {
+		t.Errorf("RecentSends() last Msg[0] = %d, want %d", last, sendRingCap+9)
+	}
+}
+
+func TestLastEventAtUpdatesOnRecordEvent(t *testing.T) {
+	d := &Driver{lastEventAt: time.Now().Add(-time.Hour)}
+	before := d.LastEventAt()
+	d.recordEvent()
+	after := d.LastEventAt()
+	if !after.After(before) {
+		t.Errorf("LastEventAt() after recordEvent = %v, want after %v", after, before)
 	}
 }

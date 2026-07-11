@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"gitlab.com/gomidi/midi/v2/drivers"
 	"gitlab.com/gomidi/midi/v2/drivers/rtmididrv"
@@ -103,7 +104,25 @@ type Driver struct {
 	closed   chan struct{}
 	closeMu  sync.Mutex
 	isClosed bool
+
+	activityMu  sync.Mutex
+	lastEventAt time.Time
+	sends       []SendRecord
 }
+
+// SendRecord is one outbound message this Driver sent, kept in a capped
+// ring buffer (see RecentSends) for post-hoc diagnosis when the
+// connection goes silent — this is what let us confirm, during a real
+// 2026-07-11 Launchkey wedge, that every message we sent was accepted by
+// ALSA (no error returned) but never actually reached the device.
+type SendRecord struct {
+	At  time.Time
+	Msg []byte
+}
+
+// sendRingCap bounds RecentSends' memory — enough history to cover the
+// startup handshake (~30 messages) plus a stretch of ordinary use.
+const sendRingCap = 128
 
 func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, error) {
 	if logger == nil {
@@ -149,12 +168,13 @@ func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, 
 	logger.Info("launchkey daw open", "in", in.String(), "out", out.String())
 
 	d := &Driver{
-		logger: logger,
-		rtmidi: drv,
-		in:     in,
-		out:    out,
-		events: make(chan Event, 64),
-		closed: make(chan struct{}),
+		logger:      logger,
+		rtmidi:      drv,
+		in:          in,
+		out:         out,
+		events:      make(chan Event, 64),
+		closed:      make(chan struct{}),
+		lastEventAt: time.Now(),
 	}
 
 	if err := d.send([]byte{0x9F, noteDAWModeOn, 0x7F}); err != nil {
@@ -206,6 +226,12 @@ func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, 
 	listenCtx, cancel := context.WithCancel(ctx)
 	d.cancel = cancel
 	stop, err := in.Listen(func(msg []byte, _ int32) {
+		// Wire-level liveness: stamped for ANY inbound byte, independent
+		// of whether parseMessage recognizes it — LastEventAt is the
+		// idle watchdog's signal (internal/launchkey.Reconciler), and it
+		// must not go quiet just because the device sent something this
+		// package doesn't decode.
+		d.recordEvent()
 		ev, ok := parseMessage(msg)
 		if !ok {
 			return
@@ -281,7 +307,45 @@ func (d *Driver) send(msg []byte) error {
 	if d.out == nil {
 		return errors.New("driver: out port not open")
 	}
+	d.recordSend(msg)
 	return d.out.Send(msg)
+}
+
+func (d *Driver) recordSend(msg []byte) {
+	cp := append([]byte(nil), msg...)
+	d.activityMu.Lock()
+	d.sends = append(d.sends, SendRecord{At: time.Now(), Msg: cp})
+	if len(d.sends) > sendRingCap {
+		d.sends = d.sends[len(d.sends)-sendRingCap:]
+	}
+	d.activityMu.Unlock()
+}
+
+func (d *Driver) recordEvent() {
+	d.activityMu.Lock()
+	d.lastEventAt = time.Now()
+	d.activityMu.Unlock()
+}
+
+// LastEventAt reports when the device last sent ANY message (parsed or
+// not) — internal/launchkey.Reconciler's idle watchdog polls this to
+// notice a connection that's gone silent while still nominally open.
+func (d *Driver) LastEventAt() time.Time {
+	d.activityMu.Lock()
+	defer d.activityMu.Unlock()
+	return d.lastEventAt
+}
+
+// RecentSends returns a copy of the most recent outbound messages
+// (oldest first, see SendRecord) — folded into the idle watchdog's
+// incident log so a wedge report shows exactly what we sent right
+// before the connection went quiet.
+func (d *Driver) RecentSends() []SendRecord {
+	d.activityMu.Lock()
+	defer d.activityMu.Unlock()
+	out := make([]SendRecord, len(d.sends))
+	copy(out, d.sends)
+	return out
 }
 
 func pickInDAW(ins []drivers.In, portMatch string) drivers.In {

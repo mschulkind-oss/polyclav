@@ -1,10 +1,12 @@
 package launchkey
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +20,16 @@ type fakeRig struct {
 	present   bool
 
 	openFailErr error
+
+	// driverToReturn is normally nil (matching every other test here,
+	// which only cares about state transitions) -- the idle-watchdog test
+	// sets a real (zero-value) *driver.Driver so Reconciler.checkIdle has
+	// something to call LastEventAt/RecentSends on. A zero-value Driver's
+	// LastEventAt() is always the zero time.Time, i.e. permanently "idle
+	// since forever" -- deterministic without needing to fake real event
+	// timestamps, which recordEvent (unexported, package driver) can't be
+	// driven from here anyway.
+	driverToReturn *driver.Driver
 
 	openCount  atomic.Int32
 	closeCount atomic.Int32
@@ -56,7 +68,7 @@ func (f *fakeRig) opener(_ context.Context, _ *slog.Logger, _ string,
 	f.lostCh = lostCh
 	f.lostMu.Unlock()
 	closeFn := func() { f.closeCount.Add(1) }
-	return Connection{Driver: nil, Close: closeFn, Lost: lostCh}, nil
+	return Connection{Driver: f.driverToReturn, Close: closeFn, Lost: lostCh}, nil
 }
 
 func (f *fakeRig) signalLost() {
@@ -190,6 +202,96 @@ func TestReconcilerStaysOpeningOnOpenFailure(t *testing.T) {
 	if rig.reconnect.Load() != 0 {
 		t.Errorf("reconnect count during failures: got %d, want 0", rig.reconnect.Load())
 	}
+}
+
+// syncBuffer wraps bytes.Buffer with a mutex so a test can safely read log
+// output written from the Reconciler's own Run() goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestReconcilerIdleWatchdogFiresOnceThenStaysQuiet(t *testing.T) {
+	rig := newFakeRig()
+	rig.driverToReturn = &driver.Driver{} // zero-value: "idle since forever"
+	rig.setPresent(true)
+
+	var logBuf syncBuffer
+	r := NewReconciler(
+		slog.New(slog.NewTextHandler(&logBuf, nil)),
+		ReconcilerConfig{
+			PollInterval:  5 * time.Millisecond,
+			IdleThreshold: 10 * time.Millisecond,
+			PortLister:    rig.lister,
+			Opener:        rig.opener,
+		},
+	)
+	cancel, done := runReconciler(t, r)
+	defer stopReconciler(t, cancel, done)
+
+	waitState(t, r, "active")
+	waitCondition(t, func() bool {
+		return strings.Contains(logBuf.String(), "launchkey idle watchdog")
+	}, "idle watchdog fires")
+
+	// Edge-triggered: a zero-value Driver's LastEventAt() never changes,
+	// so staying "active" well past another threshold window must NOT
+	// produce a second incident line.
+	time.Sleep(60 * time.Millisecond)
+	got := strings.Count(logBuf.String(), "launchkey idle watchdog")
+	if got != 1 {
+		t.Errorf("idle watchdog log count = %d, want exactly 1 (edge-triggered)", got)
+	}
+}
+
+func TestReconcilerIdleWatchdogDisabledByDefault(t *testing.T) {
+	rig := newFakeRig()
+	rig.driverToReturn = &driver.Driver{}
+	rig.setPresent(true)
+
+	var logBuf syncBuffer
+	r := NewReconciler(
+		slog.New(slog.NewTextHandler(&logBuf, nil)),
+		ReconcilerConfig{
+			PollInterval: 5 * time.Millisecond,
+			// IdleThreshold left at zero: watchdog must stay off.
+			PortLister: rig.lister,
+			Opener:     rig.opener,
+		},
+	)
+	cancel, done := runReconciler(t, r)
+	defer stopReconciler(t, cancel, done)
+
+	waitState(t, r, "active")
+	time.Sleep(50 * time.Millisecond)
+
+	if strings.Contains(logBuf.String(), "idle watchdog") {
+		t.Error("idle watchdog logged with IdleThreshold=0 (should be disabled)")
+	}
+}
+
+func waitCondition(t *testing.T, cond func() bool, label string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("waitCondition: %s never became true", label)
 }
 
 func TestReconcilerAbsentToActiveBackAndForth(t *testing.T) {

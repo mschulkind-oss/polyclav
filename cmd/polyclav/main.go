@@ -52,6 +52,15 @@ const defaultSoundfontDest = "~/.local/share/polyclav/soundfonts"
 // first on both platforms.
 const defaultSfizzLibDest = "~/.local/share/polyclav/lib"
 
+// idleWatchdogThreshold arms the Launchkey/MIDI idle watchdogs (see
+// launchkey.ReconcilerConfig.IdleThreshold, midi.MultiplexerConfig.IdleThreshold).
+// Deliberately generous: going quiet on the Launchkey's DAW port (knobs/
+// pads/transport) for well over this long is completely normal if you're
+// just playing notes, so this only produces one Warn-level incident log
+// per silent stretch — a timestamped record for later correlation, not a
+// live alert. See the 2026-07-11 Launchkey-wedge investigation.
+const idleWatchdogThreshold = 15 * time.Minute
+
 func main() {
 	// Subcommand dispatch — `polyclav bootstrap [...]` runs the
 	// soundfont downloader and exits. Everything else falls through
@@ -80,6 +89,7 @@ func main() {
 	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
 	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in polyclav.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
 	midiIgnoreFlag := flag.String("midi-ignore", "", "comma-separated exact MIDI device names to exclude from note input, overriding [midi].ignore_devices in polyclav.toml for this run (see `polyclav midi list` for exact names)")
+	logLevelFlag := flag.String("log-level", "info", "log verbosity: debug, info, warn, or error. debug adds MIDI hotplug port-list-changed lines — cheap enough to leave on")
 	flag.Parse()
 
 	if *showVersion {
@@ -87,7 +97,12 @@ func main() {
 		return
 	}
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logLevel, err := parseLogLevel(*logLevelFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
 	logger := slog.New(handler)
 
 	path := *configPath
@@ -465,8 +480,9 @@ func main() {
 
 	supCfg := supervisor.Config{
 		Launchkey: launchkey.ReconcilerConfig{
-			PollInterval: 1 * time.Second,
-			OnDAWEvent:   onDAWEvent,
+			PollInterval:  1 * time.Second,
+			IdleThreshold: idleWatchdogThreshold,
+			OnDAWEvent:    onDAWEvent,
 			// The callbacks run inside the supervisor's reconciler
 			// goroutines, which start strictly after `sup` is assigned —
 			// reading it here is race-free.
@@ -494,10 +510,11 @@ func main() {
 		// handled independently above via the Launchkey-only
 		// ReconcilerConfig, which auto-detects on its own fixed string.
 		MIDI: midi.MultiplexerConfig{
-			Match:        cfg.MIDI.PortMatch,
-			Ignore:       cfg.MIDI.IgnoreDevices,
-			PollInterval: 1 * time.Second,
-			Sink:         onMIDIEvent,
+			Match:         cfg.MIDI.PortMatch,
+			Ignore:        cfg.MIDI.IgnoreDevices,
+			PollInterval:  1 * time.Second,
+			IdleThreshold: idleWatchdogThreshold,
+			Sink:          onMIDIEvent,
 		},
 	}
 	sup = supervisor.New(logger, supCfg)
@@ -1153,6 +1170,24 @@ func runBootstrap(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// parseLogLevel maps the --log-level flag to a slog.Level. "" (the flag's
+// zero value, unreachable via flag.String's own default but kept for
+// direct callers/tests) is treated the same as "info".
+func parseLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info", "":
+		return slog.LevelInfo, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("invalid --log-level %q (valid: debug, info, warn, error)", s)
+	}
 }
 
 func printVersion() {
