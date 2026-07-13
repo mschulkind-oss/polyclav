@@ -107,6 +107,91 @@ func RenderOffline(engine string, note, velocity byte, nFrames int) ([]float32, 
 	}
 }
 
+// OfflineMIDIEventKind is the wire-format discriminator for
+// OfflineMIDIEvent.Kind, matching audio-core's PolyclavMidiEvent.kind
+// (polyclav_audio.h). Distinct from MIDIKind/PushMIDI's live-queue
+// vocabulary below — this one is timed by absolute frame, not pushed
+// one at a time in real time.
+type OfflineMIDIEventKind uint8
+
+const (
+	OfflineNoteOn OfflineMIDIEventKind = iota
+	OfflineNoteOff
+	OfflineControlChange
+	OfflinePitchBend
+)
+
+// OfflineMIDIEvent is one event for RenderOfflineEvents, timed by
+// absolute frame offset from the start of the render (not a delta).
+// For NoteOn/NoteOff, Data1 is the note number and Data2 the velocity
+// (NoteOff ignores Data2). For ControlChange, Data1 is the controller
+// and Data2 the value. For PitchBend, Data2 is the 14-bit bend value
+// (Data1 unused).
+type OfflineMIDIEvent struct {
+	Frame   uint32
+	Kind    OfflineMIDIEventKind
+	Channel uint8
+	Data1   uint8
+	Data2   uint16
+}
+
+// RenderOfflineEvents renders an arbitrary timed MIDI event sequence
+// (e.g. a parsed Standard MIDI File — see internal/measure) through any
+// patch type, into an interleaved-stereo f32 buffer (48 kHz), opening
+// NO audio device. events must be sorted by Frame ascending (not
+// re-sorted here — see polyclav_render_offline_events's doc comment).
+// patchType is one of "soundfont" (patchRef = file path, dispatches on
+// extension), "native" (patchRef = engine name), "lv2" (patchRef =
+// URI, Linux only), or "clap" (patchRef = bundle path, pluginID
+// required, Linux only); pluginID is ignored for every other type.
+func RenderOfflineEvents(patchType, patchRef, pluginID string, events []OfflineMIDIEvent, nFrames int) ([]float32, error) {
+	if nFrames <= 0 {
+		return nil, fmt.Errorf("render offline events: nFrames must be positive, got %d", nFrames)
+	}
+	buf := make([]float32, nFrames*2)
+
+	cType := C.CString(patchType)
+	defer C.free(unsafe.Pointer(cType))
+	cRef := C.CString(patchRef)
+	defer C.free(unsafe.Pointer(cRef))
+
+	var cPluginID *C.char
+	if pluginID != "" {
+		cPluginID = C.CString(pluginID)
+		defer C.free(unsafe.Pointer(cPluginID))
+	}
+
+	var cEvents *C.PolyclavMidiEvent
+	if len(events) > 0 {
+		cSlice := make([]C.PolyclavMidiEvent, len(events))
+		for i, e := range events {
+			cSlice[i] = C.PolyclavMidiEvent{
+				frame:   C.uint32_t(e.Frame),
+				kind:    C.uint8_t(e.Kind),
+				channel: C.uint8_t(e.Channel),
+				data1:   C.uint8_t(e.Data1),
+				data2:   C.uint16_t(e.Data2),
+			}
+		}
+		cEvents = &cSlice[0]
+	}
+
+	rc := C.polyclav_render_offline_events(
+		cType, cRef, cPluginID,
+		cEvents, C.uint32_t(len(events)),
+		(*C.float)(unsafe.Pointer(&buf[0])),
+		C.uint32_t(nFrames),
+	)
+	switch rc {
+	case 0:
+		return buf, nil
+	case 2:
+		return nil, fmt.Errorf("render offline events: unknown/unavailable patch_type %q or load failure for %q", patchType, patchRef)
+	default:
+		return nil, fmt.Errorf("render offline events: audio-core error code %d", int(rc))
+	}
+}
+
 // MeasureLUFS returns the integrated (ungated) LUFS loudness of an
 // interleaved-stereo f32 buffer at 48 kHz (ITU-R BS.1770-4 K-weighting;
 // see dsp::loudness in the Rust source for exactly what this does and

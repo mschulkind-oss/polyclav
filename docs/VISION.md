@@ -290,12 +290,37 @@ more.
    offline calibration tool that measures each configured patch's LUFS
    and reports/suggests `gain_db` values (a human stays in the loop), or
    a live auto-normalizing DSP stage that continuously matches loudness
-   in the chain? They have very different footprints: the offline tool
-   is a thin layer over what already exists (the LUFS meter +
-   `RenderOffline`); a live stage is new real-time DSP with its own
-   smoothing/attack-time design questions. There's also a real gap
-   either way needs to cross: `RenderOffline`/`polyclav_render_offline`
-   only renders **native** patches today — measuring soundfont/sfizz/
-   LV2/CLAP patches offline needs that path extended, which is separate,
-   real work. **Lean: no lean yet — this is a genuine design fork worth
-   a direct check-in rather than guessing, unlike 1–5 above.**
+   in the chain? **Answered in part (2026-07-13): started with offline
+   measurement**, since it's the thin layer over what already existed —
+   a live auto-normalizing stage remains undecided and is new real-time
+   DSP design work, not started. The gap flagged here originally
+   (`polyclav_render_offline` was native-patch-only) is now closed:
+   `polyclav_render_offline_events` renders an arbitrary timed MIDI
+   event sequence through *any* patch type (soundfont, native, lv2,
+   clap), device-free. On top of it, `internal/measure` is a small,
+   reusable Go framework:
+   - `LoadMIDIFile` parses a Standard MIDI File into frame-timed events
+     (`internal/measure/testdata/short_phrase.mid` is the first fixture
+     — a 4-beat arpeggio plus an overlapping chord tail, with a
+     regenerating tool at `testdata/gen/`).
+   - `MeasurePatch`/`MeasurePatches` render a patch against those
+     events and report LUFS + peak, folding `GainDB` in additively
+     (exact, not an approximation — both are log-power measures).
+   - `CheckConsistent`/`CheckGradual`/`CheckBounded` are generic,
+     rendering-agnostic checks over a `[]Measurement` — reusable for
+     anything that produces labeled loudness/peak numbers, not just
+     patch comparison. `CheckGradual` is deliberately shaped to catch
+     exactly the drive-pedal "1% is already maximally distorted"
+     regression, generalized to any labeled sweep; the Rust-side
+     drive-pedal loudness tests haven't been ported to this framework
+     yet (they predate it and still work) but are a natural candidate.
+   - Tested end-to-end (real MIDI file → real native-synth render →
+     real LUFS measurement → consistency check catching a deliberately
+     mismatched `gain_db`), but only against the one native engine this
+     environment has — no soundfont/sfz assets are bundled in the repo
+     (bootstrap-downloaded user data), so cross-*type* consistency
+     (piano soundfont vs. native synth, say) is unverified until
+     someone runs it with real assets present.
+   - Not yet built: any CLI surface (`polyclav measure` or similar) —
+     today this is a library other Go code/tests call directly, not a
+     user-facing tool.
