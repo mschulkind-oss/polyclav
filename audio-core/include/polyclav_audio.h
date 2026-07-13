@@ -67,6 +67,33 @@ int32_t polyclav_audio_set_native_patch(const char *engine);
 int32_t polyclav_render_offline(const char *engine, uint8_t note, uint8_t velocity,
                                 float *out, uint32_t n_frames);
 
+/* One event for polyclav_render_offline_events, timed by absolute frame
+ * offset from the start of the render (not a delta). kind: 0=NoteOn,
+ * 1=NoteOff, 2=ControlChange, 3=PitchBend. NoteOn/NoteOff: data1=note,
+ * data2=velocity (NoteOff ignores data2). ControlChange: data1=controller,
+ * data2=value. PitchBend: data2=14-bit bend value, data1 unused. */
+typedef struct {
+    uint32_t frame;
+    uint8_t kind;
+    uint8_t channel;
+    uint8_t data1;
+    uint16_t data2;
+} PolyclavMidiEvent;
+
+/* Offline (no-device) render of an arbitrary timed MIDI event sequence
+ * (e.g. a parsed Standard MIDI File) through ANY patch type, written to
+ * `out` as interleaved stereo f32 (48 kHz). patch_type is one of
+ * "soundfont" (patch_ref = file path, dispatches on extension),
+ * "native" (patch_ref = engine name), "lv2" (patch_ref = URI, Linux
+ * only), or "clap" (patch_ref = bundle path, plugin_id required, Linux
+ * only). events must be sorted by frame ascending; pass NULL/0 for no
+ * events. Returns 0 on success, 2 on an unknown/unavailable patch_type,
+ * a bad string, or a load failure, 3 if out is NULL or n_frames is 0. */
+int32_t polyclav_render_offline_events(const char *patch_type, const char *patch_ref,
+                                       const char *plugin_id,
+                                       const PolyclavMidiEvent *events, uint32_t n_events,
+                                       float *out, uint32_t n_frames);
+
 /* Measure the integrated (ungated) LUFS loudness of an interleaved stereo
  * f32 buffer at 48 kHz (ITU-R BS.1770-4 K-weighting; see dsp::loudness in
  * the Rust source for exactly what this does and does not measure). Meant

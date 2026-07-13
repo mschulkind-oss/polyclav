@@ -1497,12 +1497,126 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     }
 }
 
+/// One MIDI event for the offline-render event sequence FFI, timed by
+/// absolute frame offset from the start of the render (not a delta).
+/// `kind`: 0 = NoteOn, 1 = NoteOff, 2 = ControlChange, 3 = PitchBend.
+/// For NoteOn/NoteOff, `data1` is the note number and `data2` the
+/// velocity (NoteOff ignores `data2`). For ControlChange, `data1` is
+/// the controller and `data2` the value. For PitchBend, `data2` is the
+/// 14-bit bend value (`data1` unused). An unrecognized `kind` is
+/// silently skipped — see `render_offline_core`.
+#[repr(C)]
+pub struct FfiMidiEvent {
+    pub frame: u32,
+    pub kind: u8,
+    pub channel: u8,
+    pub data1: u8,
+    pub data2: u16,
+}
+
+/// Shared core behind both offline-render FFI entry points below: walk
+/// `events` (REQUIRED pre-sorted by `frame`, ascending — this is a
+/// device-free analysis tool, not the real-time callback, so the
+/// simplicity of trusting the caller's ordering outweighs defensively
+/// sorting on every call) pushing each into the synth's MIDI queue at
+/// the right frame, rendering the gaps between event frames through the
+/// full DSP chain via `render_block` — the exact seam the real audio
+/// thread uses, just device-free. `samples` is interleaved stereo f32,
+/// `len = 2 * n_frames`.
+fn render_offline_core(synth: SynthBackend, events: &[FfiMidiEvent], samples: &mut [f32]) {
+    let mut ud = build_offline_user_data(Some(synth));
+    let total = samples.len() / 2;
+    let mut done = 0usize;
+    let mut idx = 0usize;
+    while done < total {
+        while idx < events.len() && (events[idx].frame as usize) <= done {
+            let e = &events[idx];
+            let ev = match e.kind {
+                0 => Some(MidiEvent::NoteOn {
+                    channel: e.channel,
+                    note: e.data1,
+                    velocity: e.data2 as u8,
+                }),
+                1 => Some(MidiEvent::NoteOff {
+                    channel: e.channel,
+                    note: e.data1,
+                }),
+                2 => Some(MidiEvent::ControlChange {
+                    channel: e.channel,
+                    controller: e.data1,
+                    value: e.data2 as u8,
+                }),
+                3 => Some(MidiEvent::PitchBend {
+                    channel: e.channel,
+                    bend: e.data2,
+                }),
+                _ => None,
+            };
+            if let Some(ev) = ev {
+                let _ = ud.midi_queue.push(ev);
+            }
+            idx += 1;
+        }
+        drain_midi(&mut ud);
+        // Invariant: after the inner loop, every remaining event has
+        // frame > done (all <= done were just consumed), so `next` is
+        // always > done — render_block always gets a non-empty slice
+        // and `done` always advances.
+        let next = events
+            .get(idx)
+            .map(|e| (e.frame as usize).min(total))
+            .unwrap_or(total);
+        render_block(&mut ud, &mut samples[done * 2..next * 2]);
+        done = next;
+    }
+}
+
+/// Load a `SynthBackend` by the generic `(patch_type, patch_ref,
+/// plugin_id)` triple the multi-patch-type offline-render FFI uses.
+/// `patch_type` is one of "soundfont" (dispatches on file extension,
+/// same as the live `SetSoundfont` path), "native" (`patch_ref` is the
+/// engine name), "lv2" (`patch_ref` is the URI, Linux only), or "clap"
+/// (`patch_ref` is the bundle path, `plugin_id` required, Linux only).
+#[cfg(target_os = "linux")]
+fn load_synth_by_type(
+    patch_type: &str,
+    patch_ref: &str,
+    plugin_id: Option<&str>,
+) -> Result<SynthBackend, String> {
+    match patch_type {
+        "soundfont" => SynthBackend::load(Path::new(patch_ref)),
+        "native" => SynthBackend::load_native(patch_ref),
+        "lv2" => SynthBackend::load_lv2(patch_ref),
+        "clap" => {
+            let id = plugin_id.ok_or_else(|| "clap patch_type requires plugin_id".to_string())?;
+            SynthBackend::load_clap(Path::new(patch_ref), id)
+        }
+        other => Err(format!("unknown patch_type {other:?}")),
+    }
+}
+
+/// macOS variant: LV2/CLAP offline hosting is unavailable there (same
+/// boundary as `polyclav_audio_set_lv2_plugin`/`set_clap_plugin`'s
+/// stubs) — "soundfont" and "native" only.
+#[cfg(target_os = "macos")]
+fn load_synth_by_type(
+    patch_type: &str,
+    patch_ref: &str,
+    _plugin_id: Option<&str>,
+) -> Result<SynthBackend, String> {
+    match patch_type {
+        "soundfont" => SynthBackend::load(Path::new(patch_ref)),
+        "native" => SynthBackend::load_native(patch_ref),
+        other => Err(format!("patch_type {other:?} unavailable on macOS")),
+    }
+}
+
 /// Offline (no-device) render: the native `engine` synth playing
 /// `note`/`velocity` held from t=0, through the full DSP chain, written to
-/// `out` as interleaved stereo f32. Renders in 1024-frame blocks (like a real
-/// callback) so block-boundary behaviour is exercised. No audio device, no
-/// global state — powers `polyclav render` and the CI offline-render gate, on
-/// every platform.
+/// `out` as interleaved stereo f32. No audio device, no global state —
+/// powers `polyclav render` and the CI offline-render gate, on every
+/// platform. A thin wrapper over `render_offline_core` with a single
+/// synthetic NoteOn at frame 0.
 ///
 /// Returns 0 on success, 2 on a bad/unknown `engine` string, 3 if `out` is
 /// NULL or `n_frames` is 0.
@@ -1532,23 +1646,84 @@ pub unsafe extern "C" fn polyclav_render_offline(
             return 2;
         }
     };
-    let mut ud = build_offline_user_data(Some(synth));
-    let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+    let samples = unsafe { std::slice::from_raw_parts_mut(out, n_frames as usize * 2) };
+    let events = [FfiMidiEvent {
+        frame: 0,
+        kind: 0,
         channel: 0,
-        note,
-        velocity,
-    });
-    drain_midi(&mut ud);
+        data1: note,
+        data2: velocity as u16,
+    }];
+    render_offline_core(synth, &events, samples);
+    0
+}
 
-    let total = n_frames as usize;
-    let samples = unsafe { std::slice::from_raw_parts_mut(out, total * 2) };
-    let chunk_frames = 1024usize;
-    let mut done = 0usize;
-    while done < total {
-        let this = chunk_frames.min(total - done);
-        render_block(&mut ud, &mut samples[done * 2..(done + this) * 2]);
-        done += this;
+/// Offline (no-device) render of an arbitrary timed MIDI event sequence
+/// (e.g. a parsed Standard MIDI File) through ANY patch type — not just
+/// native. This is the general form behind measurement/calibration
+/// tooling (docs/VISION.md's patch-loudness-normalization initiative):
+/// render the same short performance through several patches and
+/// compare, or sweep a parameter and check the loudness/peak
+/// progression, all without opening an audio device.
+///
+/// `events` must be sorted by `frame` ascending — see
+/// `render_offline_core`'s doc comment. Pass NULL/0 for no events (a
+/// patch's idle render).
+///
+/// Returns 0 on success, 2 on an unknown/unavailable `patch_type`, a
+/// bad string, or a load failure, 3 if `out` is NULL or `n_frames` is 0.
+///
+/// # Safety
+/// `patch_type` and `patch_ref` must be valid NUL-terminated C strings;
+/// `plugin_id` must be a valid NUL-terminated C string or NULL; `events`
+/// must point to at least `n_events` valid [`FfiMidiEvent`]s, or be NULL
+/// iff `n_events` is 0; `out` must point to at least `n_frames * 2`
+/// writable `f32`s.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_render_offline_events(
+    patch_type: *const c_char,
+    patch_ref: *const c_char,
+    plugin_id: *const c_char,
+    events: *const FfiMidiEvent,
+    n_events: u32,
+    out: *mut f32,
+    n_frames: u32,
+) -> i32 {
+    if out.is_null() || n_frames == 0 {
+        return 3;
     }
+    let patch_type = match unsafe { CStr::from_ptr(patch_type) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+    let patch_ref = match unsafe { CStr::from_ptr(patch_ref) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+    let plugin_id = if plugin_id.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(plugin_id) }.to_str() {
+            Ok(s) => Some(s),
+            Err(_) => return 2,
+        }
+    };
+
+    let synth = match load_synth_by_type(patch_type, patch_ref, plugin_id) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("audio-core: render_offline_events load failed: {e}");
+            return 2;
+        }
+    };
+
+    let events_slice: &[FfiMidiEvent] = if n_events == 0 || events.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(events, n_events as usize) }
+    };
+    let samples = unsafe { std::slice::from_raw_parts_mut(out, n_frames as usize * 2) };
+    render_offline_core(synth, events_slice, samples);
     0
 }
 
@@ -2043,6 +2218,138 @@ mod tests {
             unsafe { polyclav_render_offline(bad.as_ptr(), 60, 100, buf.as_mut_ptr(), n_frames) },
             2
         );
+    }
+
+    /// `polyclav_render_offline_events` is the general multi-event,
+    /// any-patch-type sibling of `polyclav_render_offline` (measurement/
+    /// calibration tooling — docs/VISION.md). Pins a real multi-note
+    /// sequence (two overlapping-free notes back to back) through the
+    /// native backend, plus the error-code guards.
+    #[test]
+    fn render_offline_events_ffi_handles_multi_note_sequence() {
+        let patch_type = std::ffi::CString::new("native").unwrap();
+        let patch_ref = std::ffi::CString::new("minimoog").unwrap();
+        let n_frames: u32 = 9600; // 0.2 s at 48 kHz
+        let events = [
+            FfiMidiEvent {
+                frame: 0,
+                kind: 0,
+                channel: 0,
+                data1: 60,
+                data2: 100,
+            },
+            FfiMidiEvent {
+                frame: 2400,
+                kind: 1,
+                channel: 0,
+                data1: 60,
+                data2: 0,
+            },
+            FfiMidiEvent {
+                frame: 2400,
+                kind: 0,
+                channel: 0,
+                data1: 64,
+                data2: 100,
+            },
+            FfiMidiEvent {
+                frame: 4800,
+                kind: 1,
+                channel: 0,
+                data1: 64,
+                data2: 0,
+            },
+        ];
+        let mut buf = vec![0.0f32; n_frames as usize * 2];
+        let rc = unsafe {
+            polyclav_render_offline_events(
+                patch_type.as_ptr(),
+                patch_ref.as_ptr(),
+                std::ptr::null(),
+                events.as_ptr(),
+                events.len() as u32,
+                buf.as_mut_ptr(),
+                n_frames,
+            )
+        };
+        assert_eq!(rc, 0, "render_offline_events returned error {rc}");
+        assert!(buf.iter().all(|s| s.is_finite()), "non-finite sample");
+        let rms = (buf
+            .iter()
+            .map(|s| f64::from(*s) * f64::from(*s))
+            .sum::<f64>()
+            / buf.len() as f64)
+            .sqrt();
+        assert!(rms > 0.001, "expected audible output, got rms={rms}");
+
+        // Guards: null out or zero frames -> 3; unknown patch_type -> 2.
+        assert_eq!(
+            unsafe {
+                polyclav_render_offline_events(
+                    patch_type.as_ptr(),
+                    patch_ref.as_ptr(),
+                    std::ptr::null(),
+                    events.as_ptr(),
+                    events.len() as u32,
+                    std::ptr::null_mut(),
+                    n_frames,
+                )
+            },
+            3
+        );
+        assert_eq!(
+            unsafe {
+                polyclav_render_offline_events(
+                    patch_type.as_ptr(),
+                    patch_ref.as_ptr(),
+                    std::ptr::null(),
+                    events.as_ptr(),
+                    events.len() as u32,
+                    buf.as_mut_ptr(),
+                    0,
+                )
+            },
+            3
+        );
+        let bad_type = std::ffi::CString::new("bogus").unwrap();
+        assert_eq!(
+            unsafe {
+                polyclav_render_offline_events(
+                    bad_type.as_ptr(),
+                    patch_ref.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    buf.as_mut_ptr(),
+                    n_frames,
+                )
+            },
+            2
+        );
+    }
+
+    /// A patch with no events at all renders its idle state for the
+    /// whole buffer (silence for the native synth) — the "empty
+    /// events" path must not panic or skip rendering.
+    #[test]
+    fn render_offline_events_ffi_handles_zero_events() {
+        let patch_type = std::ffi::CString::new("native").unwrap();
+        let patch_ref = std::ffi::CString::new("minimoog").unwrap();
+        let n_frames: u32 = 4800;
+        let mut buf = vec![0.0f32; n_frames as usize * 2];
+        let rc = unsafe {
+            polyclav_render_offline_events(
+                patch_type.as_ptr(),
+                patch_ref.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                buf.as_mut_ptr(),
+                n_frames,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert!(buf.iter().all(|s| s.is_finite()));
     }
 
     /// End-to-end offline render through the portable `render_block` seam:
