@@ -46,6 +46,12 @@ The native synth no longer roadmaps alone. Five design docs landed
 | `docs/VELOCITY_CURVES.md` | Per-patch velocity remapping: gamma+presets v1, control-point editor v2 | v1+v2 shipped (editor + live monitor in the web UI) |
 | `docs/AUDITION.md` | Keyboard-free clip player: generative diagnostic patterns, loop/tempo transport, per-setting demo buttons | P1-P3 shipped (user clips scanned at boot); P4 bundled clips open |
 
+`docs/VISION.md` landed later (2026-07-12) as the north-star doc one
+level up from this one: it frames circuit-emulated effects, physically-modeled
+instruments (organ/Leslie), and open-source engine hosting (Surge XT/Helm)
+as the next build threads, and points at this doc's `engine = "<name>"`
+dispatch seam (§5) as where a new native instrument engine plugs in.
+
 **How they stack** (each unlocks the next):
 
 1. **Velocity curves v1 + Audition P1** — pure Go, no UI, no hardware;
