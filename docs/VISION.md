@@ -54,22 +54,46 @@ natively — fully license-clean under polyclav's Apache-2.0.
 
 ### 1. Circuit-emulated effects — drive pedals & amps
 
-**Status: v1 shipped (2026-07-13).** `audio-core/src/dsp/drive_pedal.rs`
+**Status: v2 shipped (2026-07-13).** `audio-core/src/dsp/drive_pedal.rs`
 implements a Tube-Screamer-style antiparallel diode-pair clipper (the
 research-recommended diode-clipper model, per `docs/OPEN_SOUND_ENGINES.md`
 §1 — using a closed-form deep-conduction approximation rather than the
-paper's Lambert-W solve, after a first attempt at iterative Newton-Raphson
-turned out to be numerically unstable at this pedal's gain range), 2×
-oversampled, wired into the shared post-synth chain (`synth →
-drive_pedal → patch_gain → ...`) and exposed as MAIN knob 4 (`Pedal`),
-backend-agnostic and per-patch persisted the same way as
-Volume/Reverb/Comp. A tube amp emulation (preamp/tone-stack/power-amp/
-speaker, reusing the same nonlinear-modeling groundwork) remains the
-natural second module — not yet built. Black-box RNN modeling is a
-credible, likely-cheaper complement for individual hard circuits later,
-but shouldn't replace this approach as the first-class one. Full
-detail, sources, and caveats (including a refuted competing paper) in
+paper's Lambert-W solve), 2× oversampled, wired into the shared
+post-synth chain (`synth → drive_pedal → patch_gain → ...`) and exposed
+as MAIN knob 4 (`Pedal`), backend-agnostic and per-patch persisted the
+same way as Volume/Reverb/Comp. **v1 shipped with a real bug**: the
+diode-pair equation is only ever in deep saturation for a normalized
+float signal (the `2·Is·R` denominator is minuscule next to any audible
+amplitude), so scaling the pre-gain directly with `amount` made the
+knob feel on/off — 1% already sounded maximally distorted. **v2**
+fixes this at the architecture level: the nonlinearity always runs at a
+fixed, fully-driven gain, and `amount` instead crossfades linearly
+between dry and that fixed-character wet signal — smooth by
+construction. The fix was verified (and the makeup-gain constant
+calibrated) against a new general-purpose LUFS meter
+(`audio-core/src/dsp/loudness.rs`, ITU-R BS.1770-4 K-weighting, exposed
+via FFI as `polyclav_measure_lufs`/`polyclav_measure_peak_dbfs` and Go
+as `audio.MeasureLUFS`/`MeasurePeakDBFS`) and a loudness-sweep
+regression test in `lib.rs` that renders a held note across the whole
+knob range and asserts no discontinuous loudness jump — exactly the
+invariant-testing pattern the wider initiative below is about. A tube
+amp emulation (preamp/tone-stack/power-amp/speaker, reusing the same
+nonlinear-modeling groundwork) remains the natural second module — not
+yet built. Black-box RNN modeling is a credible, likely-cheaper
+complement for individual hard circuits later, but shouldn't replace
+this approach as the first-class one. Full detail, sources, and
+caveats (including a refuted competing paper) in
 `docs/OPEN_SOUND_ENGINES.md` §1.
+
+**New general-purpose infrastructure this unlocked:** the LUFS meter
+and the render-a-clip-then-assert-an-invariant pattern aren't specific
+to the drive pedal — they're the foundation for two things explicitly
+on the table: (1) a reusable invariant-test harness other DSP effects
+and synth params can adopt (render a sweep, assert bounded/smooth
+loudness or peak), and (2) patch-loudness normalization (measuring, and
+eventually matching, how loud different patches render relative to each
+other) — scope and design for that second piece is still open, see
+below.
 
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 
@@ -261,3 +285,17 @@ more.
    Face, Marshall/Fender preamps)? Not established by the research pass.
    **Lean: doesn't block anything — build the WDF Tube Screamer module
    first regardless, since it doesn't depend on this answer.**
+
+6. **What should patch-loudness normalization actually be** — an
+   offline calibration tool that measures each configured patch's LUFS
+   and reports/suggests `gain_db` values (a human stays in the loop), or
+   a live auto-normalizing DSP stage that continuously matches loudness
+   in the chain? They have very different footprints: the offline tool
+   is a thin layer over what already exists (the LUFS meter +
+   `RenderOffline`); a live stage is new real-time DSP with its own
+   smoothing/attack-time design questions. There's also a real gap
+   either way needs to cross: `RenderOffline`/`polyclav_render_offline`
+   only renders **native** patches today — measuring soundfont/sfizz/
+   LV2/CLAP patches offline needs that path extended, which is separate,
+   real work. **Lean: no lean yet — this is a genuine design fork worth
+   a direct check-in rather than guessing, unlike 1–5 above.**
