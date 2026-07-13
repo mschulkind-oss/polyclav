@@ -99,6 +99,11 @@ typedef struct {
     float analog_delay_time_ms;
     float analog_delay_feedback;
     float analog_delay_mix;
+    float chorus_rate_hz;
+    float chorus_depth;
+    float chorus_mix;
+    float tremolo_rate_hz;
+    float tremolo_depth;
 } PolyclavChainParams;
 
 /* Offline (no-device) render of an arbitrary timed MIDI event sequence
@@ -170,6 +175,27 @@ void polyclav_dsp_set_analog_delay_feedback(float v);
  * Runs in the shared post-synth DSP chain, after the drive pedal, so it
  * applies to every synth backend. */
 void polyclav_dsp_set_analog_delay_mix(float v);
+
+/* Chorus LFO rate in Hz, clamped to [0.02, 5]. */
+void polyclav_dsp_set_chorus_rate_hz(float hz);
+
+/* Chorus modulation depth in [0.0, 1.0] — how far the LFO sweeps the
+ * delay tap. Default 0.0 = no sweep (fixed short delay). */
+void polyclav_dsp_set_chorus_depth(float v);
+
+/* Chorus wet/dry mix in [0.0, 1.0]. Default 0.0 = bit-exact bypass.
+ * Runs in the shared post-synth DSP chain, after the drive pedal, so it
+ * applies to every synth backend. */
+void polyclav_dsp_set_chorus_mix(float v);
+
+/* Tremolo LFO rate in Hz, clamped to [0.05, 20]. */
+void polyclav_dsp_set_tremolo_rate_hz(float hz);
+
+/* Tremolo depth in [0.0, 1.0]. Default 0.0 = bit-exact bypass. No
+ * separate mix knob — depth alone spans "no effect" to "full chop to
+ * silence" (see dsp::Tremolo's module doc comment). Runs in the shared
+ * post-synth DSP chain, so it applies to every synth backend. */
+void polyclav_dsp_set_tremolo_depth(float v);
 
 /* Native synth filter cutoff in Hz, pushed from the FILTER page's
  * Cutoff knob (MAIN knob 4 now drives the drive pedal instead). The

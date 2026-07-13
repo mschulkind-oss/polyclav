@@ -29,7 +29,12 @@ panel; see "Web dashboard" below.
   - native pure-Rust synth (`type = "native"`)
   - LV2 and CLAP plugins (`type = "lv2"` / `type = "clap"`)
 - DSP chain in the audio thread, in order:
-  `synth → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
+  `synth → drive_pedal → chorus → tremolo → analog_delay → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
+  The four pedals (drive, chorus, tremolo, analog delay) default to
+  bit-exact bypass; only the drive pedal currently has a Launchkey knob
+  (MAIN knob 4) — the other three are implemented and controllable via
+  the Rust/Go APIs but not yet exposed on a knob, REST field, or
+  per-patch save (see `docs/VISION.md` §1b–1d).
 - Launchkey live control surface:
   - Top-row pads select patches; the lit pad tracks the current patch.
   - Five knob pages (MAIN / OSC / FILTER / AMP / LFO/MOD) switched with

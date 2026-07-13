@@ -32,7 +32,9 @@ use oxisynth::{
     MidiEvent as OxiMidiEvent, SoundFont as OxiSoundFont, Synth as OxiSynth, SynthDescriptor,
 };
 
-use crate::dsp::{AnalogDelay, Compressor, DrivePedal, Limiter, MasteringCompressor, Reverb};
+use crate::dsp::{
+    AnalogDelay, Chorus, Compressor, DrivePedal, Limiter, MasteringCompressor, Reverb, Tremolo,
+};
 #[cfg(target_os = "linux")]
 use crate::plugin_clap::ClapInstance;
 #[cfg(target_os = "linux")]
@@ -222,6 +224,30 @@ pub(crate) struct DspParams {
     /// stage is bypassed bit-exactly (regression guarantee), matching
     /// every other knob's default-off convention.
     analog_delay_mix: AtomicU32,
+    /// Chorus LFO rate in Hz, f32 bits. Default matches
+    /// `dsp::Chorus`'s own default (0.8 Hz) — only audible once
+    /// `chorus_mix` is above 0. Runs in the shared post-synth chain
+    /// (`dsp::Chorus`), same lifecycle as `drive_pedal_amount` above.
+    /// See docs/VISION.md §1c.
+    chorus_rate_hz: AtomicU32,
+    /// Chorus modulation depth in [0, 1], f32 bits. Default 0.0 — no
+    /// sweep (the wet tap is a fixed short delay until this is raised).
+    chorus_depth: AtomicU32,
+    /// Chorus wet/dry mix in [0, 1], f32 bits. Default 0.0 — the stage
+    /// is bypassed bit-exactly (regression guarantee), matching every
+    /// other pedal's default-off convention.
+    chorus_mix: AtomicU32,
+    /// Tremolo LFO rate in Hz, f32 bits. Default matches
+    /// `dsp::Tremolo`'s own default (4.0 Hz) — only audible once
+    /// `tremolo_depth` is above 0. Runs in the shared post-synth chain
+    /// (`dsp::Tremolo`), same lifecycle as `drive_pedal_amount` above.
+    /// See docs/VISION.md §1d.
+    tremolo_rate_hz: AtomicU32,
+    /// Tremolo depth in [0, 1], f32 bits. Default 0.0 — the stage is
+    /// bypassed bit-exactly (regression guarantee); no separate mix
+    /// knob exists for this pedal (see `dsp::Tremolo`'s module doc
+    /// comment for why).
+    tremolo_depth: AtomicU32,
     /// Native synth filter cutoff in Hz, written by Go whenever the
     /// cutoff control (FILTER page knob 1) is adjusted — MAIN knob 4 was
     /// reassigned to the drive pedal above. The audio thread reads this
@@ -376,6 +402,11 @@ impl DspParams {
             analog_delay_time_ms: AtomicU32::new(300.0_f32.to_bits()),
             analog_delay_feedback: AtomicU32::new(0.0_f32.to_bits()),
             analog_delay_mix: AtomicU32::new(0.0_f32.to_bits()),
+            chorus_rate_hz: AtomicU32::new(0.8_f32.to_bits()),
+            chorus_depth: AtomicU32::new(0.0_f32.to_bits()),
+            chorus_mix: AtomicU32::new(0.0_f32.to_bits()),
+            tremolo_rate_hz: AtomicU32::new(4.0_f32.to_bits()),
+            tremolo_depth: AtomicU32::new(0.0_f32.to_bits()),
             native_cutoff_hz: AtomicU32::new(2_000.0_f32.to_bits()),
             native_resonance: AtomicU32::new(0.3_f32.to_bits()),
             native_filter_env_attack_s: AtomicU32::new(0.005_f32.to_bits()),
@@ -475,6 +506,21 @@ impl DspParams {
     }
     pub fn analog_delay_mix(&self) -> f32 {
         Self::load(&self.analog_delay_mix)
+    }
+    pub fn chorus_rate_hz(&self) -> f32 {
+        Self::load(&self.chorus_rate_hz)
+    }
+    pub fn chorus_depth(&self) -> f32 {
+        Self::load(&self.chorus_depth)
+    }
+    pub fn chorus_mix(&self) -> f32 {
+        Self::load(&self.chorus_mix)
+    }
+    pub fn tremolo_rate_hz(&self) -> f32 {
+        Self::load(&self.tremolo_rate_hz)
+    }
+    pub fn tremolo_depth(&self) -> f32 {
+        Self::load(&self.tremolo_depth)
     }
     pub fn native_cutoff_hz(&self) -> f32 {
         Self::load(&self.native_cutoff_hz)
@@ -600,6 +646,21 @@ impl DspParams {
     }
     pub fn set_analog_delay_mix(&self, v: f32) {
         Self::store(&self.analog_delay_mix, v);
+    }
+    pub fn set_chorus_rate_hz(&self, hz: f32) {
+        Self::store_clamped(&self.chorus_rate_hz, hz, 0.02, 5.0);
+    }
+    pub fn set_chorus_depth(&self, v: f32) {
+        Self::store(&self.chorus_depth, v);
+    }
+    pub fn set_chorus_mix(&self, v: f32) {
+        Self::store(&self.chorus_mix, v);
+    }
+    pub fn set_tremolo_rate_hz(&self, hz: f32) {
+        Self::store_clamped(&self.tremolo_rate_hz, hz, 0.05, 20.0);
+    }
+    pub fn set_tremolo_depth(&self, v: f32) {
+        Self::store(&self.tremolo_depth, v);
     }
     pub fn set_native_cutoff_hz(&self, hz: f32) {
         Self::store_clamped(&self.native_cutoff_hz, hz, 20.0, 20_000.0);
@@ -739,6 +800,12 @@ pub(crate) struct UserData {
     /// so they're pushed unconditionally each block (same rationale
     /// as the native-synth params below).
     analog_delay: AnalogDelay,
+    /// Pushed unconditionally each block, same rationale as
+    /// `analog_delay` above.
+    chorus: Chorus,
+    /// Pushed unconditionally each block, same rationale as
+    /// `analog_delay` above.
+    tremolo: Tremolo,
     last_comp_amount: f32,
     last_reverb_mix: f32,
     last_mastering_amount: f32,
@@ -1177,6 +1244,45 @@ pub extern "C" fn polyclav_dsp_set_analog_delay_mix(v: f32) {
     dsp_params().set_analog_delay_mix(v);
 }
 
+/// Set the chorus LFO rate in Hz, clamped to [0.02, 5] in Rust. See
+/// `dsp::Chorus` and docs/VISION.md §1c.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_chorus_rate_hz(hz: f32) {
+    dsp_params().set_chorus_rate_hz(hz);
+}
+
+/// Set the chorus modulation depth in [0, 1] — how far the LFO sweeps
+/// the delay tap. Clamped in Rust. 0.0 (default) leaves the wet tap a
+/// fixed short delay with no sweep.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_chorus_depth(v: f32) {
+    dsp_params().set_chorus_depth(v);
+}
+
+/// Set the chorus wet/dry mix in [0, 1]. 0.0 (default) bypasses the
+/// stage bit-exactly. Runs in the shared post-synth chain, after the
+/// drive pedal, so it applies to every synth backend.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_chorus_mix(v: f32) {
+    dsp_params().set_chorus_mix(v);
+}
+
+/// Set the tremolo LFO rate in Hz, clamped to [0.05, 20] in Rust. See
+/// `dsp::Tremolo` and docs/VISION.md §1d.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_tremolo_rate_hz(hz: f32) {
+    dsp_params().set_tremolo_rate_hz(hz);
+}
+
+/// Set the tremolo depth in [0, 1]. 0.0 (default) bypasses the stage
+/// bit-exactly. No separate mix knob — see `dsp::Tremolo`'s module doc
+/// comment for why. Runs in the shared post-synth chain, so it applies
+/// to every synth backend.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_tremolo_depth(v: f32) {
+    dsp_params().set_tremolo_depth(v);
+}
+
 /// Set the native synth's filter cutoff in Hz, pushed from the FILTER
 /// page's Cutoff knob (MAIN knob 4 now drives the drive pedal instead;
 /// see `polyclav_dsp_set_drive_pedal`). The audio thread reads the
@@ -1494,6 +1600,8 @@ pub(crate) fn build_user_data() -> UserData {
     let mut limiter = Limiter::new(SAMPLE_RATE);
     let mut drive_pedal = DrivePedal::new(SAMPLE_RATE);
     let mut analog_delay = AnalogDelay::new(SAMPLE_RATE);
+    let mut chorus = Chorus::new(SAMPLE_RATE);
+    let mut tremolo = Tremolo::new(SAMPLE_RATE);
     compressor.set_amount(initial_comp);
     reverb.set_mix(initial_mix);
     mastering.set_amount(initial_mastering);
@@ -1502,6 +1610,11 @@ pub(crate) fn build_user_data() -> UserData {
     analog_delay.set_time_ms(params.analog_delay_time_ms());
     analog_delay.set_feedback(params.analog_delay_feedback());
     analog_delay.set_mix(params.analog_delay_mix());
+    chorus.set_rate_hz(params.chorus_rate_hz());
+    chorus.set_depth(params.chorus_depth());
+    chorus.set_mix(params.chorus_mix());
+    tremolo.set_rate_hz(params.tremolo_rate_hz());
+    tremolo.set_depth(params.tremolo_depth());
 
     UserData {
         sine_phase: 0.0,
@@ -1519,6 +1632,8 @@ pub(crate) fn build_user_data() -> UserData {
         limiter,
         drive_pedal,
         analog_delay,
+        chorus,
+        tremolo,
         last_comp_amount: initial_comp,
         last_reverb_mix: initial_mix,
         last_mastering_amount: initial_mastering,
@@ -1538,6 +1653,8 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     let mut limiter = Limiter::new(SAMPLE_RATE);
     let mut drive_pedal = DrivePedal::new(SAMPLE_RATE);
     let mut analog_delay = AnalogDelay::new(SAMPLE_RATE);
+    let mut chorus = Chorus::new(SAMPLE_RATE);
+    let mut tremolo = Tremolo::new(SAMPLE_RATE);
     compressor.set_amount(params.comp_amount());
     reverb.set_mix(params.reverb_mix());
     mastering.set_amount(params.mastering_amount());
@@ -1546,6 +1663,11 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     analog_delay.set_time_ms(params.analog_delay_time_ms());
     analog_delay.set_feedback(params.analog_delay_feedback());
     analog_delay.set_mix(params.analog_delay_mix());
+    chorus.set_rate_hz(params.chorus_rate_hz());
+    chorus.set_depth(params.chorus_depth());
+    chorus.set_mix(params.chorus_mix());
+    tremolo.set_rate_hz(params.tremolo_rate_hz());
+    tremolo.set_depth(params.tremolo_depth());
     UserData {
         sine_phase: 0.0,
         #[cfg(target_os = "linux")]
@@ -1567,6 +1689,8 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
         limiter,
         drive_pedal,
         analog_delay,
+        chorus,
+        tremolo,
     }
 }
 
@@ -1610,6 +1734,11 @@ pub struct FfiChainParams {
     pub analog_delay_time_ms: f32,
     pub analog_delay_feedback: f32,
     pub analog_delay_mix: f32,
+    pub chorus_rate_hz: f32,
+    pub chorus_depth: f32,
+    pub chorus_mix: f32,
+    pub tremolo_rate_hz: f32,
+    pub tremolo_depth: f32,
 }
 
 /// Apply every finite (i.e. explicitly set) field of `cp` onto `ud`'s
@@ -1651,6 +1780,21 @@ fn apply_chain_params(ud: &UserData, cp: &FfiChainParams) {
     }
     if cp.analog_delay_mix.is_finite() {
         ud.dsp_params.set_analog_delay_mix(cp.analog_delay_mix);
+    }
+    if cp.chorus_rate_hz.is_finite() {
+        ud.dsp_params.set_chorus_rate_hz(cp.chorus_rate_hz);
+    }
+    if cp.chorus_depth.is_finite() {
+        ud.dsp_params.set_chorus_depth(cp.chorus_depth);
+    }
+    if cp.chorus_mix.is_finite() {
+        ud.dsp_params.set_chorus_mix(cp.chorus_mix);
+    }
+    if cp.tremolo_rate_hz.is_finite() {
+        ud.dsp_params.set_tremolo_rate_hz(cp.tremolo_rate_hz);
+    }
+    if cp.tremolo_depth.is_finite() {
+        ud.dsp_params.set_tremolo_depth(cp.tremolo_depth);
     }
 }
 
@@ -2156,12 +2300,42 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         user_data.drive_pedal.process(samples);
     }
 
-    // 2.6. Analog delay — pedalboard-order after drive (a delay
-    // catches a drive pedal's output ahead of it, not the reverse),
-    // before patch gain/dynamics for the same reason as the drive
-    // pedal above. Params are pushed unconditionally each block — see
-    // UserData's `analog_delay` field doc comment for why that's fine
-    // here (trivial setters, no coefficient recomputation to skip).
+    // 2.6. Chorus — pedalboard-order after drive, in the "modulation"
+    // slot ahead of the time-based delay/reverb effects (so a delay's
+    // repeats carry the chorus's character forward, not the reverse).
+    // Params are pushed unconditionally each block, same rationale as
+    // `analog_delay` below (trivial setters, no coefficient
+    // recomputation to skip). See docs/VISION.md §1c.
+    user_data
+        .chorus
+        .set_rate_hz(user_data.dsp_params.chorus_rate_hz());
+    user_data
+        .chorus
+        .set_depth(user_data.dsp_params.chorus_depth());
+    let chorus_mix = user_data.dsp_params.chorus_mix();
+    user_data.chorus.set_mix(chorus_mix);
+    if chorus_mix > 0.0 {
+        user_data.chorus.process(samples);
+    }
+
+    // 2.7. Tremolo — same modulation slot as chorus, right after it.
+    // Params are pushed unconditionally each block, same rationale as
+    // `analog_delay` below. See docs/VISION.md §1d.
+    user_data
+        .tremolo
+        .set_rate_hz(user_data.dsp_params.tremolo_rate_hz());
+    let tremolo_depth = user_data.dsp_params.tremolo_depth();
+    user_data.tremolo.set_depth(tremolo_depth);
+    if tremolo_depth > 0.0 {
+        user_data.tremolo.process(samples);
+    }
+
+    // 2.8. Analog delay — pedalboard-order after drive/chorus/tremolo
+    // (a delay catches everything ahead of it, not the reverse), before
+    // patch gain/dynamics for the same reason as the drive pedal above.
+    // Params are pushed unconditionally each block — see UserData's
+    // `analog_delay` field doc comment for why that's fine here
+    // (trivial setters, no coefficient recomputation to skip).
     user_data
         .analog_delay
         .set_time_ms(user_data.dsp_params.analog_delay_time_ms());
@@ -2581,6 +2755,11 @@ mod tests {
             analog_delay_time_ms: nan,
             analog_delay_feedback: nan,
             analog_delay_mix: nan,
+            chorus_rate_hz: nan,
+            chorus_depth: nan,
+            chorus_mix: nan,
+            tremolo_rate_hz: nan,
+            tremolo_depth: nan,
         };
         let driven_buf = render(&driven_params as *const FfiChainParams);
 
@@ -2853,6 +3032,197 @@ mod tests {
             peak_dbfs < 6.0,
             "peak {peak_dbfs:.2} dBFS suggests the delay's feedback loop \
              isn't staying bounded through the full chain"
+        );
+    }
+
+    /// Render `n_frames` of a held middle-C minimoog note with the
+    /// chorus set to the given rate/depth/mix, returning the
+    /// interleaved stereo buffer. Same harness shape as
+    /// `render_drive_pedal_clip`.
+    fn render_chorus_clip(rate_hz: f32, depth: f32, mix: f32, n_frames: usize) -> Vec<f32> {
+        let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+        let mut ud = offline_user_data(synth);
+        ud.dsp_params.set_chorus_rate_hz(rate_hz);
+        ud.dsp_params.set_chorus_depth(depth);
+        ud.dsp_params.set_chorus_mix(mix);
+        let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        drain_midi(&mut ud);
+
+        let mut buf = vec![0.0f32; n_frames * 2];
+        let mut done = 0usize;
+        while done < n_frames {
+            let this = 128usize.min(n_frames - done);
+            render_block(&mut ud, &mut buf[done * 2..(done + this) * 2]);
+            done += this;
+        }
+        buf
+    }
+
+    /// Loudness-invariant sweep for the chorus's depth knob (mix fixed
+    /// at 1.0) — same shape as `drive_pedal_loudness_sweep_is_smooth`:
+    /// no discontinuous jump anywhere in the range.
+    #[test]
+    fn chorus_depth_sweep_is_smooth() {
+        const N_FRAMES: usize = 24_000; // 0.5 s
+
+        let depths = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
+        let lufs: Vec<f32> = depths
+            .iter()
+            .map(|&d| {
+                let clip = render_chorus_clip(0.8, d, 1.0, N_FRAMES);
+                dsp::loudness::measure_lufs(&clip)
+            })
+            .collect();
+
+        for w in lufs.windows(2) {
+            let step = (w[1] - w[0]).abs();
+            assert!(
+                step < 4.0,
+                "loudness step of {step:.2} LU between adjacent chorus depth settings \
+                 (depths={depths:?}, lufs={lufs:?})"
+            );
+        }
+    }
+
+    /// Loudness-invariant sweep for the chorus's mix knob (depth fixed
+    /// high) — no cliff near 0, no cliff anywhere in the sweep.
+    #[test]
+    fn chorus_mix_sweep_is_smooth() {
+        const N_FRAMES: usize = 24_000;
+
+        let mixes = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
+        let lufs: Vec<f32> = mixes
+            .iter()
+            .map(|&mix| {
+                let clip = render_chorus_clip(0.8, 1.0, mix, N_FRAMES);
+                dsp::loudness::measure_lufs(&clip)
+            })
+            .collect();
+
+        let jump_from_zero = (lufs[1] - lufs[0]).abs();
+        assert!(
+            jump_from_zero < 3.0,
+            "small chorus mix jumped {jump_from_zero:.2} LU from dry \
+             (mixes={mixes:?}, lufs={lufs:?})"
+        );
+        for w in lufs.windows(2) {
+            let step = (w[1] - w[0]).abs();
+            assert!(
+                step < 4.0,
+                "loudness step of {step:.2} LU between adjacent chorus mix settings \
+                 (mixes={mixes:?}, lufs={lufs:?})"
+            );
+        }
+    }
+
+    /// Render `n_frames` of a held middle-C minimoog note with the
+    /// tremolo set to the given rate/depth, returning the interleaved
+    /// stereo buffer. Same harness shape as `render_drive_pedal_clip`.
+    fn render_tremolo_clip(rate_hz: f32, depth: f32, n_frames: usize) -> Vec<f32> {
+        let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+        let mut ud = offline_user_data(synth);
+        ud.dsp_params.set_tremolo_rate_hz(rate_hz);
+        ud.dsp_params.set_tremolo_depth(depth);
+        let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        drain_midi(&mut ud);
+
+        let mut buf = vec![0.0f32; n_frames * 2];
+        let mut done = 0usize;
+        while done < n_frames {
+            let this = 128usize.min(n_frames - done);
+            render_block(&mut ud, &mut buf[done * 2..(done + this) * 2]);
+            done += this;
+        }
+        buf
+    }
+
+    /// Loudness-invariant sweep for the tremolo's depth knob over
+    /// several full LFO cycles (so the integrated LUFS measurement
+    /// captures the whole chop, not an arbitrary phase snapshot) — same
+    /// smoothness invariant as the other pedals' sweeps.
+    #[test]
+    fn tremolo_depth_sweep_is_smooth() {
+        const N_FRAMES: usize = 48_000; // 1s, several cycles at 5 Hz
+
+        let depths = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
+        let lufs: Vec<f32> = depths
+            .iter()
+            .map(|&d| {
+                let clip = render_tremolo_clip(5.0, d, N_FRAMES);
+                dsp::loudness::measure_lufs(&clip)
+            })
+            .collect();
+
+        let jump_from_zero = (lufs[1] - lufs[0]).abs();
+        assert!(
+            jump_from_zero < 3.0,
+            "small tremolo depth jumped {jump_from_zero:.2} LU from dry \
+             (depths={depths:?}, lufs={lufs:?})"
+        );
+        for w in lufs.windows(2) {
+            let step = (w[1] - w[0]).abs();
+            assert!(
+                step < 4.0,
+                "loudness step of {step:.2} LU between adjacent tremolo depth settings \
+                 (depths={depths:?}, lufs={lufs:?})"
+            );
+        }
+    }
+
+    /// All four pedalboard stages driven hard simultaneously
+    /// (drive → chorus → tremolo → analog delay, the real chain order)
+    /// through a real native-synth render: none of the per-pedal tests
+    /// above exercise more than one pedal at a time, so this is the one
+    /// place an ordering mistake or an unexpected interaction (e.g. one
+    /// stage's output pushing the next into a bad numeric regime) would
+    /// show up. Only asserts finiteness and a sane peak level — the
+    /// individual pedals' own tests already cover their specific
+    /// invariants in isolation.
+    #[test]
+    fn full_pedalboard_stack_stays_finite_and_bounded() {
+        let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+        let mut ud = offline_user_data(synth);
+        ud.dsp_params.set_drive_pedal_amount(0.8);
+        ud.dsp_params.set_chorus_rate_hz(3.0);
+        ud.dsp_params.set_chorus_depth(1.0);
+        ud.dsp_params.set_chorus_mix(0.8);
+        ud.dsp_params.set_tremolo_rate_hz(6.0);
+        ud.dsp_params.set_tremolo_depth(0.9);
+        ud.dsp_params.set_analog_delay_time_ms(150.0);
+        ud.dsp_params.set_analog_delay_feedback(0.8);
+        ud.dsp_params.set_analog_delay_mix(0.8);
+        let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        drain_midi(&mut ud);
+
+        const N_FRAMES: usize = 48_000 * 2; // 2s — several delay repeats
+        let mut buf = vec![0.0f32; N_FRAMES * 2];
+        let mut done = 0usize;
+        while done < N_FRAMES {
+            let this = 128usize.min(N_FRAMES - done);
+            render_block(&mut ud, &mut buf[done * 2..(done + this) * 2]);
+            done += this;
+        }
+
+        assert!(
+            buf.iter().all(|s| s.is_finite()),
+            "non-finite sample with every pedal driven simultaneously"
+        );
+        let peak_dbfs = dsp::loudness::measure_peak_dbfs(&buf);
+        assert!(
+            peak_dbfs < 6.0,
+            "peak {peak_dbfs:.2} dBFS suggests the stacked chain isn't staying bounded"
         );
     }
 

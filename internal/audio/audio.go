@@ -155,6 +155,11 @@ type ChainParams struct {
 	AnalogDelayTimeMs   float32
 	AnalogDelayFeedback float32
 	AnalogDelayMix      float32
+	ChorusRateHz        float32
+	ChorusDepth         float32
+	ChorusMix           float32
+	TremoloRateHz       float32
+	TremoloDepth        float32
 }
 
 // NewChainParams returns a ChainParams with every field set to NaN
@@ -175,6 +180,11 @@ func NewChainParams() ChainParams {
 		AnalogDelayTimeMs:   nan,
 		AnalogDelayFeedback: nan,
 		AnalogDelayMix:      nan,
+		ChorusRateHz:        nan,
+		ChorusDepth:         nan,
+		ChorusMix:           nan,
+		TremoloRateHz:       nan,
+		TremoloDepth:        nan,
 	}
 }
 
@@ -220,6 +230,11 @@ func RenderOfflineEvents(patchType, patchRef, pluginID string, chainParams *Chai
 			analog_delay_time_ms:  C.float(chainParams.AnalogDelayTimeMs),
 			analog_delay_feedback: C.float(chainParams.AnalogDelayFeedback),
 			analog_delay_mix:      C.float(chainParams.AnalogDelayMix),
+			chorus_rate_hz:        C.float(chainParams.ChorusRateHz),
+			chorus_depth:          C.float(chainParams.ChorusDepth),
+			chorus_mix:            C.float(chainParams.ChorusMix),
+			tremolo_rate_hz:       C.float(chainParams.TremoloRateHz),
+			tremolo_depth:         C.float(chainParams.TremoloDepth),
 		}
 		cChainParams = &cCP
 	}
@@ -421,6 +436,41 @@ func SetAnalogDelayFeedback(v float32) {
 // post-synth DSP chain, so it applies to every synth backend.
 func SetAnalogDelayMix(v float32) {
 	C.polyclav_dsp_set_analog_delay_mix(C.float(v))
+}
+
+// SetChorusRateHz sets the chorus LFO rate in Hz. Clamped to
+// [0.02, 5] in Rust.
+func SetChorusRateHz(hz float32) {
+	C.polyclav_dsp_set_chorus_rate_hz(C.float(hz))
+}
+
+// SetChorusDepth sets the chorus modulation depth in [0.0, 1.0] — how
+// far the LFO sweeps the delay tap. Clamped in Rust. 0 = no sweep
+// (fixed short delay).
+func SetChorusDepth(v float32) {
+	C.polyclav_dsp_set_chorus_depth(C.float(v))
+}
+
+// SetChorusMix sets the chorus wet/dry mix in [0.0, 1.0]. 0 = bypass,
+// 1 = fully wet. Clamped in Rust. Runs in the shared post-synth DSP
+// chain, so it applies to every synth backend.
+func SetChorusMix(v float32) {
+	C.polyclav_dsp_set_chorus_mix(C.float(v))
+}
+
+// SetTremoloRateHz sets the tremolo LFO rate in Hz. Clamped to
+// [0.05, 20] in Rust.
+func SetTremoloRateHz(hz float32) {
+	C.polyclav_dsp_set_tremolo_rate_hz(C.float(hz))
+}
+
+// SetTremoloDepth sets the tremolo depth in [0.0, 1.0]. 0 = bypass
+// (bit-exact), 1 = full chop to silence at the LFO trough. Clamped in
+// Rust. No separate mix knob — see dsp::Tremolo's module doc comment
+// for why. Runs in the shared post-synth DSP chain, so it applies to
+// every synth backend.
+func SetTremoloDepth(v float32) {
+	C.polyclav_dsp_set_tremolo_depth(C.float(v))
 }
 
 // SetNativeCutoffHz pushes the active native synth's filter cutoff. The
