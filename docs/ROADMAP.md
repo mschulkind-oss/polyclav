@@ -775,11 +775,15 @@ filter. Full UX feedback (record-save button, panic, octave shift).
    investigation. **Defer to Phase 4; tap-tempo is sufficient for
    Phase 3.**
 
-4. **Where do non-analog FX (chorus, delay) live?** Out of scope for the
-   analog synth design — they belong to a separate FX-stage discussion
-   (the existing reverb + compressors are already in place). Worth noting
-   that `fundsp` does ship a chorus, but adding it changes the chain
-   topology. **Defer.**
+4. **Where do non-analog FX (chorus, delay) live?** ~~Out of scope for
+   the analog synth design — they belong to a separate FX-stage
+   discussion~~ **Answered (2026-07-13):** both landed as shared
+   post-synth pedals in the existing DSP chain, not inside the analog
+   synth voice — `dsp::AnalogDelay` and `dsp::Chorus`, same
+   backend-agnostic pedalboard slot as the drive pedal. Hand-rolled
+   rather than `fundsp`'s chorus, to match the shared BBD-companding
+   character (`dsp::saturate::diode_clip`) the other pedals already
+   use. See `docs/VISION.md` Sections 1b/1c.
 
 5. **`mi-plaits-dsp-rs` integration for non-analog patches** (FM, chord,
    speech, granular). Not in the analog-synth design but a natural

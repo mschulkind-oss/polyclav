@@ -148,6 +148,107 @@ today) with a new backend-agnostic **FX** category holding DRIVE and
 DELAY as separate pages — rather than hunting for one more free knob
 per effect. Proposal only; not yet built.
 
+### 1c. Chorus pedal
+
+**Status: v1 shipped (2026-07-13).** `audio-core/src/dsp/chorus.rs` — a
+BBD-style analog chorus (Boss CE-2 / Small Clone territory), wired into
+the chain right after the drive pedal and before the tremolo/delay
+pair (`synth -> drive_pedal -> chorus -> tremolo -> analog_delay ->
+patch_gain -> ...`). This closes `docs/ROADMAP.md` Section 5's open
+question 4 ("where do non-analog FX (chorus, delay) live?") for the
+chorus half — delay already answered it in Section 1b above.
+
+Three params, the same shape as the delay pedal: `rate_hz` (LFO speed,
+0.02-5 Hz), `depth` (0-1, how far the delay time swings), and `mix`
+(0-1, the sole bypass gate — 0.0 is bit-exact bypass, same default-off
+convention as every other pedal knob). `rate`/`depth` reshape the wet
+signal whenever `mix > 0`, exactly mirroring how `AnalogDelay`'s
+`time_ms`/`feedback` behave relative to its own `mix`.
+
+**Why this needed a new delay-line primitive, not `AnalogDelay`'s:** a
+chorus sweeps its delay time continuously and fast enough to be
+audible as pitch modulation (that's the whole effect — it's Doppler
+shift on a moving delay tap). `AnalogDelay`'s `DelayChannel` only reads
+at integer sample offsets, which is fine for a delay whose length
+changes rarely (a knob turn, not an LFO), but produces audible
+stepping/zipper noise under continuous fast modulation. `Chorus`'s
+delay line reads with linear interpolation between adjacent samples
+instead, so the tap position can glide smoothly. Depth is modest by
+design — up to +/-3 ms around a 7 ms base delay (4-10 ms total range),
+the classic chorus (not vibrato-only, not flanger) sweep window.
+
+**Stereo width for free:** the two channels run independent delay
+lines sharing one LFO rate but offset 90 degrees in phase — a standard
+analog-chorus trick (mono BBD chorus like the CE-2 doesn't do this;
+rack/stereo units like the Dimension D do) that widens the effect
+without a fourth knob. `test_stereo_channels_diverge_when_wet` pins
+that the offset is actually doing something, not just present in the
+constant.
+
+**Warmth — lowpass only, deliberately not `diode_clip`:** the wet tap
+gets a gentle one-pole lowpass, the same "this passed through a
+bucket-brigade chip's anti-aliasing filter" bandwidth-loss idiom
+`AnalogDelay`'s feedback path established. Development first tried
+also reusing the shared `dsp::saturate::diode_clip` nonlinearity there
+(tuned gentler than the delay's own feedback saturation) — and caught,
+via the same loudness-sweep-test discipline `docs/VISION.md` §1
+introduced, that this was wrong: `diode_clip`'s asinh model is
+calibrated to always be deep in saturation for any audible input
+regardless of how small a `pre_gain` it's given (see
+`dsp::drive_pedal`'s module doc comment), which pegs the wet tap to a
+near-constant, input-independent amplitude — exactly right for a fully
+crossfaded drive stage or a bounded feedback loop, wrong for "a little
+texture on one pass." The fix was to drop the saturation and keep only
+the (linear, no surprise loudness jumps) lowpass — a real bug a test
+caught, not a hypothetical, the same kind of thing the drive pedal's
+own v1→v2 loudness fix caught.
+
+Chain-order rationale: chorus (and tremolo, Section 1d) sit in the
+"modulation" slot between the gain stage (drive) and the time-based
+effects (delay), the conventional pedalboard placement — a delay's
+repeats should carry the modulation/chop character forward, not the
+reverse.
+
+**Not yet done:** same gap as the delay pedal (Section 1b) — Rust DSP +
+FFI + Go wrapper functions exist, but no Launchkey knob, REST field, or
+per-patch persistence. Blocked on the same `docs/LAUNCHKEY_NAVIGATION.md`
+Category x Page work.
+
+### 1d. Tremolo pedal
+
+**Status: v1 shipped (2026-07-13).** `audio-core/src/dsp/tremolo.rs` —
+classic optical/bias-style amplitude modulation (Fender blackface
+"vibrato" channel, most stompbox tremolos), wired into the chain right
+after chorus (`synth -> drive_pedal -> chorus -> tremolo ->
+analog_delay -> ...`).
+
+Only two params — `rate_hz` (0.05-20 Hz) and `depth` (0-1, the sole
+bypass gate at 0.0). No `mix` knob: unlike the other three pedals,
+tremolo's whole effect *is* an amplitude envelope, so `depth` already
+spans "no effect" (0) to "full chop to silence" (1) — a `mix` on top
+would be redundant, not more flexible. This isn't a new convention; it
+mirrors the native synth's own LFO `to_amp` (tremolo) destination
+(`native_lfo_to_amp` in `lib.rs`, `docs/ROADMAP.md`'s GLOBAL LFO
+block), which already ships exactly this two-parameter shape for the
+same reason. The formula is the same one (`synth/mod.rs`'s
+`amp_mul = 1.0 - amp_depth * (lfo * 0.5 + 0.5)`), generalized from "one
+voice's LFO tap" to "the whole post-synth signal, any backend": `gain(t)
+= 1 - depth * (lfo(t) * 0.5 + 0.5)` with `lfo(t) = sin(2*pi*rate_hz*t)`.
+
+Mono by design: both channels are scaled by the same LFO phase (no
+stereo offset, unlike chorus) — true to how nearly every real tremolo
+pedal works; a panning/"harmonic" stereo tremolo is a distinct,
+fancier circuit and not this one.
+
+Because `gain(t)` is a pure attenuation curve in `[1 - depth, 1]`, the
+effect can never make a sample louder than its input — pinned directly
+as `test_never_louder_than_dry`, a correctness property this pedal can
+assert exactly (unlike chorus/delay, where mixing can produce
+constructive overshoot).
+
+**Not yet done:** same gap as chorus and the delay pedal — DSP + FFI +
+Go wrapper exist; no knob/REST/persistence binding yet.
+
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 
 **Target:** a new native synth backend. `docs/ROADMAP.md` §5 already
