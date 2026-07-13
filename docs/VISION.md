@@ -1,11 +1,12 @@
 # Vision: A Native, Open Sound Engine
 
-> **Status (2026-07-12):** draft. Threads 1–3 below are backed by an
-> in-flight research pass (circuit emulation, tonewheel/organ physical
-> modeling, and Surge XT/Helm hosting feasibility); their sections are
-> placeholders pending that report, which will land as
-> `docs/OPEN_SOUND_ENGINES.md` and get cross-linked here. Thread 4
-> (control-surface generalization) is already fully scoped in
+> **Status (2026-07-12):** draft, now backed by research findings for
+> threads 1–3 (circuit emulation, tonewheel/organ physical modeling, and
+> Surge XT/Helm hosting feasibility) — see `docs/OPEN_SOUND_ENGINES.md`
+> for the full report, sources, and caveats. Thread 4 (native MIDI
+> controller generalization) returned **no verified findings** in that
+> research pass and needs its own dedicated follow-up; the enabling
+> control-surface work it depends on is already fully scoped in
 > `docs/CONFIGURABILITY.md` and isn't re-planned here.
 
 ## The north star
@@ -53,17 +54,19 @@ natively — fully license-clean under polyclav's Apache-2.0.
 
 ### 1. Circuit-emulated effects — drive pedals & amps
 
-**Target:** a new `audio-core/src/dsp/` module, inserted into the
+**Target:** a new `audio-core/src/dsp/drive.rs`, inserted early in the
 existing chain (today: `synth → patch_gain → input_comp → reverb →
-mastering_comp → limiter → master_volume`) as a pre- or post-synth drive
-stage. Virtual-analog nonlinear circuit modeling (diode-clipper /
-triode-stage models, Wave Digital Filters, nodal DK method — whichever
-the research pass rates as the best complexity/CPU tradeoff for a
-real-time voice-per-note or bus-level insert) applied to well-documented
-reference circuits (overdrive, fuzz, tube preamp saturation).
-
-**[PENDING RESEARCH]** — concrete technique choice, reference circuit(s)
-to start with, and CPU-cost verdict land in `docs/OPEN_SOUND_ENGINES.md`.
+mastering_comp → limiter → master_volume`) as a new pre-gain-staging
+drive stage. **Research verdict:** build a Wave Digital Filter
+diode-clipper model (Tube-Screamer-style overdrive) first — a
+peer-reviewed, SPICE- and hardware-validated technique with a
+self-contained nonlinear element, O(1) per-sample cost, and no external
+crate needed. A tube amp emulation (preamp/tone-stack/power-amp/speaker,
+reusing the same WDF infrastructure) is the natural second module.
+Black-box RNN modeling is a credible, likely-cheaper complement for
+individual hard circuits later, but shouldn't replace WDF as the
+first-class approach. Full detail, sources, and caveats (including a
+refuted competing paper) in `docs/OPEN_SOUND_ENGINES.md` §1.
 
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 
@@ -72,36 +75,39 @@ locked the extensibility seam for exactly this — `type = "native"` +
 an `engine` sub-field, with `"minimoog"` as the first value and
 `"fm"` / `"plaits"` / `"wavetable"` anticipated as future ones. A
 tonewheel/organ engine (`engine = "tonewheel"`) is a natural next
-entry in that same dispatch, not a new patch type. Shape: additive
-tonewheel generation with the imperfections that make it read as
-*electromechanical* rather than digital (crosstalk/leakage, key click),
-drawbars, the scanner vibrato/chorus, and a Leslie rotary-speaker model
-as a bus effect shared across voices rather than per-voice.
-
-**[PENDING RESEARCH]** — architecture verdict (own engine module vs.
-adapting `voice.rs`) and prior-art notes (setBfree, studied as reference
-architecture) land in `docs/OPEN_SOUND_ENGINES.md`.
+entry in that same dispatch, not a new patch type. **Research verdict:**
+setBfree is confirmed as the canonical reference architecture — its
+documented signal flow (tonewheels/vibrato/click → preamp/overdrive →
+reverb → Leslie → cabinet) maps directly onto a new
+`audio-core/src/synth/organ/` module: its own engine (not a bent
+`voice.rs`), reusing the existing LFO machinery for the scanner and the
+thread-1 WDF infrastructure for the preamp/overdrive stage. A genuine
+fast win: setBfree already ships a working LV2 plugin loadable through
+polyclav's existing `livi`/`lilv` path *today*, in parallel with the
+native build. Full detail, sources, and caveats in
+`docs/OPEN_SOUND_ENGINES.md` §2.
 
 ### 3. Hosting proven open engines — Surge XT, Helm/Vital family
 
 polyclav's LV2 (`livi`/`lilv`) and CLAP (`clack-host`) hosting is real
-and shipping today, not aspirational. If Surge XT ships usable CLAP
-and/or LV2 builds — to be confirmed by research — getting its
-wavetable/hybrid engine into polyclav could be close to a packaging and
-config exercise rather than new DSP code, and would deliver "a wide
-range of ready-to-play sounds" faster than any from-scratch modeling
-work. The licensing shape is the standard host/plugin relationship:
-dynamically loading a GPLv3 plugin at runtime doesn't require the
-Apache-2.0 host to relicense, the same way any DAW hosts GPL plugins
-today — but this is a load-bearing enough claim that the research pass
-should confirm it precisely (including any nuance if polyclav ever
-bundles/redistributes plugin binaries itself, vs. documenting a
-separate install step).
+and shipping today, not aspirational. **Research verdict:** Surge XT
+ships real, current Linux builds in Standalone, CLAP, LV2, and VST3 —
+CLAP is a zero-porting-effort path through the existing `clack-host`
+integration (packaging/testing only, no new DSP code); LV2 is real but
+opt-in at build time, not in official CI binaries, so it's a
+"build-it-yourself" path rather than a turnkey one. This is likely the
+fastest way to deliver "a wide range of ready-to-play sounds." Licensing
+is confirmed low-risk for the dynamic-load/hosting case under the FSF's
+own GPL FAQ — the same standard relationship every DAW has with GPL
+plugins — with one concrete rule to hold onto: **never bundle or
+redistribute a GPL plugin's compiled binary in polyclav's own release
+artifacts; always document installing it as a separate, user-driven
+step.** Full detail, the licensing reasoning, and caveats in
+`docs/OPEN_SOUND_ENGINES.md` §3.
 
-**[PENDING RESEARCH]** — plugin format confirmation, licensing nuance,
-and a verdict on whether any Surge/Helm/Vital DSP internals (wavetable
-engine, filter models) are worth studying for native reimplementation
-land in `docs/OPEN_SOUND_ENGINES.md`.
+Whether any Surge/Helm/Vital DSP internals are worth studying for native
+reimplementation (as opposed to just hosting) wasn't covered by this
+research pass — open question, see below.
 
 ### 4. Control-surface generalization (enabling thread — already scoped)
 
@@ -117,12 +123,36 @@ engines are worth little if they're only reachable through
 Launchkey-specific knob pages**, so Tier 3 should track the pace of
 whichever sound-engine thread ships first, not trail it by a release.
 
+**Research on this thread specifically came back empty** (see
+`docs/OPEN_SOUND_ENGINES.md` §4) — none of the candidate claims about
+MCU, Arturia KeyLab/Analog Lab mode, Novation SL mkIII, Akai, Korg,
+NIHIA, or Nektar survived verification. That's a research gap to close
+with a dedicated follow-up pass, not a signal that generalization is
+infeasible; `CONFIGURABILITY.md`'s Tier 3 design doesn't depend on it.
+
+A related, sharper question: what happens when a *hosted* engine
+(Surge XT, Helm/Vital, setBfree) needs control-surface tie-in, not just
+a native one? Generic parameter automation (a knob bound to "some CLAP
+param") is already covered by Tier 3's binding model. **Deeper**
+tie-in — a dedicated knob page addressing a specific named parameter on
+a hosted plugin, the way the native synth's pages work today — is a
+different, harder problem, and should be built, if it's ever built, only
+through the plugin's own standard exposed protocol surface (CLAP's
+parameter/extension API, LV2's control-port/patch mechanism) — never by
+linking against or reading the plugin's GPL source directly. That
+preserves the same "separate programs across a standard API" boundary
+that keeps hosting license-clean in the first place (§3, above).
+**Default: don't build this.** A hosted plugin stays opaque behind the
+standard CLAP/LV2 API — patch-level selection plus whatever the generic
+binding table can already address — until a concrete use case demands
+more.
+
 ## How it all stacks
 
 | Doc | Scope | Status |
 |---|---|---|
 | `docs/VISION.md` (this doc) | North star; how the threads below fit together | draft |
-| `docs/OPEN_SOUND_ENGINES.md` (planned) | Circuit emulation + organ modeling + Surge/Helm hosting research findings and concrete recommendations | pending — research in flight |
+| `docs/OPEN_SOUND_ENGINES.md` | Circuit emulation + organ modeling + Surge/Helm hosting research findings and concrete recommendations | threads 1–3 done; thread 4 (MIDI controller generalization) returned no verified findings — open |
 | `docs/ROADMAP.md` | Native subtractive synth (Minimoog-style voice) design record; owns the `engine` dispatch seam thread 2 plugs into | shipped (Phases 2–4) |
 | `docs/CONFIGURABILITY.md` | Control-surface + hardware-seam generalization (Tier 0–4) — thread 4 | Tier 0–1 shipped, Tier 2–4 design |
 | `docs/NATIVE_SYNTH.md` | User-facing state of the native synth | current |
@@ -148,8 +178,27 @@ whichever sound-engine thread ships first, not trail it by a release.
   further sample-rate assumptions, and a general fix (if it happens)
   should be its own change, not a side effect of shipping an organ
   engine.
+- **Hosted plugins stay opaque behind their standard protocol.** No
+  linking against or reaching into a hosted GPL plugin's source for
+  deeper control-surface tie-in. If that's ever needed, build it through
+  the plugin's own exposed extension surface (CLAP params, LV2 control
+  ports) — otherwise leave hosted engines walled off behind the plain
+  CLAP/LV2 API, since that boundary is also what keeps the GPL-hosting
+  story license-clean (thread 3, above).
 
 ## Open questions
+
+### Answered by research (2026-07-12)
+
+- **Does the organ engine share the existing `Voice` architecture or
+  need its own?** Confirmed by setBfree's architecture review: its own
+  engine module (`audio-core/src/synth/organ/`) under the existing
+  `engine = "<name>"` dispatch, not a bent version of `voice.rs` — see
+  `docs/OPEN_SOUND_ENGINES.md` §2.
+- **How much of Surge/Helm hosting is really zero-code?** CLAP: yes,
+  packaging/testing only, no code. LV2: real but opt-in at Surge XT's
+  build time, not in official binaries — a "build it yourself" path,
+  not turnkey. See `docs/OPEN_SOUND_ENGINES.md` §3.
 
 ### Still deferred
 
@@ -157,29 +206,39 @@ whichever sound-engine thread ships first, not trail it by a release.
    A fixed post-synth insert (like today's `input_comp`/`reverb`), or a
    per-patch pluggable effect chain (`[[patches.X.effects]]`)? The
    latter is more flexible but is new schema surface. **Lean: a single
-   fixed drive slot is enough for a v1 with one effect type; revisit
-   once the research pass says how many effect types are actually in
-   scope.**
+   fixed drive slot is enough for a v1 with one effect type — the
+   research pass didn't need to weigh in on config shape, so this stays
+   open until a second effect type is actually on the table.**
 
-2. **Does the organ engine share the existing `Voice` architecture or
-   need its own?** The Minimoog voice is osc+filter+env shaped per
-   note; a tonewheel voice is closer to fixed-frequency additive
-   generation plus a shared scanner/Leslie *bus* effect, not a per-voice
-   one. **Lean: likely its own engine module under the existing
-   `engine = "<name>"` dispatch, not a bent version of `voice.rs`** —
-   to be confirmed by the research pass's architecture review of
-   setBfree.
-
-3. **How much of Surge/Helm hosting is really zero-code?** Pending
-   confirmation of actual CLAP/LV2 build availability and behavior
-   under polyclav's existing plugin backend (param automation, patch
-   browsing UX) — this could be a doc-and-config update away, or could
-   need real work in `plugin_clap.rs`/`plugin_lv2.rs`.
-
-4. **Sequencing: control-surface Tier 3 first, or a sound-engine thread
+2. **Sequencing: control-surface Tier 3 first, or a sound-engine thread
    first?** They're each other's force multiplier, but only one goes
    first. **Lean: pair Tier 3 with thread 3 (plugin hosting), since
-   it's likely the lowest-effort sound-engine win — it proves the
-   control-surface abstraction against a real, rich hosted instrument
-   instead of a synthetic test case, and unblocks thread 4's "wide
-   range of ready-to-play sounds" goal fastest.**
+   it's confirmed the lowest-effort sound-engine win (CLAP hosting is
+   packaging-only) — it proves the control-surface abstraction against a
+   real, rich hosted instrument instead of a synthetic test case, and
+   unblocks thread 4's "wide range of ready-to-play sounds" goal
+   fastest.**
+
+3. **MIDI controller generalization (thread 4) needs a dedicated
+   follow-up research pass** — the first pass returned zero verified
+   claims on MCU, KeyLab/Analog Lab, SL mkIII, Akai, Korg, NIHIA, or
+   Nektar. See `docs/OPEN_SOUND_ENGINES.md` §4. **Lean: run it as its
+   own focused pass rather than folding it into a future round on the
+   sound-engine threads.**
+
+4. **Should hosted plugins ever get deeper control-surface tie-in than
+   generic parameter automation** (a dedicated knob page addressing one
+   specific named parameter on Surge/Helm/setBfree, the way native synth
+   pages work)? **Lean: no, by default — wall it off behind the
+   standard CLAP/LV2 parameter API.** If a real use case demands it
+   later, build the bridge through the plugin's own exposed protocol
+   surface (CLAP extensions, LV2 control ports), never by linking
+   against or reading GPL plugin source — that's the only way to add
+   deeper tie-in without disturbing the "separate programs across a
+   standard API" boundary thread 3's licensing verdict depends on.
+
+5. **Does RNN/black-box circuit modeling generalize past the Klon
+   Centaur** to other reference circuits (Tube Screamer, Big Muff, Fuzz
+   Face, Marshall/Fender preamps)? Not established by the research pass.
+   **Lean: doesn't block anything — build the WDF Tube Screamer module
+   first regardless, since it doesn't depend on this answer.**
