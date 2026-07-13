@@ -224,6 +224,12 @@ Risk: low. The mapper and bindings need no changes.
 The goal: keep the rich Launchkey UX as *one implementation* of a generic
 interface, and let a plain MIDI keyboard (or any controller) provide a
 degraded-but-functional surface via config-driven CC/note bindings.
+`docs/LAUNCHKEY_NAVIGATION.md` (2026-07-13) proposes a Category × Page
+navigation model for the Launchkey's own knob-page UX specifically
+(currently capped at 5 flat pages) — that's UX polish riding on top of
+whatever this Tier 3 interface eventually is, not a prerequisite to it
+or a generalization of it; a `generic-midi` surface has no screen/pad
+hierarchy to speak of either way.
 
 **Proposed shape:**
 

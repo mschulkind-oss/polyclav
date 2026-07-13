@@ -51,6 +51,12 @@ level up from this one: it frames circuit-emulated effects, physically-modeled
 instruments (organ/Leslie), and open-source engine hosting (Surge XT/Helm)
 as the next build threads, and points at this doc's `engine = "<name>"`
 dispatch seam (§5) as where a new native instrument engine plugs in.
+`docs/LAUNCHKEY_NAVIGATION.md` landed even later (2026-07-13) as a
+proposal (not yet built) for scaling `internal/controls/pages` past its
+current flat 5-page ceiling — a Category × Page model using the
+already-decoded-but-unmapped Track ←/→ transport buttons — driven by
+the drive/delay pedals from `docs/VISION.md` running out of MAIN-page
+knob real estate.
 
 **How they stack** (each unlocks the next):
 

@@ -140,10 +140,13 @@ wrappers (`SetAnalogDelayTimeMs`/`SetAnalogDelayFeedback`/
 field, no per-patch persistence. Unlike the drive pedal, this doesn't
 have an obvious free MAIN-page slot (MAIN's 8 knobs are now fully
 assigned: Volume/Reverb/Comp/Pedal/Resonance/Glide/Drive/unbound), and
-three params don't fit in the one remaining unbound slot anyway — this
-needs its own control-surface decision (a new page? reassign
-something? Tier 3 generic bindings from `docs/CONFIGURABILITY.md`
-first?) rather than a default guess.
+three params don't fit in the one remaining unbound slot anyway. This
+is exactly the gap `docs/LAUNCHKEY_NAVIGATION.md` (2026-07-13) proposes
+fixing structurally — a Category × Page navigation model (Track ←/→
+picks a category, Scene ↑/↓ stays page-within-category exactly as
+today) with a new backend-agnostic **FX** category holding DRIVE and
+DELAY as separate pages — rather than hunting for one more free knob
+per effect. Proposal only; not yet built.
 
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 
