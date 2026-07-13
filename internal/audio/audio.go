@@ -135,6 +135,49 @@ type OfflineMIDIEvent struct {
 	Data2   uint16
 }
 
+// ChainParams are optional overrides for the backend-agnostic
+// post-synth chain params, for RenderOfflineEvents — the general form
+// behind calibration/invariant tooling that sweeps an effect's own
+// knob, not just which patch renders (see internal/measure). Every
+// field defaults to NaN ("leave at the engine default") via
+// NewChainParams; a caller sets only the fields it wants to override.
+// Covers only the global-chain-level params (drive pedal, analog
+// delay, master volume, ...) — not the native synth's own voice params
+// (cutoff, oscillators, ...), a separate, backend-specific concern.
+type ChainParams struct {
+	MasterVolume        float32
+	CompAmount          float32
+	ReverbMix           float32
+	PatchGain           float32
+	MasteringAmount     float32
+	LimiterCeilingDB    float32
+	DrivePedalAmount    float32
+	AnalogDelayTimeMs   float32
+	AnalogDelayFeedback float32
+	AnalogDelayMix      float32
+}
+
+// NewChainParams returns a ChainParams with every field set to NaN
+// ("leave at the engine default"). Set individual fields on the result
+// to override just those; pass the zero value's address nowhere — a
+// bare ChainParams{} would mean "set everything to 0", not "override
+// nothing", which is why this constructor exists.
+func NewChainParams() ChainParams {
+	nan := float32(math.NaN())
+	return ChainParams{
+		MasterVolume:        nan,
+		CompAmount:          nan,
+		ReverbMix:           nan,
+		PatchGain:           nan,
+		MasteringAmount:     nan,
+		LimiterCeilingDB:    nan,
+		DrivePedalAmount:    nan,
+		AnalogDelayTimeMs:   nan,
+		AnalogDelayFeedback: nan,
+		AnalogDelayMix:      nan,
+	}
+}
+
 // RenderOfflineEvents renders an arbitrary timed MIDI event sequence
 // (e.g. a parsed Standard MIDI File — see internal/measure) through any
 // patch type, into an interleaved-stereo f32 buffer (48 kHz), opening
@@ -144,7 +187,10 @@ type OfflineMIDIEvent struct {
 // extension), "native" (patchRef = engine name), "lv2" (patchRef =
 // URI, Linux only), or "clap" (patchRef = bundle path, pluginID
 // required, Linux only); pluginID is ignored for every other type.
-func RenderOfflineEvents(patchType, patchRef, pluginID string, events []OfflineMIDIEvent, nFrames int) ([]float32, error) {
+// chainParams, if non-nil, overrides the post-synth chain defaults
+// (drive pedal, analog delay, ...) before rendering — see ChainParams;
+// pass nil for every chain param at its engine default.
+func RenderOfflineEvents(patchType, patchRef, pluginID string, chainParams *ChainParams, events []OfflineMIDIEvent, nFrames int) ([]float32, error) {
 	if nFrames <= 0 {
 		return nil, fmt.Errorf("render offline events: nFrames must be positive, got %d", nFrames)
 	}
@@ -159,6 +205,23 @@ func RenderOfflineEvents(patchType, patchRef, pluginID string, events []OfflineM
 	if pluginID != "" {
 		cPluginID = C.CString(pluginID)
 		defer C.free(unsafe.Pointer(cPluginID))
+	}
+
+	var cChainParams *C.PolyclavChainParams
+	if chainParams != nil {
+		cCP := C.PolyclavChainParams{
+			master_volume:         C.float(chainParams.MasterVolume),
+			comp_amount:           C.float(chainParams.CompAmount),
+			reverb_mix:            C.float(chainParams.ReverbMix),
+			patch_gain:            C.float(chainParams.PatchGain),
+			mastering_amount:      C.float(chainParams.MasteringAmount),
+			limiter_ceiling_db:    C.float(chainParams.LimiterCeilingDB),
+			drive_pedal_amount:    C.float(chainParams.DrivePedalAmount),
+			analog_delay_time_ms:  C.float(chainParams.AnalogDelayTimeMs),
+			analog_delay_feedback: C.float(chainParams.AnalogDelayFeedback),
+			analog_delay_mix:      C.float(chainParams.AnalogDelayMix),
+		}
+		cChainParams = &cCP
 	}
 
 	var cEvents *C.PolyclavMidiEvent
@@ -177,7 +240,7 @@ func RenderOfflineEvents(patchType, patchRef, pluginID string, events []OfflineM
 	}
 
 	rc := C.polyclav_render_offline_events(
-		cType, cRef, cPluginID,
+		cType, cRef, cPluginID, cChainParams,
 		cEvents, C.uint32_t(len(events)),
 		(*C.float)(unsafe.Pointer(&buf[0])),
 		C.uint32_t(nFrames),

@@ -80,17 +80,42 @@ typedef struct {
     uint16_t data2;
 } PolyclavMidiEvent;
 
+/* Optional overrides for the backend-agnostic post-synth chain params,
+ * for polyclav_render_offline_events. Every field is an f32; NaN means
+ * "leave at the engine default" (checked via isnan-equivalent, not a
+ * parallel has_X flag per field — none of these fields ever legitimately
+ * take NaN/inf otherwise). Covers only the global-chain-level params
+ * (drive pedal, analog delay, master volume, ...) — not the native
+ * synth's own voice params (cutoff, oscillators, ...), a separate,
+ * backend-specific concern. */
+typedef struct {
+    float master_volume;
+    float comp_amount;
+    float reverb_mix;
+    float patch_gain;
+    float mastering_amount;
+    float limiter_ceiling_db;
+    float drive_pedal_amount;
+    float analog_delay_time_ms;
+    float analog_delay_feedback;
+    float analog_delay_mix;
+} PolyclavChainParams;
+
 /* Offline (no-device) render of an arbitrary timed MIDI event sequence
  * (e.g. a parsed Standard MIDI File) through ANY patch type, written to
  * `out` as interleaved stereo f32 (48 kHz). patch_type is one of
  * "soundfont" (patch_ref = file path, dispatches on extension),
  * "native" (patch_ref = engine name), "lv2" (patch_ref = URI, Linux
  * only), or "clap" (patch_ref = bundle path, plugin_id required, Linux
- * only). events must be sorted by frame ascending; pass NULL/0 for no
+ * only). chain_params, if non-NULL, overrides the post-synth chain
+ * defaults (drive pedal, analog delay, ...) before rendering — see
+ * PolyclavChainParams; pass NULL for every chain param at its engine
+ * default. events must be sorted by frame ascending; pass NULL/0 for no
  * events. Returns 0 on success, 2 on an unknown/unavailable patch_type,
  * a bad string, or a load failure, 3 if out is NULL or n_frames is 0. */
 int32_t polyclav_render_offline_events(const char *patch_type, const char *patch_ref,
                                        const char *plugin_id,
+                                       const PolyclavChainParams *chain_params,
                                        const PolyclavMidiEvent *events, uint32_t n_events,
                                        float *out, uint32_t n_frames);
 

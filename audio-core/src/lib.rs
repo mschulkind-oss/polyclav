@@ -1587,6 +1587,73 @@ pub struct FfiMidiEvent {
     pub data2: u16,
 }
 
+/// Optional overrides for the shared, backend-agnostic post-synth chain
+/// params (docs/VISION.md's measurement/calibration tooling) — every
+/// field an f32 with `NaN` meaning "leave at the engine default,"
+/// checked via `is_finite()` rather than a parallel "has_X" flag per
+/// field (simpler wire shape, and NaN/±inf are never legitimate values
+/// for any of these params anyway — every one of them already rejects
+/// non-finite input at its normal setter). Covers exactly the fields
+/// that are global-chain-level rather than native-synth-voice-level —
+/// the native synth's own knobs (cutoff, oscillators, ...) are a
+/// separate, backend-specific concern this struct deliberately doesn't
+/// reach into.
+#[repr(C)]
+pub struct FfiChainParams {
+    pub master_volume: f32,
+    pub comp_amount: f32,
+    pub reverb_mix: f32,
+    pub patch_gain: f32,
+    pub mastering_amount: f32,
+    pub limiter_ceiling_db: f32,
+    pub drive_pedal_amount: f32,
+    pub analog_delay_time_ms: f32,
+    pub analog_delay_feedback: f32,
+    pub analog_delay_mix: f32,
+}
+
+/// Apply every finite (i.e. explicitly set) field of `cp` onto `ud`'s
+/// fresh `DspParams`. Called once, right after `build_offline_user_data`
+/// and before the render loop — `render_block` re-reads `dsp_params`
+/// every block regardless (some effects via last-value change
+/// detection, the analog delay unconditionally), so setting these
+/// before the first `render_block` call is sufficient for them to take
+/// effect from frame 0.
+fn apply_chain_params(ud: &UserData, cp: &FfiChainParams) {
+    if cp.master_volume.is_finite() {
+        ud.dsp_params.set_master_volume(cp.master_volume);
+    }
+    if cp.comp_amount.is_finite() {
+        ud.dsp_params.set_comp_amount(cp.comp_amount);
+    }
+    if cp.reverb_mix.is_finite() {
+        ud.dsp_params.set_reverb_mix(cp.reverb_mix);
+    }
+    if cp.patch_gain.is_finite() {
+        ud.dsp_params.set_patch_gain(cp.patch_gain);
+    }
+    if cp.mastering_amount.is_finite() {
+        ud.dsp_params.set_mastering_amount(cp.mastering_amount);
+    }
+    if cp.limiter_ceiling_db.is_finite() {
+        ud.dsp_params.set_limiter_ceiling_db(cp.limiter_ceiling_db);
+    }
+    if cp.drive_pedal_amount.is_finite() {
+        ud.dsp_params.set_drive_pedal_amount(cp.drive_pedal_amount);
+    }
+    if cp.analog_delay_time_ms.is_finite() {
+        ud.dsp_params
+            .set_analog_delay_time_ms(cp.analog_delay_time_ms);
+    }
+    if cp.analog_delay_feedback.is_finite() {
+        ud.dsp_params
+            .set_analog_delay_feedback(cp.analog_delay_feedback);
+    }
+    if cp.analog_delay_mix.is_finite() {
+        ud.dsp_params.set_analog_delay_mix(cp.analog_delay_mix);
+    }
+}
+
 /// Shared core behind both offline-render FFI entry points below: walk
 /// `events` (REQUIRED pre-sorted by `frame`, ascending — this is a
 /// device-free analysis tool, not the real-time callback, so the
@@ -1595,9 +1662,18 @@ pub struct FfiMidiEvent {
 /// the right frame, rendering the gaps between event frames through the
 /// full DSP chain via `render_block` — the exact seam the real audio
 /// thread uses, just device-free. `samples` is interleaved stereo f32,
-/// `len = 2 * n_frames`.
-fn render_offline_core(synth: SynthBackend, events: &[FfiMidiEvent], samples: &mut [f32]) {
+/// `len = 2 * n_frames`. `chain_params`, if present, is applied before
+/// the first block renders — see `apply_chain_params`.
+fn render_offline_core(
+    synth: SynthBackend,
+    chain_params: Option<&FfiChainParams>,
+    events: &[FfiMidiEvent],
+    samples: &mut [f32],
+) {
     let mut ud = build_offline_user_data(Some(synth));
+    if let Some(cp) = chain_params {
+        apply_chain_params(&ud, cp);
+    }
     let total = samples.len() / 2;
     let mut done = 0usize;
     let mut idx = 0usize;
@@ -1727,7 +1803,7 @@ pub unsafe extern "C" fn polyclav_render_offline(
         data1: note,
         data2: velocity as u16,
     }];
-    render_offline_core(synth, &events, samples);
+    render_offline_core(synth, None, &events, samples);
     0
 }
 
@@ -1741,22 +1817,29 @@ pub unsafe extern "C" fn polyclav_render_offline(
 ///
 /// `events` must be sorted by `frame` ascending — see
 /// `render_offline_core`'s doc comment. Pass NULL/0 for no events (a
-/// patch's idle render).
+/// patch's idle render). `chain_params`, if non-NULL, overrides the
+/// backend-agnostic post-synth chain defaults (drive pedal, analog
+/// delay, master volume, ...) before rendering — see
+/// [`FfiChainParams`]; pass NULL for every chain param at its engine
+/// default. This is what lets calibration tooling sweep an effect's own
+/// knob (not just which patch renders) through the same offline path.
 ///
 /// Returns 0 on success, 2 on an unknown/unavailable `patch_type`, a
 /// bad string, or a load failure, 3 if `out` is NULL or `n_frames` is 0.
 ///
 /// # Safety
 /// `patch_type` and `patch_ref` must be valid NUL-terminated C strings;
-/// `plugin_id` must be a valid NUL-terminated C string or NULL; `events`
-/// must point to at least `n_events` valid [`FfiMidiEvent`]s, or be NULL
-/// iff `n_events` is 0; `out` must point to at least `n_frames * 2`
-/// writable `f32`s.
+/// `plugin_id` must be a valid NUL-terminated C string or NULL;
+/// `chain_params` must point to a valid [`FfiChainParams`] or be NULL;
+/// `events` must point to at least `n_events` valid [`FfiMidiEvent`]s,
+/// or be NULL iff `n_events` is 0; `out` must point to at least
+/// `n_frames * 2` writable `f32`s.
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_render_offline_events(
     patch_type: *const c_char,
     patch_ref: *const c_char,
     plugin_id: *const c_char,
+    chain_params: *const FfiChainParams,
     events: *const FfiMidiEvent,
     n_events: u32,
     out: *mut f32,
@@ -1781,6 +1864,7 @@ pub unsafe extern "C" fn polyclav_render_offline_events(
             Err(_) => return 2,
         }
     };
+    let chain_params = unsafe { chain_params.as_ref() };
 
     let synth = match load_synth_by_type(patch_type, patch_ref, plugin_id) {
         Ok(s) => s,
@@ -1796,7 +1880,7 @@ pub unsafe extern "C" fn polyclav_render_offline_events(
         unsafe { std::slice::from_raw_parts(events, n_events as usize) }
     };
     let samples = unsafe { std::slice::from_raw_parts_mut(out, n_frames as usize * 2) };
-    render_offline_core(synth, events_slice, samples);
+    render_offline_core(synth, chain_params, events_slice, samples);
     0
 }
 
@@ -2357,6 +2441,7 @@ mod tests {
                 patch_type.as_ptr(),
                 patch_ref.as_ptr(),
                 std::ptr::null(),
+                std::ptr::null(),
                 events.as_ptr(),
                 events.len() as u32,
                 buf.as_mut_ptr(),
@@ -2380,6 +2465,7 @@ mod tests {
                     patch_type.as_ptr(),
                     patch_ref.as_ptr(),
                     std::ptr::null(),
+                    std::ptr::null(),
                     events.as_ptr(),
                     events.len() as u32,
                     std::ptr::null_mut(),
@@ -2393,6 +2479,7 @@ mod tests {
                 polyclav_render_offline_events(
                     patch_type.as_ptr(),
                     patch_ref.as_ptr(),
+                    std::ptr::null(),
                     std::ptr::null(),
                     events.as_ptr(),
                     events.len() as u32,
@@ -2408,6 +2495,7 @@ mod tests {
                 polyclav_render_offline_events(
                     bad_type.as_ptr(),
                     patch_ref.as_ptr(),
+                    std::ptr::null(),
                     std::ptr::null(),
                     std::ptr::null(),
                     0,
@@ -2434,6 +2522,7 @@ mod tests {
                 patch_ref.as_ptr(),
                 std::ptr::null(),
                 std::ptr::null(),
+                std::ptr::null(),
                 0,
                 buf.as_mut_ptr(),
                 n_frames,
@@ -2441,6 +2530,85 @@ mod tests {
         };
         assert_eq!(rc, 0);
         assert!(buf.iter().all(|s| s.is_finite()));
+    }
+
+    /// `chain_params` overrides actually reach the render: the same
+    /// event sequence rendered once at defaults (drive pedal off) and
+    /// once with `drive_pedal_amount = 1.0` must differ — the whole
+    /// point of threading this through the FFI boundary
+    /// (docs/VISION.md's calibration-tooling initiative).
+    #[test]
+    fn render_offline_events_ffi_applies_chain_params() {
+        let patch_type = std::ffi::CString::new("native").unwrap();
+        let patch_ref = std::ffi::CString::new("minimoog").unwrap();
+        let n_frames: u32 = 24_000; // 0.5 s
+        let events = [FfiMidiEvent {
+            frame: 0,
+            kind: 0,
+            channel: 0,
+            data1: 60,
+            data2: 100,
+        }];
+
+        let render = |chain_params: *const FfiChainParams| -> Vec<f32> {
+            let mut buf = vec![0.0f32; n_frames as usize * 2];
+            let rc = unsafe {
+                polyclav_render_offline_events(
+                    patch_type.as_ptr(),
+                    patch_ref.as_ptr(),
+                    std::ptr::null(),
+                    chain_params,
+                    events.as_ptr(),
+                    events.len() as u32,
+                    buf.as_mut_ptr(),
+                    n_frames,
+                )
+            };
+            assert_eq!(rc, 0, "render_offline_events returned error {rc}");
+            buf
+        };
+
+        let nan = f32::NAN;
+        let default_buf = render(std::ptr::null());
+        let driven_params = FfiChainParams {
+            master_volume: nan,
+            comp_amount: nan,
+            reverb_mix: nan,
+            patch_gain: nan,
+            mastering_amount: nan,
+            limiter_ceiling_db: nan,
+            drive_pedal_amount: 1.0,
+            analog_delay_time_ms: nan,
+            analog_delay_feedback: nan,
+            analog_delay_mix: nan,
+        };
+        let driven_buf = render(&driven_params as *const FfiChainParams);
+
+        assert!(default_buf.iter().all(|s| s.is_finite()));
+        assert!(driven_buf.iter().all(|s| s.is_finite()));
+        assert_ne!(
+            default_buf, driven_buf,
+            "drive_pedal_amount override via chain_params had no effect"
+        );
+
+        // Full drive is loudness-matched to dry by design (v2's whole
+        // calibration goal — see drive_pedal_full_wet_is_loudness_
+        // matched_to_dry), so LUFS is the wrong signal for "did the
+        // override really apply." Mean absolute sample difference over
+        // the settled tail is: a saturated waveform is shaped very
+        // differently sample-by-sample even at matched loudness.
+        let settled = 12_000 * 2;
+        let mean_abs_diff: f32 = default_buf[settled..]
+            .iter()
+            .zip(driven_buf[settled..].iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / (n_frames as usize - 12_000) as f32;
+        assert!(
+            mean_abs_diff > 0.01,
+            "expected a real waveform-shape difference from the override, \
+             got mean_abs_diff={mean_abs_diff:.4}"
+        );
     }
 
     /// End-to-end offline render through the portable `render_block` seam:
