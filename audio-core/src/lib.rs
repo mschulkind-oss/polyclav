@@ -32,7 +32,7 @@ use oxisynth::{
     MidiEvent as OxiMidiEvent, SoundFont as OxiSoundFont, Synth as OxiSynth, SynthDescriptor,
 };
 
-use crate::dsp::{Compressor, DrivePedal, Limiter, MasteringCompressor, Reverb};
+use crate::dsp::{AnalogDelay, Compressor, DrivePedal, Limiter, MasteringCompressor, Reverb};
 #[cfg(target_os = "linux")]
 use crate::plugin_clap::ClapInstance;
 #[cfg(target_os = "linux")]
@@ -210,6 +210,18 @@ pub(crate) struct DspParams {
     /// backend, so it applies regardless of which backend is active.
     /// See docs/OPEN_SOUND_ENGINES.md §1.
     drive_pedal_amount: AtomicU32,
+    /// Analog-delay time in milliseconds, f32 bits. Default 300 ms —
+    /// only audible once `analog_delay_mix` is above 0. Runs in the
+    /// shared post-synth chain (`dsp::AnalogDelay`), same lifecycle as
+    /// `drive_pedal_amount` above.
+    analog_delay_time_ms: AtomicU32,
+    /// Analog-delay feedback (repeats) amount in [0, 0.9], f32 bits.
+    /// Default 0.0 — a single echo, no repeats.
+    analog_delay_feedback: AtomicU32,
+    /// Analog-delay wet/dry mix in [0, 1], f32 bits. Default 0.0 — the
+    /// stage is bypassed bit-exactly (regression guarantee), matching
+    /// every other knob's default-off convention.
+    analog_delay_mix: AtomicU32,
     /// Native synth filter cutoff in Hz, written by Go whenever the
     /// cutoff control (FILTER page knob 1) is adjusted — MAIN knob 4 was
     /// reassigned to the drive pedal above. The audio thread reads this
@@ -361,6 +373,9 @@ impl DspParams {
             mastering_amount: AtomicU32::new(0.0_f32.to_bits()),
             limiter_ceiling_db: AtomicU32::new((-0.3_f32).to_bits()),
             drive_pedal_amount: AtomicU32::new(0.0_f32.to_bits()),
+            analog_delay_time_ms: AtomicU32::new(300.0_f32.to_bits()),
+            analog_delay_feedback: AtomicU32::new(0.0_f32.to_bits()),
+            analog_delay_mix: AtomicU32::new(0.0_f32.to_bits()),
             native_cutoff_hz: AtomicU32::new(2_000.0_f32.to_bits()),
             native_resonance: AtomicU32::new(0.3_f32.to_bits()),
             native_filter_env_attack_s: AtomicU32::new(0.005_f32.to_bits()),
@@ -451,6 +466,15 @@ impl DspParams {
     }
     pub fn drive_pedal_amount(&self) -> f32 {
         Self::load(&self.drive_pedal_amount)
+    }
+    pub fn analog_delay_time_ms(&self) -> f32 {
+        Self::load(&self.analog_delay_time_ms)
+    }
+    pub fn analog_delay_feedback(&self) -> f32 {
+        Self::load(&self.analog_delay_feedback)
+    }
+    pub fn analog_delay_mix(&self) -> f32 {
+        Self::load(&self.analog_delay_mix)
     }
     pub fn native_cutoff_hz(&self) -> f32 {
         Self::load(&self.native_cutoff_hz)
@@ -567,6 +591,15 @@ impl DspParams {
     }
     pub fn set_drive_pedal_amount(&self, v: f32) {
         Self::store(&self.drive_pedal_amount, v);
+    }
+    pub fn set_analog_delay_time_ms(&self, ms: f32) {
+        Self::store_clamped(&self.analog_delay_time_ms, ms, 1.0, 1_000.0);
+    }
+    pub fn set_analog_delay_feedback(&self, v: f32) {
+        Self::store_clamped(&self.analog_delay_feedback, v, 0.0, 0.9);
+    }
+    pub fn set_analog_delay_mix(&self, v: f32) {
+        Self::store(&self.analog_delay_mix, v);
     }
     pub fn set_native_cutoff_hz(&self, hz: f32) {
         Self::store_clamped(&self.native_cutoff_hz, hz, 20.0, 20_000.0);
@@ -700,6 +733,12 @@ pub(crate) struct UserData {
     mastering: MasteringCompressor,
     limiter: Limiter,
     drive_pedal: DrivePedal,
+    /// No last-value change-detection, unlike the effects above — its
+    /// setters (`set_time_ms`/`set_feedback`/`set_mix`) are trivial
+    /// clamp-and-store with no coefficient recomputation to skip,
+    /// so they're pushed unconditionally each block (same rationale
+    /// as the native-synth params below).
+    analog_delay: AnalogDelay,
     last_comp_amount: f32,
     last_reverb_mix: f32,
     last_mastering_amount: f32,
@@ -1114,6 +1153,30 @@ pub extern "C" fn polyclav_dsp_set_drive_pedal(v: f32) {
     dsp_params().set_drive_pedal_amount(v);
 }
 
+/// Set the analog-delay time in milliseconds, clamped to [1, 1000] in
+/// Rust. See `dsp::AnalogDelay` and its module doc comment for the
+/// signal-flow design (feedback-loop-only saturation/warmth).
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_analog_delay_time_ms(ms: f32) {
+    dsp_params().set_analog_delay_time_ms(ms);
+}
+
+/// Set the analog-delay feedback (repeats) amount in [0, 0.9] —
+/// capped below unity so the pedal stays a delay, not a deliberate
+/// self-oscillator. Clamped in Rust.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_analog_delay_feedback(v: f32) {
+    dsp_params().set_analog_delay_feedback(v);
+}
+
+/// Set the analog-delay wet/dry mix in [0, 1]. 0.0 (default) bypasses
+/// the stage bit-exactly. Runs in the shared post-synth chain, after
+/// the drive pedal, so it applies to every patch type.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_analog_delay_mix(v: f32) {
+    dsp_params().set_analog_delay_mix(v);
+}
+
 /// Set the native synth's filter cutoff in Hz, pushed from the FILTER
 /// page's Cutoff knob (MAIN knob 4 now drives the drive pedal instead;
 /// see `polyclav_dsp_set_drive_pedal`). The audio thread reads the
@@ -1430,11 +1493,15 @@ pub(crate) fn build_user_data() -> UserData {
     let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
     let mut limiter = Limiter::new(SAMPLE_RATE);
     let mut drive_pedal = DrivePedal::new(SAMPLE_RATE);
+    let mut analog_delay = AnalogDelay::new(SAMPLE_RATE);
     compressor.set_amount(initial_comp);
     reverb.set_mix(initial_mix);
     mastering.set_amount(initial_mastering);
     limiter.set_ceiling_db(initial_ceiling_db);
     drive_pedal.set_amount(initial_drive_pedal);
+    analog_delay.set_time_ms(params.analog_delay_time_ms());
+    analog_delay.set_feedback(params.analog_delay_feedback());
+    analog_delay.set_mix(params.analog_delay_mix());
 
     UserData {
         sine_phase: 0.0,
@@ -1451,6 +1518,7 @@ pub(crate) fn build_user_data() -> UserData {
         mastering,
         limiter,
         drive_pedal,
+        analog_delay,
         last_comp_amount: initial_comp,
         last_reverb_mix: initial_mix,
         last_mastering_amount: initial_mastering,
@@ -1469,11 +1537,15 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
     let mut limiter = Limiter::new(SAMPLE_RATE);
     let mut drive_pedal = DrivePedal::new(SAMPLE_RATE);
+    let mut analog_delay = AnalogDelay::new(SAMPLE_RATE);
     compressor.set_amount(params.comp_amount());
     reverb.set_mix(params.reverb_mix());
     mastering.set_amount(params.mastering_amount());
     limiter.set_ceiling_db(params.limiter_ceiling_db());
     drive_pedal.set_amount(params.drive_pedal_amount());
+    analog_delay.set_time_ms(params.analog_delay_time_ms());
+    analog_delay.set_feedback(params.analog_delay_feedback());
+    analog_delay.set_mix(params.analog_delay_mix());
     UserData {
         sine_phase: 0.0,
         #[cfg(target_os = "linux")]
@@ -1494,6 +1566,7 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
         mastering,
         limiter,
         drive_pedal,
+        analog_delay,
     }
 }
 
@@ -1999,6 +2072,24 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         user_data.drive_pedal.process(samples);
     }
 
+    // 2.6. Analog delay — pedalboard-order after drive (a delay
+    // catches a drive pedal's output ahead of it, not the reverse),
+    // before patch gain/dynamics for the same reason as the drive
+    // pedal above. Params are pushed unconditionally each block — see
+    // UserData's `analog_delay` field doc comment for why that's fine
+    // here (trivial setters, no coefficient recomputation to skip).
+    user_data
+        .analog_delay
+        .set_time_ms(user_data.dsp_params.analog_delay_time_ms());
+    user_data
+        .analog_delay
+        .set_feedback(user_data.dsp_params.analog_delay_feedback());
+    let analog_delay_mix = user_data.dsp_params.analog_delay_mix();
+    user_data.analog_delay.set_mix(analog_delay_mix);
+    if analog_delay_mix > 0.0 {
+        user_data.analog_delay.process(samples);
+    }
+
     // 3. DSP chain. Read parameters once per callback.
     let master = user_data.dsp_params.master_volume();
     let comp_amount = user_data.dsp_params.comp_amount();
@@ -2491,6 +2582,112 @@ mod tests {
         );
     }
 
+    /// Render `n_frames` of a held middle-C minimoog note with the
+    /// analog delay set to the given feedback/mix (fixed 150ms time —
+    /// short enough that several repeats land inside the render
+    /// window), returning the interleaved stereo buffer. Same harness
+    /// shape as `render_drive_pedal_clip`.
+    fn render_analog_delay_clip(feedback: f32, mix: f32, n_frames: usize) -> Vec<f32> {
+        let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+        let mut ud = offline_user_data(synth);
+        ud.dsp_params.set_analog_delay_time_ms(150.0);
+        ud.dsp_params.set_analog_delay_feedback(feedback);
+        ud.dsp_params.set_analog_delay_mix(mix);
+        let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        drain_midi(&mut ud);
+
+        let mut buf = vec![0.0f32; n_frames * 2];
+        let mut done = 0usize;
+        while done < n_frames {
+            let this = 128usize.min(n_frames - done);
+            render_block(&mut ud, &mut buf[done * 2..(done + this) * 2]);
+            done += this;
+        }
+        buf
+    }
+
+    /// Loudness-invariant sweep for the delay's feedback (repeats)
+    /// knob, the same shape as `drive_pedal_loudness_sweep_is_smooth`:
+    /// no discontinuous jump near 0, no cliff anywhere across the
+    /// sweep. Measures over the FULL render (not just a settled tail —
+    /// unlike a held note's steady state, a delay's character is in
+    /// its build-up of repeats over time) at a fixed mix=1.0 so
+    /// feedback is the only thing varying.
+    #[test]
+    fn analog_delay_feedback_sweep_is_smooth() {
+        const N_FRAMES: usize = 48_000; // 1s — several 150ms repeats
+
+        let feedbacks = [0.0, 0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.9];
+        let lufs: Vec<f32> = feedbacks
+            .iter()
+            .map(|&fb| {
+                let clip = render_analog_delay_clip(fb, 1.0, N_FRAMES);
+                dsp::loudness::measure_lufs(&clip)
+            })
+            .collect();
+
+        for w in lufs.windows(2) {
+            let step = (w[1] - w[0]).abs();
+            assert!(
+                step < 4.0,
+                "loudness step of {step:.2} LU between adjacent feedback settings \
+                 (feedbacks={feedbacks:?}, lufs={lufs:?})"
+            );
+        }
+    }
+
+    /// Loudness-invariant sweep for the delay's mix knob (feedback
+    /// fixed at a high, repeat-heavy setting) — same smoothness
+    /// invariant, different parameter.
+    #[test]
+    fn analog_delay_mix_sweep_is_smooth() {
+        const N_FRAMES: usize = 48_000;
+
+        let mixes = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0];
+        let lufs: Vec<f32> = mixes
+            .iter()
+            .map(|&mix| {
+                let clip = render_analog_delay_clip(0.7, mix, N_FRAMES);
+                dsp::loudness::measure_lufs(&clip)
+            })
+            .collect();
+
+        for w in lufs.windows(2) {
+            let step = (w[1] - w[0]).abs();
+            assert!(
+                step < 4.0,
+                "loudness step of {step:.2} LU between adjacent mix settings \
+                 (mixes={mixes:?}, lufs={lufs:?})"
+            );
+        }
+    }
+
+    /// End-to-end version of `dsp::analog_delay`'s own
+    /// `analog_delay_repeats_stay_bounded` unit test, through the full
+    /// chain (synth -> drive -> delay -> ... -> limiter) rather than
+    /// the effect in isolation: peak stays under a sane bound even at
+    /// max feedback over several seconds of held-note repeats.
+    #[test]
+    fn analog_delay_full_chain_peak_stays_bounded() {
+        const N_FRAMES: usize = 48_000 * 4; // 4s
+
+        let clip = render_analog_delay_clip(0.9, 1.0, N_FRAMES);
+        assert!(clip.iter().all(|s| s.is_finite()), "non-finite sample");
+        let peak_dbfs = dsp::loudness::measure_peak_dbfs(&clip);
+        // The chain's limiter is brick-wall at -0.3 dBFS by default, so
+        // this is generous headroom, not a tight calibration — it's
+        // here to catch a genuine runaway, not to pin an exact number.
+        assert!(
+            peak_dbfs < 6.0,
+            "peak {peak_dbfs:.2} dBFS suggests the delay's feedback loop \
+             isn't staying bounded through the full chain"
+        );
+    }
+
     /// `native_resonance` defaults to the Minimoog factory 0.3 and
     /// clamps to [0.0, 0.95] (headroom below the Stilson/Smith ladder's
     /// self-oscillation instability).
@@ -2946,6 +3143,9 @@ mod tests {
         p.set_mastering_amount(0.5);
         p.set_limiter_ceiling_db(-6.0);
         p.set_drive_pedal_amount(0.5);
+        p.set_analog_delay_time_ms(250.0);
+        p.set_analog_delay_feedback(0.4);
+        p.set_analog_delay_mix(0.6);
         p.set_native_cutoff_hz(1_234.0);
         p.set_native_resonance(0.5);
         p.set_native_filter_env(0.01, 0.2, 0.5, 0.3, 0.25);
@@ -2968,6 +3168,9 @@ mod tests {
             p.set_mastering_amount(bad);
             p.set_limiter_ceiling_db(bad);
             p.set_drive_pedal_amount(bad);
+            p.set_analog_delay_time_ms(bad);
+            p.set_analog_delay_feedback(bad);
+            p.set_analog_delay_mix(bad);
             p.set_native_cutoff_hz(bad);
             p.set_native_resonance(bad);
             p.set_native_filter_env(bad, bad, bad, bad, bad);
@@ -3000,6 +3203,21 @@ mod tests {
                 p.drive_pedal_amount(),
                 0.5,
                 "drive_pedal_amount poisoned by {bad}"
+            );
+            assert_eq!(
+                p.analog_delay_time_ms(),
+                250.0,
+                "analog_delay_time_ms poisoned by {bad}"
+            );
+            assert_eq!(
+                p.analog_delay_feedback(),
+                0.4,
+                "analog_delay_feedback poisoned by {bad}"
+            );
+            assert_eq!(
+                p.analog_delay_mix(),
+                0.6,
+                "analog_delay_mix poisoned by {bad}"
             );
             assert_eq!(
                 p.native_cutoff_hz(),
@@ -3093,10 +3311,11 @@ mod tests {
     }
 
     /// The C ABI setters route through the same non-finite rejection.
-    /// This test only touches the seven generic DSP globals (volume /
+    /// This test only touches the ten generic DSP globals (volume /
     /// compressor / reverb / patch gain / mastering / limiter / drive
-    /// pedal) — the native_* globals are owned by the other FFI tests,
-    /// and tests run in parallel in one process.
+    /// pedal / analog delay time+feedback+mix) — the native_* globals
+    /// are owned by the other FFI tests, and tests run in parallel in
+    /// one process.
     #[test]
     fn ffi_setters_reject_non_finite_values() {
         polyclav_dsp_set_master_volume(0.5);
@@ -3106,6 +3325,9 @@ mod tests {
         polyclav_dsp_set_mastering_compressor(0.5);
         polyclav_dsp_set_limiter_ceiling_db(-6.0);
         polyclav_dsp_set_drive_pedal(0.5);
+        polyclav_dsp_set_analog_delay_time_ms(250.0);
+        polyclav_dsp_set_analog_delay_feedback(0.4);
+        polyclav_dsp_set_analog_delay_mix(0.6);
 
         for bad in NON_FINITE {
             polyclav_dsp_set_master_volume(bad);
@@ -3115,6 +3337,9 @@ mod tests {
             polyclav_dsp_set_mastering_compressor(bad);
             polyclav_dsp_set_limiter_ceiling_db(bad);
             polyclav_dsp_set_drive_pedal(bad);
+            polyclav_dsp_set_analog_delay_time_ms(bad);
+            polyclav_dsp_set_analog_delay_feedback(bad);
+            polyclav_dsp_set_analog_delay_mix(bad);
 
             let p = dsp_params();
             assert_eq!(p.master_volume(), 0.5, "master_volume poisoned by {bad}");
@@ -3136,6 +3361,21 @@ mod tests {
                 0.5,
                 "drive_pedal_amount poisoned by {bad}"
             );
+            assert_eq!(
+                p.analog_delay_time_ms(),
+                250.0,
+                "analog_delay_time_ms poisoned by {bad}"
+            );
+            assert_eq!(
+                p.analog_delay_feedback(),
+                0.4,
+                "analog_delay_feedback poisoned by {bad}"
+            );
+            assert_eq!(
+                p.analog_delay_mix(),
+                0.6,
+                "analog_delay_mix poisoned by {bad}"
+            );
         }
 
         // Restore the documented boot values.
@@ -3146,6 +3386,9 @@ mod tests {
         polyclav_dsp_set_mastering_compressor(0.0);
         polyclav_dsp_set_limiter_ceiling_db(-0.3);
         polyclav_dsp_set_drive_pedal(0.0);
+        polyclav_dsp_set_analog_delay_time_ms(300.0);
+        polyclav_dsp_set_analog_delay_feedback(0.0);
+        polyclav_dsp_set_analog_delay_mix(0.0);
     }
 
     /// End-to-end poisoning attempt: push NaN/±inf through every

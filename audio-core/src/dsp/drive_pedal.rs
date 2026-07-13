@@ -50,10 +50,9 @@ use fundsp::oversample::Oversampler;
 use fundsp::typenum::U1;
 use fundsp::Frame;
 
+use super::saturate::diode_clip;
+
 const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
-const THERMAL_VOLTAGE: f32 = 0.02585;
-const SATURATION_CURRENT: f32 = 2.52e-9;
-const INPUT_RESISTANCE: f32 = 4_700.0;
 /// The wet path's fixed pre-gain — always fully driven; `amount` controls
 /// how much of this (fixed-character) wet signal is blended in, not how
 /// hard the diode pair is driven. See the module doc comment.
@@ -63,13 +62,6 @@ const FIXED_DRIVE_GAIN: f32 = 400.0;
 /// dry — cranking the drive changes character, not just loudness. See
 /// `lib.rs`'s `drive_pedal_loudness_*` tests, which pin this.
 const OUTPUT_MAKEUP: f32 = 0.236;
-/// Sanity bound on the pre-gained signal before it enters `asinh`. Real
-/// audio never approaches this — `x` is normally within [-1, 1] and
-/// `FIXED_DRIVE_GAIN` is a constant, so `driven` never exceeds a few
-/// hundred. This only ever clamps a pathological upstream value, and
-/// guarantees `driven / (2*Is*R)` stays comfortably inside f32 range so
-/// the stage can never emit non-finite output.
-const DRIVEN_CLAMP: f32 = 1.0e6;
 
 /// Memoryless — the closed-form approximation has no per-sample state to
 /// carry.
@@ -79,9 +71,7 @@ struct DiodeClipperNode;
 impl DiodeClipperNode {
     #[inline]
     fn tick_sample(&self, x: f32) -> f32 {
-        let driven = (x * FIXED_DRIVE_GAIN).clamp(-DRIVEN_CLAMP, DRIVEN_CLAMP);
-        let v = THERMAL_VOLTAGE * (driven / (2.0 * SATURATION_CURRENT * INPUT_RESISTANCE)).asinh();
-        v * OUTPUT_MAKEUP
+        diode_clip(x, FIXED_DRIVE_GAIN) * OUTPUT_MAKEUP
     }
 }
 

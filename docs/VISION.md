@@ -95,6 +95,56 @@ eventually matching, how loud different patches render relative to each
 other) — scope and design for that second piece is still open, see
 below.
 
+### 1b. Analog-style delay pedal
+
+**Status: v1 shipped (2026-07-13).** `audio-core/src/dsp/analog_delay.rs`
+— a BBD-style delay (MXR Carbon Copy / Boss DM-2 / EHX Deluxe Memory Man
+territory), wired into the chain right after the drive pedal
+(`synth → drive_pedal → analog_delay → patch_gain → ...`), pedalboard
+order. Three params: `time_ms` (1–1000ms), `feedback` (0–0.9, capped
+below unity so it stays a delay rather than a deliberate
+self-oscillator — that's a distinct, not-yet-built feature), and `mix`
+(0 = bit-exact bypass, matching the codebase-wide default-off
+convention).
+
+The design question this thread started with — "where does the analog
+character go, the straight-through path or the delay loop?" — resolved
+by how real BBD delays actually work: the dry path is just a clean
+buffer; the character comes from the BBD chip's companding (compress
+in, expand out, to fit its limited dynamic range), and every repeat
+takes another pass through it, so echoes get progressively
+warmer/darker the more they repeat. This module reproduces that
+directly — a one-pole lowpass (bandwidth loss) plus
+`dsp::saturate::diode_clip` (the **same nonlinearity as the drive
+pedal**, factored out into a shared `dsp/saturate.rs` module and tuned
+far gentler here) applied *only* inside the feedback path. A single
+echo (`feedback = 0`) is clean; only accumulating repeats pick
+up character — which also means no extra "distortion amount" knob was
+needed beyond the three above.
+
+**Stability was the real risk** — a feedback loop with a nonlinearity
+inside it could in principle run away. It doesn't, and not by luck:
+`diode_clip` is a logarithmic (asinh-based) compressor, so its output
+grows only as `ln(input)` no matter how hot the signal driving it gets
+— the loop is structurally bounded-input-bounded-output regardless of
+`feedback`. Verified empirically, not just argued: a dedicated test
+compares peak amplitude in an early window of repeats against a much
+later one over several seconds at max feedback, plus a full-chain LUFS
+sweep test (reusing the same loudness-invariant approach thread 1
+introduced) confirms no discontinuous jump across the `feedback` or
+`mix` range.
+
+**Not yet done:** hardware/API exposure. `internal/audio` has the Go
+wrappers (`SetAnalogDelayTimeMs`/`SetAnalogDelayFeedback`/
+`SetAnalogDelayMix`), but nothing calls them yet — no knob, no REST
+field, no per-patch persistence. Unlike the drive pedal, this doesn't
+have an obvious free MAIN-page slot (MAIN's 8 knobs are now fully
+assigned: Volume/Reverb/Comp/Pedal/Resonance/Glide/Drive/unbound), and
+three params don't fit in the one remaining unbound slot anyway — this
+needs its own control-surface decision (a new page? reassign
+something? Tier 3 generic bindings from `docs/CONFIGURABILITY.md`
+first?) rather than a default guess.
+
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 
 **Target:** a new native synth backend. `docs/ROADMAP.md` §5 already

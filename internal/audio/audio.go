@@ -340,6 +340,26 @@ func SetDrivePedal(v float32) {
 	C.polyclav_dsp_set_drive_pedal(C.float(v))
 }
 
+// SetAnalogDelayTimeMs sets the analog-delay time in milliseconds.
+// Clamped to [1, 1000] in Rust.
+func SetAnalogDelayTimeMs(ms float32) {
+	C.polyclav_dsp_set_analog_delay_time_ms(C.float(ms))
+}
+
+// SetAnalogDelayFeedback sets the analog-delay feedback (repeats)
+// amount. Clamped to [0.0, 0.9] in Rust — capped below unity so the
+// pedal stays a delay, not a deliberate self-oscillator.
+func SetAnalogDelayFeedback(v float32) {
+	C.polyclav_dsp_set_analog_delay_feedback(C.float(v))
+}
+
+// SetAnalogDelayMix sets the analog-delay wet/dry mix in [0.0, 1.0].
+// 0 = bypass, 1 = fully wet. Clamped in Rust. Runs in the shared
+// post-synth DSP chain, so it applies to every synth backend.
+func SetAnalogDelayMix(v float32) {
+	C.polyclav_dsp_set_analog_delay_mix(C.float(v))
+}
+
 // SetNativeCutoffHz pushes the active native synth's filter cutoff. The
 // audio thread reads the atomic per block and applies it to the active
 // SynthBackend::Native (no-op for other backends). Clamped to

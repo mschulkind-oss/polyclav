@@ -134,6 +134,18 @@ void polyclav_dsp_set_limiter_ceiling_db(float db);
  * to every synth backend, not just the native synth. */
 void polyclav_dsp_set_drive_pedal(float v);
 
+/* Analog-delay time in milliseconds, clamped to [1, 1000]. */
+void polyclav_dsp_set_analog_delay_time_ms(float ms);
+
+/* Analog-delay feedback (repeats) amount, clamped to [0.0, 0.9] — capped
+ * below unity so the pedal stays a delay, not a deliberate self-oscillator. */
+void polyclav_dsp_set_analog_delay_feedback(float v);
+
+/* Analog-delay wet/dry mix in [0.0, 1.0]. Default 0.0 = bit-exact bypass.
+ * Runs in the shared post-synth DSP chain, after the drive pedal, so it
+ * applies to every synth backend. */
+void polyclav_dsp_set_analog_delay_mix(float v);
+
 /* Native synth filter cutoff in Hz, pushed from the FILTER page's
  * Cutoff knob (MAIN knob 4 now drives the drive pedal instead). The
  * audio thread reads the atomic per block and applies it to the active
