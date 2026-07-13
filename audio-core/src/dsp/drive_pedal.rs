@@ -2,34 +2,46 @@
 //! diode pair shunting to ground (the classic TS-808/TS9 clipping topology),
 //! modeled as a memoryless nonlinear one-port. The exact per-sample circuit
 //! equation is `(driven_input - v) / R = 2 * Is * sinh(v / Vt)` for the
-//! clipped output voltage `v`. Rather than solve that implicit equation with
-//! fixed-iteration Newton-Raphson (tried first; rejected — a naive Newton
-//! step from a poor initial guess overshoots by orders of magnitude on this
-//! steep exponential, overflowing `sinh`/`cosh` well before a small fixed
-//! iteration count converges) or the reference paper's closed-form Lambert-W
-//! solution (Werner/Nangia/Bernardini/Smith/Sarti, AES 2015, "An Improved and
-//! Generalized Diode Clipper Model for Wave Digital Filters"), this uses the
-//! standard deep-conduction approximation: once the diodes conduct, the
-//! resistive feedback term `-v/R` is negligible next to the exponential diode
-//! current, leaving `driven/R ≈ 2*Is*sinh(v/Vt)`, solved in closed form as
-//! `v = Vt * asinh(driven / (2*Is*R))`. Same diode-pair model, no iteration,
-//! numerically robust for any input magnitude (`asinh` never overflows for a
-//! finite argument), and matches the exact solution closely in the region
-//! that matters — both approaches agree that `v -> 0` as `driven -> 0`.
+//! clipped output voltage `v`, solved here via the closed-form deep-conduction
+//! approximation `v = Vt * asinh(driven / (2*Is*R))` (see git history for the
+//! two solves this replaced — an iterative Newton-Raphson attempt diverged,
+//! and this crate never implemented the reference paper's Lambert-W solve).
 //!
-//! See docs/OPEN_SOUND_ENGINES.md §1 for the research this implements.
+//! **Architecture note (v2, post-first-listen fix):** `R`/`Vt`/`Is` for a
+//! real silicon diode pair are so small relative to a normalized [-1, 1]
+//! float signal that the diode pair is *always* deep in conduction for any
+//! audible input — there is no "clean" operating point to sweep the knob
+//! into from below. v1 tried to control drive by scaling `pre_gain` with
+//! `amount`, which meant even 1% of knob travel already produced a
+//! maximally-saturated, very loud signal (reported after first listen — an
+//! on/off knob, not a sweep). v2 fixes this at the architecture level
+//! instead of re-tuning constants: the diode pair always runs at a FIXED,
+//! fully-driven gain (`FIXED_DRIVE_GAIN`), and `amount` instead controls a
+//! linear wet/dry crossfade between the clean input and that fixed-character
+//! wet signal. This is smooth by construction — a linear blend is
+//! continuous in `amount` regardless of how nonlinear the wet path is — and
+//! is the standard way software distortion effects make a "drive" knob feel
+//! musical rather than binary. `OUTPUT_MAKEUP` is calibrated against
+//! `dsp::loudness::measure_lufs` (see the crate's loudness-invariant tests)
+//! so the fully-wet signal lands close to the dry signal's loudness rather
+//! than just getting louder as the knob turns.
 //!
-//! Component constants (R, Vt, Is below) are representative silicon small-signal-
-//! diode values (1N4148-class), NOT SPICE-matched to a specific real pedal —
-//! they are a reasonable starting point expected to be ear-tuned after first
-//! listen (per docs/VISION.md's "prototype, then profile" guiding principle),
-//! not asserted as verified-accurate.
+//! See docs/OPEN_SOUND_ENGINES.md §1 for the research this implements, and
+//! docs/VISION.md for the wider loudness/invariant-testing initiative this
+//! fix is part of.
 //!
-//! This stage runs 2x oversampled (fundsp's Oversampler, same wrapper pattern as
+//! Component constants (R, Vt, Is) are representative silicon
+//! small-signal-diode values (1N4148-class), not SPICE-matched to a
+//! specific real pedal.
+//!
+//! Runs 2x oversampled (fundsp's Oversampler, same wrapper pattern as
 //! synth::filter::OversampledDriveLadder) because a hard diode nonlinearity
-//! aliases badly at 48 kHz without it.
+//! aliases badly at 48 kHz without it. The wet/dry mix itself happens at
+//! the base rate, outside the oversampled node — it's a linear operation,
+//! so mixing after decimation is equivalent to mixing inside, and it keeps
+//! the dry path free of the halfband filter's latency/response entirely.
 //!
-//! Note `amount` 0.0 (the default) bypasses the stage bit-exactly — same
+//! `amount` 0.0 (the default) bypasses the stage bit-exactly — same
 //! regression-safety convention used by every other knob in this codebase
 //! (e.g. native_drive, comp_amount defaulting to 0.0 = bypass).
 
@@ -42,27 +54,32 @@ const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
 const THERMAL_VOLTAGE: f32 = 0.02585;
 const SATURATION_CURRENT: f32 = 2.52e-9;
 const INPUT_RESISTANCE: f32 = 4_700.0;
-const PRE_GAIN_SCALE: f32 = 400.0;
-const OUTPUT_MAKEUP: f32 = 6.0;
+/// The wet path's fixed pre-gain — always fully driven; `amount` controls
+/// how much of this (fixed-character) wet signal is blended in, not how
+/// hard the diode pair is driven. See the module doc comment.
+const FIXED_DRIVE_GAIN: f32 = 400.0;
+/// Calibrated against `dsp::loudness::measure_lufs` so a fully-wet
+/// (`amount = 1.0`) held note lands within about 1 LU of the same note
+/// dry — cranking the drive changes character, not just loudness. See
+/// `lib.rs`'s `drive_pedal_loudness_*` tests, which pin this.
+const OUTPUT_MAKEUP: f32 = 0.236;
 /// Sanity bound on the pre-gained signal before it enters `asinh`. Real
 /// audio never approaches this — `x` is normally within [-1, 1] and
-/// `pre_gain` maxes out at `1 + PRE_GAIN_SCALE`, so `driven` maxes out
-/// around 401. This only ever clamps a pathological upstream value, and
+/// `FIXED_DRIVE_GAIN` is a constant, so `driven` never exceeds a few
+/// hundred. This only ever clamps a pathological upstream value, and
 /// guarantees `driven / (2*Is*R)` stays comfortably inside f32 range so
 /// the stage can never emit non-finite output.
 const DRIVEN_CLAMP: f32 = 1.0e6;
 
 /// Memoryless — the closed-form approximation has no per-sample state to
-/// carry (see module docs for why this replaced an iterative solve).
+/// carry.
 #[derive(Clone)]
-struct DiodeClipperNode {
-    pre_gain: f32,
-}
+struct DiodeClipperNode;
 
 impl DiodeClipperNode {
     #[inline]
     fn tick_sample(&self, x: f32) -> f32 {
-        let driven = (x * self.pre_gain).clamp(-DRIVEN_CLAMP, DRIVEN_CLAMP);
+        let driven = (x * FIXED_DRIVE_GAIN).clamp(-DRIVEN_CLAMP, DRIVEN_CLAMP);
         let v = THERMAL_VOLTAGE * (driven / (2.0 * SATURATION_CURRENT * INPUT_RESISTANCE)).asinh();
         v * OUTPUT_MAKEUP
     }
@@ -88,6 +105,8 @@ impl AudioNode for DiodeClipperNode {
     }
 }
 
+/// One channel's 2x oversampled, always-fully-driven diode clipper. The
+/// wet/dry `mix` is applied here, at the base rate, after decimation.
 struct Channel {
     inner: Oversampler<DiodeClipperNode>,
 }
@@ -95,20 +114,20 @@ struct Channel {
 impl Channel {
     fn new(sample_rate: f32) -> Self {
         Self {
-            inner: Oversampler::new(sample_rate as f64, DiodeClipperNode { pre_gain: 1.0 }),
+            inner: Oversampler::new(sample_rate as f64, DiodeClipperNode),
         }
     }
 
-    fn set_pre_gain(&mut self, g: f32) {
-        self.inner.node_mut().pre_gain = g;
-    }
-
     #[inline]
-    fn tick(&mut self, x: f32) -> f32 {
-        self.inner.tick(&[x].into())[0]
+    fn tick(&mut self, x: f32, mix: f32) -> f32 {
+        let wet = self.inner.tick(&[x].into())[0];
+        x + mix * (wet - x)
     }
 }
 
+/// Drive pedal effect: two independent [`Channel`]s (L/R), each a 2×
+/// oversampled diode-pair clipper crossfaded with the dry signal by
+/// `amount`. `amount` in [0,1]; 0.0 bypasses bit-exactly.
 pub struct DrivePedal {
     left: Channel,
     right: Channel,
@@ -125,11 +144,7 @@ impl DrivePedal {
     }
 
     pub fn set_amount(&mut self, amount: f32) {
-        let amt = amount.clamp(0.0, 1.0);
-        self.amount = amt;
-        let pre_gain = 1.0 + amt * PRE_GAIN_SCALE;
-        self.left.set_pre_gain(pre_gain);
-        self.right.set_pre_gain(pre_gain);
+        self.amount = amount.clamp(0.0, 1.0);
     }
 
     #[allow(dead_code)]
@@ -142,9 +157,10 @@ impl DrivePedal {
             return;
         }
 
+        let mix = self.amount;
         for chunk in samples.chunks_exact_mut(2) {
-            chunk[0] = self.left.tick(chunk[0]);
-            chunk[1] = self.right.tick(chunk[1]);
+            chunk[0] = self.left.tick(chunk[0], mix);
+            chunk[1] = self.right.tick(chunk[1], mix);
         }
     }
 }
@@ -158,6 +174,12 @@ impl Default for DrivePedal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sine(amp: f32, freq: f32, n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / 48000.0).sin() * amp)
+            .collect()
+    }
 
     #[test]
     fn test_new_no_panic() {
@@ -220,11 +242,7 @@ mod tests {
     fn test_amount_one_saturates() {
         let mut pedal = DrivePedal::new(48_000.0);
         pedal.set_amount(1.0);
-        let mut samples = [0.0; 4800];
-        let amp = 0.3;
-        for (i, s) in samples.iter_mut().enumerate() {
-            *s = (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin() * amp;
-        }
+        let mut samples = sine(0.3, 440.0, 4800);
 
         pedal.process(&mut samples);
 
@@ -232,5 +250,43 @@ mod tests {
 
         assert!(max_out.is_finite());
         assert!(max_out < 20.0);
+    }
+
+    /// The regression the "on/off knob" bug report pins: a small amount
+    /// (1%) must sound close to dry, not already maximally driven. Uses
+    /// a mono-summed proxy for "how different from dry" (mean absolute
+    /// difference) rather than pulling in the loudness meter here —
+    /// lib.rs's loudness-invariant tests cover the perceptual/LUFS side
+    /// of this same regression against the full render chain.
+    #[test]
+    fn test_small_amount_stays_close_to_dry() {
+        let dry = sine(0.3, 440.0, 4800);
+
+        let mut wet_1pct = dry.clone();
+        let mut pedal = DrivePedal::new(48_000.0);
+        pedal.set_amount(0.01);
+        pedal.process(&mut wet_1pct);
+
+        let mut wet_full = dry.clone();
+        let mut pedal_full = DrivePedal::new(48_000.0);
+        pedal_full.set_amount(1.0);
+        pedal_full.process(&mut wet_full);
+
+        let mean_abs_diff = |a: &[f32], b: &[f32]| -> f32 {
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| (x - y).abs())
+                .sum::<f32>()
+                / a.len() as f32
+        };
+
+        let diff_1pct = mean_abs_diff(&dry, &wet_1pct);
+        let diff_full = mean_abs_diff(&dry, &wet_full);
+
+        assert!(
+            diff_1pct < diff_full * 0.1,
+            "1% drive should be much closer to dry than full drive: \
+             diff_1pct={diff_1pct}, diff_full={diff_full}"
+        );
     }
 }

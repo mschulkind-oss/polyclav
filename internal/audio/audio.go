@@ -42,6 +42,7 @@ import "C"
 
 import (
 	"fmt"
+	"math"
 	"unsafe"
 )
 
@@ -104,6 +105,28 @@ func RenderOffline(engine string, note, velocity byte, nFrames int) ([]float32, 
 	default:
 		return nil, fmt.Errorf("render offline: audio-core error code %d", int(rc))
 	}
+}
+
+// MeasureLUFS returns the integrated (ungated) LUFS loudness of an
+// interleaved-stereo f32 buffer at 48 kHz (ITU-R BS.1770-4 K-weighting;
+// see dsp::loudness in the Rust source for exactly what this does and
+// does not measure). Meant for offline analysis of a buffer from
+// RenderOffline, not the real-time callback. Returns negative infinity
+// for an empty buffer or true silence.
+func MeasureLUFS(samples []float32) float32 {
+	if len(samples) == 0 {
+		return float32(math.Inf(-1))
+	}
+	return float32(C.polyclav_measure_lufs((*C.float)(unsafe.Pointer(&samples[0])), C.uint32_t(len(samples))))
+}
+
+// MeasurePeakDBFS returns the peak level (dBFS) of an interleaved-stereo
+// f32 buffer. Same empty/silence handling as MeasureLUFS.
+func MeasurePeakDBFS(samples []float32) float32 {
+	if len(samples) == 0 {
+		return float32(math.Inf(-1))
+	}
+	return float32(C.polyclav_measure_peak_dbfs((*C.float)(unsafe.Pointer(&samples[0])), C.uint32_t(len(samples))))
 }
 
 // SetLatencyFrames requests the audio buffer size in frames — polyclav's

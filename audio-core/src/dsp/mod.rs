@@ -5,6 +5,7 @@
 pub mod compressor;
 pub mod drive_pedal;
 pub mod limiter;
+pub mod loudness;
 pub mod mastering;
 pub mod reverb;
 

@@ -1552,6 +1552,40 @@ pub unsafe extern "C" fn polyclav_render_offline(
     0
 }
 
+/// Measure the integrated (ungated) LUFS loudness of an interleaved
+/// stereo f32 buffer at 48 kHz — see `dsp::loudness` for exactly what
+/// this does and does not measure. Meant for offline analysis of a
+/// buffer produced by `polyclav_render_offline` (or any other
+/// interleaved-stereo capture), not for use in the real-time audio
+/// callback. Returns `-inf` for a NULL pointer, zero length, or true
+/// silence.
+///
+/// # Safety
+/// `samples` must point to at least `len` valid, readable `f32`s.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_measure_lufs(samples: *const f32, len: u32) -> f32 {
+    if samples.is_null() || len == 0 {
+        return f32::NEG_INFINITY;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(samples, len as usize) };
+    dsp::loudness::measure_lufs(slice)
+}
+
+/// Measure the peak level (dBFS) of an interleaved stereo f32 buffer.
+/// Same lifecycle and NULL/empty/silence handling as
+/// `polyclav_measure_lufs`.
+///
+/// # Safety
+/// `samples` must point to at least `len` valid, readable `f32`s.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_measure_peak_dbfs(samples: *const f32, len: u32) -> f32 {
+    if samples.is_null() || len == 0 {
+        return f32::NEG_INFINITY;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(samples, len as usize) };
+    dsp::loudness::measure_peak_dbfs(slice)
+}
+
 #[cfg(target_os = "linux")]
 fn run_audio(
     quit_flag: Arc<AtomicBool>,
@@ -1931,6 +1965,43 @@ mod tests {
         build_offline_user_data(Some(synth))
     }
 
+    /// The FFI wrapper is a thin, exact pass-through to
+    /// `dsp::loudness::measure_lufs`/`measure_peak_dbfs` — pins that
+    /// (no accidental rounding/rescaling at the boundary) plus the
+    /// NULL/zero-length guards.
+    #[test]
+    fn measure_lufs_and_peak_ffi_match_direct_calls() {
+        let samples: Vec<f32> = (0..4800)
+            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin() * 0.4)
+            .collect();
+
+        let direct_lufs = dsp::loudness::measure_lufs(&samples);
+        let ffi_lufs = unsafe { polyclav_measure_lufs(samples.as_ptr(), samples.len() as u32) };
+        assert_eq!(direct_lufs, ffi_lufs);
+
+        let direct_peak = dsp::loudness::measure_peak_dbfs(&samples);
+        let ffi_peak =
+            unsafe { polyclav_measure_peak_dbfs(samples.as_ptr(), samples.len() as u32) };
+        assert_eq!(direct_peak, ffi_peak);
+
+        assert_eq!(
+            unsafe { polyclav_measure_lufs(std::ptr::null(), 10) },
+            f32::NEG_INFINITY
+        );
+        assert_eq!(
+            unsafe { polyclav_measure_lufs(samples.as_ptr(), 0) },
+            f32::NEG_INFINITY
+        );
+        assert_eq!(
+            unsafe { polyclav_measure_peak_dbfs(std::ptr::null(), 10) },
+            f32::NEG_INFINITY
+        );
+        assert_eq!(
+            unsafe { polyclav_measure_peak_dbfs(samples.as_ptr(), 0) },
+            f32::NEG_INFINITY
+        );
+    }
+
     /// `polyclav_render_offline` fills the caller's buffer with audible, finite
     /// audio from the native synth — the device-free path behind `polyclav
     /// render` and the CI offline-render gate. Also pins the null / zero-length
@@ -2016,6 +2087,100 @@ mod tests {
         assert!(
             rms > 0.001,
             "expected audible output through render_block, got rms={rms}"
+        );
+    }
+
+    /// Render `n_frames` of a held middle-C minimoog note with the
+    /// drive pedal set to `drive_pedal_amount`, returning the
+    /// interleaved stereo buffer. Shared harness for the
+    /// loudness-invariant tests below — reuses the exact offline-render
+    /// path `polyclav_render_offline` exercises (`build_offline_user_data`
+    /// and `render_block` in 128-frame blocks), so a clip generated here
+    /// matches what a real render would produce.
+    fn render_drive_pedal_clip(drive_pedal_amount: f32, n_frames: usize) -> Vec<f32> {
+        let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+        let mut ud = offline_user_data(synth);
+        ud.dsp_params.set_drive_pedal_amount(drive_pedal_amount);
+        let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        drain_midi(&mut ud);
+
+        let mut buf = vec![0.0f32; n_frames * 2];
+        let mut done = 0usize;
+        while done < n_frames {
+            let this = 128usize.min(n_frames - done);
+            render_block(&mut ud, &mut buf[done * 2..(done + this) * 2]);
+            done += this;
+        }
+        buf
+    }
+
+    /// LUFS-based regression harness for the drive-pedal wet/dry mix
+    /// (docs/OPEN_SOUND_ENGINES.md §1, docs/VISION.md's invariant-testing
+    /// initiative). The bug this pins: a first version made 1% drive
+    /// already sound maximally distorted — a discontinuous jump right
+    /// off the bottom of the knob. This sweeps `amount` and checks the
+    /// *loudness* progression is smooth (small steps between adjacent
+    /// low settings, bounded steps everywhere) using
+    /// `dsp::loudness::measure_lufs` on the settled portion of a real,
+    /// full-chain rendered note — not just the pedal in isolation
+    /// (`dsp::drive_pedal`'s own unit tests cover that in isolation).
+    #[test]
+    fn drive_pedal_loudness_sweep_is_smooth() {
+        const N_FRAMES: usize = 24_000; // 0.5 s
+        const SETTLE_FRAMES: usize = 12_000; // measure the back half only
+
+        let amounts = [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0];
+        let lufs: Vec<f32> = amounts
+            .iter()
+            .map(|&a| {
+                let clip = render_drive_pedal_clip(a, N_FRAMES);
+                dsp::loudness::measure_lufs(&clip[SETTLE_FRAMES * 2..])
+            })
+            .collect();
+
+        // The regression this test exists for: going from off to a tiny
+        // amount must NOT already sound maximally driven.
+        let jump_from_zero = lufs[1] - lufs[0];
+        assert!(
+            jump_from_zero < 3.0,
+            "1% drive jumped {jump_from_zero:.2} LU from dry \
+             (amounts={amounts:?}, lufs={lufs:?})"
+        );
+
+        // No step anywhere in the sweep should be a cliff either.
+        for w in lufs.windows(2) {
+            let step = (w[1] - w[0]).abs();
+            assert!(
+                step < 4.0,
+                "loudness step of {step:.2} LU between adjacent settings \
+                 (amounts={amounts:?}, lufs={lufs:?})"
+            );
+        }
+    }
+
+    /// Cranking the drive should change character, not just get louder:
+    /// fully wet should land close to the dry note's loudness
+    /// (calibrated via `OUTPUT_MAKEUP` in `dsp/drive_pedal.rs`).
+    #[test]
+    fn drive_pedal_full_wet_is_loudness_matched_to_dry() {
+        const N_FRAMES: usize = 24_000;
+        const SETTLE_FRAMES: usize = 12_000;
+
+        let dry = render_drive_pedal_clip(0.0, N_FRAMES);
+        let wet = render_drive_pedal_clip(1.0, N_FRAMES);
+
+        let dry_lufs = dsp::loudness::measure_lufs(&dry[SETTLE_FRAMES * 2..]);
+        let wet_lufs = dsp::loudness::measure_lufs(&wet[SETTLE_FRAMES * 2..]);
+
+        let delta = (wet_lufs - dry_lufs).abs();
+        assert!(
+            delta < 3.0,
+            "full-wet drive should be loudness-matched to dry within 3 LU, \
+             got dry={dry_lufs:.2} wet={wet_lufs:.2} delta={delta:.2}"
         );
     }
 

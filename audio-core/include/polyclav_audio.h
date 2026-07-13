@@ -67,6 +67,18 @@ int32_t polyclav_audio_set_native_patch(const char *engine);
 int32_t polyclav_render_offline(const char *engine, uint8_t note, uint8_t velocity,
                                 float *out, uint32_t n_frames);
 
+/* Measure the integrated (ungated) LUFS loudness of an interleaved stereo
+ * f32 buffer at 48 kHz (ITU-R BS.1770-4 K-weighting; see dsp::loudness in
+ * the Rust source for exactly what this does and does not measure). Meant
+ * for offline analysis of a buffer from polyclav_render_offline, not the
+ * real-time callback. Returns -inf for a NULL pointer, zero length, or
+ * true silence. */
+float polyclav_measure_lufs(const float *samples, uint32_t len);
+
+/* Peak level (dBFS) of an interleaved stereo f32 buffer. Same NULL/empty/
+ * silence handling as polyclav_measure_lufs. */
+float polyclav_measure_peak_dbfs(const float *samples, uint32_t len);
+
 /* MIDI event push (Go -> Rust audio thread, lock-free, drops on queue full). */
 void polyclav_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
 void polyclav_midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity);
