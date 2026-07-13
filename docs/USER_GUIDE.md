@@ -471,7 +471,7 @@ returns.
 
 | # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
 |---|------|--------|--------|--------|--------|--------|--------|--------|--------|
-| 1 | **MAIN** | Volume | Reverb | Comp | Cutoff | Resonance | Glide | Drive | — |
+| 1 | **MAIN** | Volume | Reverb | Comp | Pedal | Resonance | Glide | Drive | — |
 | 2 | **OSC** | Osc1 lvl | Osc1 detune | Osc2 lvl | Osc2 detune | Osc3 lvl | Osc3 detune | Noise | Pulse width |
 | 3 | **FILTER** | Cutoff | Resonance | Env amount | F.Attack | F.Decay | F.Sustain | F.Release | Kbd track |
 | 4 | **AMP** | A.Attack | A.Decay | A.Sustain | A.Release | Vel→Amp | Vel→Cutoff | Drive | — |
@@ -479,11 +479,14 @@ returns.
 
 Notes:
 
-- **MAIN preserves muscle memory** — knobs 1–4 are exactly the historic
-  volume / reverb / comp / cutoff layout.
-- With a **non-native patch** selected, only MAIN's knobs 1–3 (the
-  global volume / reverb / comp) respond; the synth pages apply to
-  native patches only.
+- **MAIN knobs 1–4** are volume / reverb / comp / drive pedal — all
+  four are backend-agnostic (see `docs/OPEN_SOUND_ENGINES.md`) and
+  respond on every patch type, not just native ones. Knob 4 was cutoff
+  through earlier releases; cutoff is still one page-flip away on
+  **FILTER**'s knob 1.
+- With a **non-native patch** selected, only MAIN's knobs 1–4 (the
+  global volume / reverb / comp / pedal) respond; the rest of the synth
+  pages apply to native patches only.
 - **Voice mode** (LFO/MOD knob 7) steps mono_legato → mono_retrig →
   poly, one detent per step.
 - **Play** on the transport row toggles the audition player's last-used
@@ -537,7 +540,7 @@ The page is a thin client over a JSON API you can also drive with curl:
 | `GET /api/events` | SSE stream — a `snapshot` event on connect, then `params` / `synth` / `patch` / `mastering` / `velocity` / `player` / `device` / `note` change events (`note` carries each played note's raw + remapped velocity for the monitor, throttled to ~30/s). |
 | `GET /api/patches` | The patch list. |
 | `POST /api/patches/{name}/select` | Switch patch by name. |
-| `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `cutoff_pos` (each 0..1, all fields optional). |
+| `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` (each 0..1, all fields optional). |
 | `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
 | `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db`. |
 | `GET /api/config` | Your `polyclav.toml`, verbatim. |

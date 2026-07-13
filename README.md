@@ -38,8 +38,10 @@ over SysEx.
   a loud grand doesn't blow your ears off.
 - **Soundfont hot-swap** — switch patches without dropping audio.
 - **DSP chain** in the audio thread, in order:
-  `synth → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
-  Knobs 1/2/3 drive master volume, reverb, and the input compressor live.
+  `synth → drive_pedal → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
+  Knobs 1/2/3/4 drive master volume, reverb, the input compressor, and a
+  Tube-Screamer-style drive pedal live — all four work on every patch
+  type, soundfont or native. See `docs/OPEN_SOUND_ENGINES.md`.
 - **Launchkey knob pages** — five pages (MAIN / OSC / FILTER / AMP /
   LFO/MOD) on Scene ▲/▼ put the whole native-synth voice on the 8
   encoders, with page indicators on the bottom pad row. Code-complete,

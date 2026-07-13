@@ -54,19 +54,22 @@ natively — fully license-clean under polyclav's Apache-2.0.
 
 ### 1. Circuit-emulated effects — drive pedals & amps
 
-**Target:** a new `audio-core/src/dsp/drive.rs`, inserted early in the
-existing chain (today: `synth → patch_gain → input_comp → reverb →
-mastering_comp → limiter → master_volume`) as a new pre-gain-staging
-drive stage. **Research verdict:** build a Wave Digital Filter
-diode-clipper model (Tube-Screamer-style overdrive) first — a
-peer-reviewed, SPICE- and hardware-validated technique with a
-self-contained nonlinear element, O(1) per-sample cost, and no external
-crate needed. A tube amp emulation (preamp/tone-stack/power-amp/speaker,
-reusing the same WDF infrastructure) is the natural second module.
-Black-box RNN modeling is a credible, likely-cheaper complement for
-individual hard circuits later, but shouldn't replace WDF as the
-first-class approach. Full detail, sources, and caveats (including a
-refuted competing paper) in `docs/OPEN_SOUND_ENGINES.md` §1.
+**Status: v1 shipped (2026-07-13).** `audio-core/src/dsp/drive_pedal.rs`
+implements a Tube-Screamer-style antiparallel diode-pair clipper (the
+research-recommended diode-clipper model, per `docs/OPEN_SOUND_ENGINES.md`
+§1 — using a closed-form deep-conduction approximation rather than the
+paper's Lambert-W solve, after a first attempt at iterative Newton-Raphson
+turned out to be numerically unstable at this pedal's gain range), 2×
+oversampled, wired into the shared post-synth chain (`synth →
+drive_pedal → patch_gain → ...`) and exposed as MAIN knob 4 (`Pedal`),
+backend-agnostic and per-patch persisted the same way as
+Volume/Reverb/Comp. A tube amp emulation (preamp/tone-stack/power-amp/
+speaker, reusing the same nonlinear-modeling groundwork) remains the
+natural second module — not yet built. Black-box RNN modeling is a
+credible, likely-cheaper complement for individual hard circuits later,
+but shouldn't replace this approach as the first-class one. Full
+detail, sources, and caveats (including a refuted competing paper) in
+`docs/OPEN_SOUND_ENGINES.md` §1.
 
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 

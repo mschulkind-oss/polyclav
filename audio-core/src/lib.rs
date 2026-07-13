@@ -32,7 +32,7 @@ use oxisynth::{
     MidiEvent as OxiMidiEvent, SoundFont as OxiSoundFont, Synth as OxiSynth, SynthDescriptor,
 };
 
-use crate::dsp::{Compressor, Limiter, MasteringCompressor, Reverb};
+use crate::dsp::{Compressor, DrivePedal, Limiter, MasteringCompressor, Reverb};
 #[cfg(target_os = "linux")]
 use crate::plugin_clap::ClapInstance;
 #[cfg(target_os = "linux")]
@@ -203,8 +203,17 @@ pub(crate) struct DspParams {
     patch_gain: AtomicU32,
     mastering_amount: AtomicU32,
     limiter_ceiling_db: AtomicU32,
-    /// Native synth filter cutoff in Hz, written by Go on knob 4 turns.
-    /// The audio thread reads this once per block and pushes it to the
+    /// Drive-pedal amount in [0, 1], f32 bits. Default 0.0 — the stage
+    /// is bypassed bit-exactly (regression guarantee), matching every
+    /// other knob's default-off convention. Runs in the shared
+    /// post-synth chain (`dsp::DrivePedal`), not inside any one synth
+    /// backend, so it applies regardless of which backend is active.
+    /// See docs/OPEN_SOUND_ENGINES.md §1.
+    drive_pedal_amount: AtomicU32,
+    /// Native synth filter cutoff in Hz, written by Go whenever the
+    /// cutoff control (FILTER page knob 1) is adjusted — MAIN knob 4 was
+    /// reassigned to the drive pedal above. The audio thread reads this
+    /// once per block and pushes it to the
     /// `SynthBackend::Native` if loaded; harmless when other backends
     /// are active. Default 2 kHz matches the Minimoog factory patch.
     native_cutoff_hz: AtomicU32,
@@ -351,6 +360,7 @@ impl DspParams {
             patch_gain: AtomicU32::new(1.0_f32.to_bits()),
             mastering_amount: AtomicU32::new(0.0_f32.to_bits()),
             limiter_ceiling_db: AtomicU32::new((-0.3_f32).to_bits()),
+            drive_pedal_amount: AtomicU32::new(0.0_f32.to_bits()),
             native_cutoff_hz: AtomicU32::new(2_000.0_f32.to_bits()),
             native_resonance: AtomicU32::new(0.3_f32.to_bits()),
             native_filter_env_attack_s: AtomicU32::new(0.005_f32.to_bits()),
@@ -438,6 +448,9 @@ impl DspParams {
     }
     pub fn limiter_ceiling_db(&self) -> f32 {
         Self::load(&self.limiter_ceiling_db)
+    }
+    pub fn drive_pedal_amount(&self) -> f32 {
+        Self::load(&self.drive_pedal_amount)
     }
     pub fn native_cutoff_hz(&self) -> f32 {
         Self::load(&self.native_cutoff_hz)
@@ -551,6 +564,9 @@ impl DspParams {
     }
     pub fn set_limiter_ceiling_db(&self, v: f32) {
         Self::store_clamped(&self.limiter_ceiling_db, v, -12.0, 0.0);
+    }
+    pub fn set_drive_pedal_amount(&self, v: f32) {
+        Self::store(&self.drive_pedal_amount, v);
     }
     pub fn set_native_cutoff_hz(&self, hz: f32) {
         Self::store_clamped(&self.native_cutoff_hz, hz, 20.0, 20_000.0);
@@ -683,10 +699,12 @@ pub(crate) struct UserData {
     reverb: Reverb,
     mastering: MasteringCompressor,
     limiter: Limiter,
+    drive_pedal: DrivePedal,
     last_comp_amount: f32,
     last_reverb_mix: f32,
     last_mastering_amount: f32,
     last_limiter_ceiling_db: f32,
+    last_drive_pedal_amount: f32,
 }
 
 static STATE: OnceLock<Mutex<Option<State>>> = OnceLock::new();
@@ -1087,10 +1105,20 @@ pub extern "C" fn polyclav_dsp_set_limiter_ceiling_db(db: f32) {
     dsp_params().set_limiter_ceiling_db(db);
 }
 
-/// Set the native synth's filter cutoff in Hz. Phase 1 hardcoded
-/// mapping: knob 4 → cutoff. The audio thread reads the atomic each
-/// block and applies it to the active `SynthBackend::Native`; harmless
-/// when other backends are active. Clamped to [20, 20000] in Rust.
+/// Set the drive-pedal amount in [0, 1]. 0.0 (default) bypasses the
+/// stage bit-exactly. Runs in the shared post-synth chain, not inside
+/// any one synth backend, so it applies to every patch type. See
+/// `dsp::DrivePedal` and docs/OPEN_SOUND_ENGINES.md §1.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_drive_pedal(v: f32) {
+    dsp_params().set_drive_pedal_amount(v);
+}
+
+/// Set the native synth's filter cutoff in Hz, pushed from the FILTER
+/// page's Cutoff knob (MAIN knob 4 now drives the drive pedal instead;
+/// see `polyclav_dsp_set_drive_pedal`). The audio thread reads the
+/// atomic each block and applies it to the active `SynthBackend::Native`;
+/// harmless when other backends are active. Clamped to [20, 20000] in Rust.
 #[no_mangle]
 pub extern "C" fn polyclav_dsp_set_native_cutoff_hz(hz: f32) {
     dsp_params().set_native_cutoff_hz(hz);
@@ -1396,14 +1424,17 @@ pub(crate) fn build_user_data() -> UserData {
     let initial_mix = params.reverb_mix();
     let initial_mastering = params.mastering_amount();
     let initial_ceiling_db = params.limiter_ceiling_db();
+    let initial_drive_pedal = params.drive_pedal_amount();
     let mut compressor = Compressor::new();
     let mut reverb = Reverb::new();
     let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
     let mut limiter = Limiter::new(SAMPLE_RATE);
+    let mut drive_pedal = DrivePedal::new(SAMPLE_RATE);
     compressor.set_amount(initial_comp);
     reverb.set_mix(initial_mix);
     mastering.set_amount(initial_mastering);
     limiter.set_ceiling_db(initial_ceiling_db);
+    drive_pedal.set_amount(initial_drive_pedal);
 
     UserData {
         sine_phase: 0.0,
@@ -1419,10 +1450,12 @@ pub(crate) fn build_user_data() -> UserData {
         reverb,
         mastering,
         limiter,
+        drive_pedal,
         last_comp_amount: initial_comp,
         last_reverb_mix: initial_mix,
         last_mastering_amount: initial_mastering,
         last_limiter_ceiling_db: initial_ceiling_db,
+        last_drive_pedal_amount: initial_drive_pedal,
     }
 }
 
@@ -1435,10 +1468,12 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     let mut reverb = Reverb::new();
     let mut mastering = MasteringCompressor::new(SAMPLE_RATE);
     let mut limiter = Limiter::new(SAMPLE_RATE);
+    let mut drive_pedal = DrivePedal::new(SAMPLE_RATE);
     compressor.set_amount(params.comp_amount());
     reverb.set_mix(params.reverb_mix());
     mastering.set_amount(params.mastering_amount());
     limiter.set_ceiling_db(params.limiter_ceiling_db());
+    drive_pedal.set_amount(params.drive_pedal_amount());
     UserData {
         sine_phase: 0.0,
         #[cfg(target_os = "linux")]
@@ -1452,11 +1487,13 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
         last_reverb_mix: params.reverb_mix(),
         last_mastering_amount: params.mastering_amount(),
         last_limiter_ceiling_db: params.limiter_ceiling_db(),
+        last_drive_pedal_amount: params.drive_pedal_amount(),
         dsp_params: params,
         compressor,
         reverb,
         mastering,
         limiter,
+        drive_pedal,
     }
 }
 
@@ -1737,6 +1774,20 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
                 }
             }
         }
+    }
+
+    // 2.5. Drive pedal — runs on the raw synth output, before patch gain
+    // and the rest of the dynamics chain, so its character is
+    // independent of per-patch gain staging (matches an analog pedal
+    // sitting in front of the amp) and applies identically regardless
+    // of which synth backend produced `samples`.
+    let drive_pedal_amount = user_data.dsp_params.drive_pedal_amount();
+    if (drive_pedal_amount - user_data.last_drive_pedal_amount).abs() > f32::EPSILON {
+        user_data.drive_pedal.set_amount(drive_pedal_amount);
+        user_data.last_drive_pedal_amount = drive_pedal_amount;
+    }
+    if drive_pedal_amount > 0.0 {
+        user_data.drive_pedal.process(samples);
     }
 
     // 3. DSP chain. Read parameters once per callback.
@@ -2422,6 +2473,7 @@ mod tests {
         p.set_patch_gain(2.0);
         p.set_mastering_amount(0.5);
         p.set_limiter_ceiling_db(-6.0);
+        p.set_drive_pedal_amount(0.5);
         p.set_native_cutoff_hz(1_234.0);
         p.set_native_resonance(0.5);
         p.set_native_filter_env(0.01, 0.2, 0.5, 0.3, 0.25);
@@ -2443,6 +2495,7 @@ mod tests {
             p.set_patch_gain(bad);
             p.set_mastering_amount(bad);
             p.set_limiter_ceiling_db(bad);
+            p.set_drive_pedal_amount(bad);
             p.set_native_cutoff_hz(bad);
             p.set_native_resonance(bad);
             p.set_native_filter_env(bad, bad, bad, bad, bad);
@@ -2470,6 +2523,11 @@ mod tests {
                 p.limiter_ceiling_db(),
                 -6.0,
                 "limiter_ceiling_db poisoned by {bad}"
+            );
+            assert_eq!(
+                p.drive_pedal_amount(),
+                0.5,
+                "drive_pedal_amount poisoned by {bad}"
             );
             assert_eq!(
                 p.native_cutoff_hz(),
@@ -2563,10 +2621,10 @@ mod tests {
     }
 
     /// The C ABI setters route through the same non-finite rejection.
-    /// This test only touches the six generic DSP globals (volume /
-    /// compressor / reverb / patch gain / mastering / limiter) — the
-    /// native_* globals are owned by the other FFI tests, and tests run
-    /// in parallel in one process.
+    /// This test only touches the seven generic DSP globals (volume /
+    /// compressor / reverb / patch gain / mastering / limiter / drive
+    /// pedal) — the native_* globals are owned by the other FFI tests,
+    /// and tests run in parallel in one process.
     #[test]
     fn ffi_setters_reject_non_finite_values() {
         polyclav_dsp_set_master_volume(0.5);
@@ -2575,6 +2633,7 @@ mod tests {
         polyclav_dsp_set_patch_gain(2.0);
         polyclav_dsp_set_mastering_compressor(0.5);
         polyclav_dsp_set_limiter_ceiling_db(-6.0);
+        polyclav_dsp_set_drive_pedal(0.5);
 
         for bad in NON_FINITE {
             polyclav_dsp_set_master_volume(bad);
@@ -2583,6 +2642,7 @@ mod tests {
             polyclav_dsp_set_patch_gain(bad);
             polyclav_dsp_set_mastering_compressor(bad);
             polyclav_dsp_set_limiter_ceiling_db(bad);
+            polyclav_dsp_set_drive_pedal(bad);
 
             let p = dsp_params();
             assert_eq!(p.master_volume(), 0.5, "master_volume poisoned by {bad}");
@@ -2599,6 +2659,11 @@ mod tests {
                 -6.0,
                 "limiter_ceiling_db poisoned by {bad}"
             );
+            assert_eq!(
+                p.drive_pedal_amount(),
+                0.5,
+                "drive_pedal_amount poisoned by {bad}"
+            );
         }
 
         // Restore the documented boot values.
@@ -2608,6 +2673,7 @@ mod tests {
         polyclav_dsp_set_patch_gain(1.0);
         polyclav_dsp_set_mastering_compressor(0.0);
         polyclav_dsp_set_limiter_ceiling_db(-0.3);
+        polyclav_dsp_set_drive_pedal(0.0);
     }
 
     /// End-to-end poisoning attempt: push NaN/±inf through every

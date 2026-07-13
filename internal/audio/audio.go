@@ -225,10 +225,18 @@ func SetLimiterCeilingDB(db float32) {
 	C.polyclav_dsp_set_limiter_ceiling_db(C.float(db))
 }
 
+// SetDrivePedal amount in [0.0, 1.0]. 0 = bypass, 1 = maximum drive.
+// Clamped in Rust. Runs in the shared post-synth DSP chain, so it
+// applies to every synth backend (soundfont, sfizz, LV2, CLAP, native).
+func SetDrivePedal(v float32) {
+	C.polyclav_dsp_set_drive_pedal(C.float(v))
+}
+
 // SetNativeCutoffHz pushes the active native synth's filter cutoff. The
 // audio thread reads the atomic per block and applies it to the active
 // SynthBackend::Native (no-op for other backends). Clamped to
-// [20, 20000] in Rust. Phase 1 hardcoded knob-4 mapping.
+// [20, 20000] in Rust. Pushed from the FILTER page's Cutoff knob (MAIN
+// knob 4 now drives the drive pedal instead).
 func SetNativeCutoffHz(hz float32) {
 	C.polyclav_dsp_set_native_cutoff_hz(C.float(hz))
 }

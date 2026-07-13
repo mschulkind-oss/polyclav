@@ -33,6 +33,7 @@ type fakeAudio struct {
 	mu sync.Mutex
 
 	volume, reverb, compressor       float32
+	drivePedal                       float32
 	cutoffHz                         float32
 	masteringComp, limiterCeilingDB  float32
 	resonance, noise, glide          float32
@@ -51,6 +52,7 @@ type fakeAudio struct {
 	voiceModeErr                     error  // forced SetNativeVoiceMode failure
 	volumeCalls, reverbCalls         int
 	compressorCalls, cutoffCalls     int
+	drivePedalCalls                  int
 	masteringCalls, limiterCalls     int
 	resonanceCalls, filterEnvCalls   int
 	oscCalls, noiseCalls, glideCalls int
@@ -80,6 +82,13 @@ func (f *fakeAudio) SetCompressor(v float32) {
 	defer f.mu.Unlock()
 	f.compressor = v
 	f.compressorCalls++
+}
+
+func (f *fakeAudio) SetDrivePedal(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drivePedal = v
+	f.drivePedalCalls++
 }
 
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
@@ -316,6 +325,8 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 		k.Reverb = value
 	case "compressor":
 		k.Compressor = value
+	case "drive_pedal":
+		k.DrivePedal = value
 	}
 	f.knobs[name] = k
 	f.updates = append(f.updates, knobUpdate{patch: name, field: field, value: value})
@@ -417,6 +428,10 @@ func TestAbsoluteSetters(t *testing.T) {
 			func(a *fakeAudio) float32 { return a.compressor },
 			func(a *fakeAudio) int { return a.compressorCalls },
 			func(k state.Knob) float32 { return k.Compressor }, 0.6, 0.6},
+		{"drive_pedal", (*Controls).SetDrivePedal, "drive_pedal",
+			func(a *fakeAudio) float32 { return a.drivePedal },
+			func(a *fakeAudio) int { return a.drivePedalCalls },
+			func(k state.Knob) float32 { return k.DrivePedal }, 0.7, 0.7},
 		{"volume clamps high", (*Controls).SetVolume, "volume",
 			func(a *fakeAudio) float32 { return a.volume },
 			func(a *fakeAudio) int { return a.volumeCalls },
@@ -473,12 +488,13 @@ func TestAbsoluteSettersNoCurrentPatch(t *testing.T) {
 		"SetVolume":     f.c.SetVolume,
 		"SetReverb":     f.c.SetReverb,
 		"SetCompressor": f.c.SetCompressor,
+		"SetDrivePedal": f.c.SetDrivePedal,
 	} {
 		if _, err := set(0.5); err == nil {
 			t.Errorf("%s: expected error with no current patch", name)
 		}
 	}
-	if f.audio.volumeCalls+f.audio.reverbCalls+f.audio.compressorCalls != 0 {
+	if f.audio.volumeCalls+f.audio.reverbCalls+f.audio.compressorCalls+f.audio.drivePedalCalls != 0 {
 		t.Error("audio must not be touched when no patch is selected")
 	}
 	if len(f.st.updates) != 0 {
@@ -502,6 +518,8 @@ func TestDeltaAdjusters(t *testing.T) {
 			state.Knob{Volume: 0.5, Reverb: 0.1, Compressor: 0.2}, 0.25, 0.35},
 		{"compressor from defaults", (*Controls).AdjustCompressor, "compressor",
 			state.Defaults(), 0.5, 0.5},
+		{"drive_pedal from defaults", (*Controls).AdjustDrivePedal, "drive_pedal",
+			state.Defaults(), 0.4, 0.4},
 		{"volume clamps high", (*Controls).AdjustVolume, "volume",
 			state.Knob{Volume: 0.9}, 0.5, 1.0},
 		{"reverb clamps low", (*Controls).AdjustReverb, "reverb",
@@ -542,6 +560,7 @@ func TestDeltaAdjustersNoCurrentPatch(t *testing.T) {
 		"AdjustVolume":     f.c.AdjustVolume,
 		"AdjustReverb":     f.c.AdjustReverb,
 		"AdjustCompressor": f.c.AdjustCompressor,
+		"AdjustDrivePedal": f.c.AdjustDrivePedal,
 	} {
 		if _, ok := adjust(0.1); ok {
 			t.Errorf("%s: expected ok=false with no current patch", name)

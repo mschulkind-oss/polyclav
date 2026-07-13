@@ -28,6 +28,7 @@ type fakeAudio struct {
 	mu sync.Mutex
 
 	volume, reverb, compressor      float32
+	drivePedal                      float32
 	cutoffHz                        float32
 	masteringComp, limiterCeilingDB float32
 	resonance, noise, glide         float32
@@ -46,6 +47,7 @@ type fakeAudio struct {
 func (f *fakeAudio) SetMasterVolume(v float32) { f.mu.Lock(); defer f.mu.Unlock(); f.volume = v }
 func (f *fakeAudio) SetReverb(v float32)       { f.mu.Lock(); defer f.mu.Unlock(); f.reverb = v }
 func (f *fakeAudio) SetCompressor(v float32)   { f.mu.Lock(); defer f.mu.Unlock(); f.compressor = v }
+func (f *fakeAudio) SetDrivePedal(v float32)   { f.mu.Lock(); defer f.mu.Unlock(); f.drivePedal = v }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -177,6 +179,8 @@ func (f *fakeAudio) get(field string) float32 {
 		return f.reverb
 	case "compressor":
 		return f.compressor
+	case "drive_pedal":
+		return f.drivePedal
 	case "cutoffHz":
 		return f.cutoffHz
 	case "masteringComp":
@@ -306,6 +310,8 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 		k.Reverb = value
 	case "compressor":
 		k.Compressor = value
+	case "drive_pedal":
+		k.DrivePedal = value
 	}
 	f.knobs[name] = k
 }

@@ -197,6 +197,7 @@ type paramsJSON struct {
 	Volume           float32   `json:"volume"`
 	Reverb           float32   `json:"reverb"`
 	Compressor       float32   `json:"compressor"`
+	DrivePedal       float32   `json:"drive_pedal"`
 	CutoffPos        float32   `json:"cutoff_pos"`
 	CutoffHz         float32   `json:"cutoff_hz"`
 	MasteringComp    float32   `json:"mastering_comp"`
@@ -338,6 +339,7 @@ func paramsView(sn controls.ParamsSnapshot) paramsJSON {
 		Volume:           sn.Volume,
 		Reverb:           sn.Reverb,
 		Compressor:       sn.Compressor,
+		DrivePedal:       sn.DrivePedal,
 		CutoffPos:        sn.CutoffPos,
 		CutoffHz:         sn.CutoffHz,
 		MasteringComp:    sn.MasteringComp,
@@ -448,6 +450,7 @@ type paramsPatchBody struct {
 	Volume     *float64 `json:"volume"`
 	Reverb     *float64 `json:"reverb"`
 	Compressor *float64 `json:"compressor"`
+	DrivePedal *float64 `json:"drive_pedal"`
 	CutoffPos  *float64 `json:"cutoff_pos"`
 }
 
@@ -458,10 +461,11 @@ func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for name, p := range map[string]*float64{
-		"volume":     body.Volume,
-		"reverb":     body.Reverb,
-		"compressor": body.Compressor,
-		"cutoff_pos": body.CutoffPos,
+		"volume":      body.Volume,
+		"reverb":      body.Reverb,
+		"compressor":  body.Compressor,
+		"drive_pedal": body.DrivePedal,
+		"cutoff_pos":  body.CutoffPos,
 	} {
 		if p != nil && !finite01(*p) {
 			writeErr(w, http.StatusBadRequest, name+" must be in [0,1]")
@@ -489,6 +493,7 @@ func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
 	apply("volume", body.Volume, s.deps.Controls.SetVolume)
 	apply("reverb", body.Reverb, s.deps.Controls.SetReverb)
 	apply("compressor", body.Compressor, s.deps.Controls.SetCompressor)
+	apply("drive_pedal", body.DrivePedal, s.deps.Controls.SetDrivePedal)
 	if body.CutoffPos != nil {
 		hz, err := s.deps.Controls.SetCutoffPos(float32(*body.CutoffPos))
 		if err != nil {

@@ -1,8 +1,8 @@
-// Package state persists per-patch knob values (volume/reverb/compressor),
-// per-patch native-synth parameters, and the active patch name to a TOML
-// file. The Store debounces writes so rapid knob twists coalesce into a
-// single disk flush, while a final synchronous flush on shutdown ensures
-// the user's last edit survives.
+// Package state persists per-patch knob values (volume/reverb/compressor/
+// drive_pedal), per-patch native-synth parameters, and the active patch
+// name to a TOML file. The Store debounces writes so rapid knob twists
+// coalesce into a single disk flush, while a final synchronous flush on
+// shutdown ensures the user's last edit survives.
 package state
 
 import (
@@ -18,12 +18,17 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Knob holds the three user-controllable DSP knob values for a patch.
+// Knob holds the four user-controllable DSP knob values for a patch.
 // Values are 0..1 linear (matching audio.SetMasterVolume etc.).
 type Knob struct {
 	Volume     float32 `toml:"volume"`
 	Reverb     float32 `toml:"reverb"`
 	Compressor float32 `toml:"compressor"`
+	// DrivePedal is the drive-pedal amount (docs/OPEN_SOUND_ENGINES.md
+	// §1). Backend-agnostic like Volume/Reverb/Compressor above — it
+	// runs in the shared post-synth chain, not inside the native synth
+	// — so it lives here rather than in SynthState.
+	DrivePedal float32 `toml:"drive_pedal"`
 }
 
 // SynthState is the persisted per-patch native-synth block — the
@@ -146,9 +151,9 @@ type Store struct {
 }
 
 // Defaults returns sensible starting knob values for a patch we've never
-// seen before: full volume, no reverb, no compression.
+// seen before: full volume, no reverb, no compression, no drive.
 func Defaults() Knob {
-	return Knob{Volume: 1.0, Reverb: 0.0, Compressor: 0.0}
+	return Knob{Volume: 1.0, Reverb: 0.0, Compressor: 0.0, DrivePedal: 0.0}
 }
 
 // Load reads a TOML file at path and returns its decoded Snapshot.
@@ -393,9 +398,9 @@ func (s *Store) PatchKnob(patchName string) Knob {
 	return Defaults()
 }
 
-// UpdatePatchKnob sets one of volume/reverb/compressor for patchName.
-// field is case-sensitive: "volume", "reverb", or "compressor".
-// The patch's synth block (if any) is untouched.
+// UpdatePatchKnob sets one of volume/reverb/compressor/drive_pedal for
+// patchName. field is case-sensitive: "volume", "reverb", "compressor",
+// or "drive_pedal". The patch's synth block (if any) is untouched.
 func (s *Store) UpdatePatchKnob(patchName string, field string, value float32) {
 	s.mu.Lock()
 	p, ok := s.snap.Patches[patchName]
@@ -409,6 +414,8 @@ func (s *Store) UpdatePatchKnob(patchName string, field string, value float32) {
 		p.Reverb = value
 	case "compressor":
 		p.Compressor = value
+	case "drive_pedal":
+		p.DrivePedal = value
 	default:
 		s.mu.Unlock()
 		s.logger.Debug("invalid knob field", "field", field)

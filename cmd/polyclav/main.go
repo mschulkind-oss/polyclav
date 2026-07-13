@@ -666,6 +666,7 @@ var _ controls.Audio = audioBackend{}
 func (audioBackend) SetMasterVolume(v float32)        { audio.SetMasterVolume(v) }
 func (audioBackend) SetReverb(v float32)              { audio.SetReverb(v) }
 func (audioBackend) SetCompressor(v float32)          { audio.SetCompressor(v) }
+func (audioBackend) SetDrivePedal(v float32)          { audio.SetDrivePedal(v) }
 func (audioBackend) SetNativeCutoffHz(hz float32)     { audio.SetNativeCutoffHz(hz) }
 func (audioBackend) SetMasteringCompressor(v float32) { audio.SetMasteringCompressor(v) }
 func (audioBackend) SetLimiterCeilingDB(db float32)   { audio.SetLimiterCeilingDB(db) }

@@ -32,12 +32,19 @@ const (
 // deviations, each with its reason:
 //
 //   - Page set is MAIN / OSC / FILTER / AMP / LFO/MOD instead of §2.1's
-//     MIX / FILTER / AMP / LFO / MOD. Page 1 (MAIN) keeps today's knobs
-//     1–4 exactly as shipped (Volume / Reverb / Comp / Cutoff) so muscle
-//     memory survives the upgrade — this also settles §2.1's open
-//     question and §5's locked decision (the global volume/reverb/comp
-//     stay reachable from inside the synth UI) by making them page 1
-//     rather than a trailing sixth page.
+//     MIX / FILTER / AMP / LFO / MOD. Page 1 (MAIN) keeps knobs 1–3 as
+//     shipped (Volume / Reverb / Comp) so muscle memory survives the
+//     upgrade — this also settles §2.1's open question and §5's locked
+//     decision (the global volume/reverb/comp stay reachable from
+//     inside the synth UI) by making them page 1 rather than a trailing
+//     sixth page.
+//   - MAIN knob 4 was Cutoff through Phase 2; as of the drive-pedal
+//     effect (docs/OPEN_SOUND_ENGINES.md §1) it's reassigned to Pedal.
+//     Cutoff remains one page-flip away on FILTER knob 1 (already
+//     aliased there, same pattern as Drive on MAIN 7 / AMP 7) — the
+//     pedal is backend-agnostic like Volume/Reverb/Comp, so this also
+//     makes every MAIN slot 1–4 work on every patch type, not just
+//     native ones (see the "Non-native patches" note below).
 //   - §2.1's MIX page content (osc levels/detunes, noise, drive) lands
 //     on page 2 (OSC), plus the shipped shared Pulse Width; per-osc
 //     waveform/octave selection has no knob shape (it's a selector, not
@@ -65,9 +72,8 @@ const (
 //
 // Non-native patches: only page 0 is live, and on it only the slots
 // that route through the always-available knob setters (Volume, Reverb,
-// Comp — slots 1–3). The rest return ok=false from their controls
-// setters (ErrNoNativePatch / the AdjustCutoff gate) and show nothing,
-// which is exactly the pre-pages knob-4 behavior.
+// Comp, Pedal — slots 1–4). The rest return ok=false from their
+// controls setters (ErrNoNativePatch) and show nothing.
 func pageDefs() []PageDef {
 	return []PageDef{
 		{
@@ -76,7 +82,7 @@ func pageDefs() []PageDef {
 				{Label: "Volume", Step: stepUnit, Adjust: adjVolume},
 				{Label: "Reverb", Step: stepUnit, Adjust: adjReverb},
 				{Label: "Comp", Step: stepUnit, Adjust: adjCompressor},
-				{Label: "Cutoff", Step: stepUnit, Adjust: adjCutoff},
+				{Label: "Pedal", Step: stepUnit, Adjust: adjDrivePedal},
 				{Label: "Resonance", Step: stepResonance, Adjust: adjResonance()},
 				{Label: "Glide", Step: stepGlide, Adjust: adjGlide()},
 				{Label: "Drive", Step: stepUnit, Adjust: adjDrive()},
@@ -224,7 +230,7 @@ func adjustScalar(
 	)
 }
 
-// The knob 1–3 globals route through the existing relative adjusters
+// The knob 1–4 globals route through the existing relative adjusters
 // (they read current from the state store, so deltas compose with web
 // edits); ok=false means no patch is selected.
 
@@ -252,8 +258,16 @@ func adjCompressor(ctl *controls.Controls, delta float32) (string, bool) {
 	return formatPercent(v), true
 }
 
-// adjCutoff keeps the shipped knob-4 semantics: the 0..1 knob position
-// lives in controls (log-taper to Hz there); ok=false off native patches.
+func adjDrivePedal(ctl *controls.Controls, delta float32) (string, bool) {
+	v, ok := ctl.AdjustDrivePedal(delta)
+	if !ok {
+		return "", false
+	}
+	return formatPercent(v), true
+}
+
+// adjCutoff keeps the shipped semantics: the 0..1 knob position lives in
+// controls (log-taper to Hz there); ok=false off native patches.
 func adjCutoff(ctl *controls.Controls, delta float32) (string, bool) {
 	hz, ok := ctl.AdjustCutoff(delta)
 	if !ok {

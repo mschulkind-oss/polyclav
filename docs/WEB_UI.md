@@ -115,7 +115,7 @@ auto-reconnects in every browser for free.
 | `GET /api/events` | SSE stream of the same snapshot's deltas (`patch-changed`, `knob-changed`, `device-changed`, …) |
 | `GET /api/patches` | Patch list (name, display, type, pad_color, gain_db, slot index) |
 | `POST /api/patches/{name}/select` | Switch patch (same path as a pad press: select → restore knobs → persist) |
-| `PATCH /api/params` | Body `{"volume": 0.8}` / `reverb` / `compressor` / `native_cutoff_hz` — per-current-patch, persisted via the state store |
+| `PATCH /api/params` | Body `{"volume": 0.8}` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` — per-current-patch, persisted via the state store |
 | `PATCH /api/mastering` | `comp_amount`, `limiter_ceiling_db` (runtime-only until config write lands) |
 | `GET /api/config` | The loaded config, serialized (paths expanded, host redacted if desired) |
 | `PUT /api/config` *(phase C)* | Validated TOML write-back; response says whether a restart is needed |

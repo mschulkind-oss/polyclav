@@ -14,7 +14,7 @@
 
 | Thread | Evidence | Build/do first |
 |---|---|---|
-| 1. Circuit emulation (pedals/amps) | Strong | WDF diode-clipper module (Tube-Screamer-style) in `audio-core/src/dsp/` |
+| 1. Circuit emulation (pedals/amps) | Strong | **Shipped 2026-07-13** — diode-clipper module (Tube-Screamer-style) in `audio-core/src/dsp/drive_pedal.rs`; see `docs/VISION.md` §1 for what changed from the plan below |
 | 2. Organ physical modeling | Moderate, plus a fast win | Load setBfree's existing LV2 plugin today; build a native `organ` engine mirroring its stage order as the real follow-up |
 | 3. Hosting Surge XT / Helm / Vital | Strong | Surge XT's CLAP build via the existing `clack-host` path — packaging/testing, no new DSP code |
 | 4. MIDI controller generalization | **None verified** | Needs its own dedicated research pass; `docs/CONFIGURABILITY.md`'s Tier 0–4 plan stands independently |
@@ -47,6 +47,18 @@ existing chain — `synth → drive → patch_gain → input_comp → reverb →
 mastering_comp → limiter → master_volume`. Drive/distortion belongs
 pre-gain-staging and shouldn't double up with `input_comp`'s or
 `mastering_comp`'s dynamics processing.
+
+> **Implemented as `audio-core/src/dsp/drive_pedal.rs`** (2026-07-13),
+> at the landing spot recommended above. Two deviations from this
+> section's plan, both load-bearing enough to flag: (1) no tone-stack
+> RC network yet — v1 is the diode-pair nonlinearity alone, memoryless;
+> (2) the diode-pair equation is solved via the closed-form
+> deep-conduction approximation (`v = Vt·asinh(driven/(2·Is·R))`)
+> rather than the paper's Lambert-W solution — a first attempt at
+> fixed-iteration Newton-Raphson (an alternative numerical solve, not
+> what the paper does either) turned out to diverge at this pedal's
+> gain range, which is what motivated the closed-form swap. See
+> `docs/VISION.md` §1 for the up-to-date status.
 
 ### Alternative / later complement: black-box RNN modeling
 

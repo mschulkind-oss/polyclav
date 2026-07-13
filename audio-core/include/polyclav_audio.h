@@ -90,10 +90,16 @@ void polyclav_dsp_set_mastering_compressor(float amount);
 /* Brick-wall limiter ceiling in dBFS. Default -0.3, clamped to [-12.0, 0.0]. */
 void polyclav_dsp_set_limiter_ceiling_db(float db);
 
-/* Native synth filter cutoff in Hz. Phase 1 hardcoded knob-4 mapping:
- * Go pushes this whenever knob 4 turns. The audio thread reads the
- * atomic per block and applies it to the active native synth (no-op
- * for other backends). Clamped to [20, 20000] in Rust. */
+/* Drive-pedal amount in [0.0, 1.0]. Default 0.0 = bit-exact bypass. Runs
+ * in the shared post-synth DSP chain (before patch gain), so it applies
+ * to every synth backend, not just the native synth. */
+void polyclav_dsp_set_drive_pedal(float v);
+
+/* Native synth filter cutoff in Hz, pushed from the FILTER page's
+ * Cutoff knob (MAIN knob 4 now drives the drive pedal instead). The
+ * audio thread reads the atomic per block and applies it to the active
+ * native synth (no-op for other backends). Clamped to [20, 20000] in
+ * Rust. */
 void polyclav_dsp_set_native_cutoff_hz(float hz);
 
 /* Native synth filter resonance (Q). Same lifecycle as the cutoff

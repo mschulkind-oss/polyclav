@@ -20,6 +20,7 @@ type Audio interface {
 	SetMasterVolume(float32)
 	SetReverb(float32)
 	SetCompressor(float32)
+	SetDrivePedal(float32)
 	SetNativeCutoffHz(float32)
 	SetMasteringCompressor(float32)
 	SetLimiterCeilingDB(float32)
@@ -507,6 +508,18 @@ func (c *Controls) AdjustCompressor(delta float32) (float32, bool) {
 	return c.adjustKnob("compressor", delta)
 }
 
+// SetDrivePedal is SetVolume's twin for the per-patch drive-pedal
+// amount. Backend-agnostic like Volume/Reverb/Compressor — the pedal
+// runs in the shared post-synth chain, not inside the native synth.
+func (c *Controls) SetDrivePedal(v float32) (float32, error) {
+	return c.setKnob("drive_pedal", v)
+}
+
+// AdjustDrivePedal is AdjustVolume's twin for the drive-pedal amount.
+func (c *Controls) AdjustDrivePedal(delta float32) (float32, bool) {
+	return c.adjustKnob("drive_pedal", delta)
+}
+
 // setKnob is the absolute-setter path shared by SetVolume/Reverb/Compressor.
 func (c *Controls) setKnob(field string, v float32) (float32, error) {
 	c.applyMu.Lock()
@@ -548,6 +561,8 @@ func (c *Controls) applyKnob(field string, v float32) {
 		c.audio.SetReverb(v)
 	case "compressor":
 		c.audio.SetCompressor(v)
+	case "drive_pedal":
+		c.audio.SetDrivePedal(v)
 	}
 }
 
@@ -569,6 +584,8 @@ func knobField(k state.Knob, field string) float32 {
 		return k.Reverb
 	case "compressor":
 		return k.Compressor
+	case "drive_pedal":
+		return k.DrivePedal
 	}
 	return 0
 }
@@ -1548,13 +1565,15 @@ func (c *Controls) afterSelect() {
 	c.audio.SetMasterVolume(k.Volume)
 	c.audio.SetReverb(k.Reverb)
 	c.audio.SetCompressor(k.Compressor)
+	c.audio.SetDrivePedal(k.DrivePedal)
 	c.st.SetCurrentPatch(cur.Name)
 	data := map[string]any{
-		"name":       cur.Name,
-		"display":    cur.Display,
-		"volume":     k.Volume,
-		"reverb":     k.Reverb,
-		"compressor": k.Compressor,
+		"name":        cur.Name,
+		"display":     cur.Display,
+		"volume":      k.Volume,
+		"reverb":      k.Reverb,
+		"compressor":  k.Compressor,
+		"drive_pedal": k.DrivePedal,
 	}
 	if cur.Type == "native" {
 		// Cutoff position is per-session, not persisted (Phase 2): every
@@ -1696,12 +1715,12 @@ func (c *Controls) VelocityLabel() string {
 // ParamsSnapshot is the one-shot state view for GET /api/status: current
 // patch, its knob values, cutoff, mastering, and the velocity curve name.
 type ParamsSnapshot struct {
-	Patch, PatchDisplay             string
-	Volume, Reverb, Compressor      float32
-	CutoffPos, CutoffHz             float32
-	MasteringComp, LimiterCeilingDB float32
-	VelocityCurve                   string
-	Synth                           SynthSnapshot
+	Patch, PatchDisplay                    string
+	Volume, Reverb, Compressor, DrivePedal float32
+	CutoffPos, CutoffHz                    float32
+	MasteringComp, LimiterCeilingDB        float32
+	VelocityCurve                          string
+	Synth                                  SynthSnapshot
 }
 
 // Snapshot assembles a ParamsSnapshot from the registry, state store,
@@ -1714,6 +1733,7 @@ func (c *Controls) Snapshot() ParamsSnapshot {
 		s.PatchDisplay = cur.Display
 		k := c.st.PatchKnob(cur.Name)
 		s.Volume, s.Reverb, s.Compressor = k.Volume, k.Reverb, k.Compressor
+		s.DrivePedal = k.DrivePedal
 	}
 	s.CutoffPos, s.CutoffHz = c.CutoffState()
 	s.MasteringComp, s.LimiterCeilingDB = c.Mastering()

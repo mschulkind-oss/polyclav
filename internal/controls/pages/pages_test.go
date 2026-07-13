@@ -28,6 +28,7 @@ type fakeAudio struct {
 	oscHook func()
 
 	volume, reverb, compressor, cutoffHz       float32
+	drivePedal                                 float32
 	masteringComp, limiterDB                   float32
 	resonance, noise, glide, pulseWidth, drive float32
 	kbdTrack, bendRange                        float32
@@ -54,6 +55,7 @@ func (f *fakeAudio) reset() { f.calls = map[string]int{} }
 func (f *fakeAudio) SetMasterVolume(v float32) { f.rec("SetMasterVolume"); f.volume = v }
 func (f *fakeAudio) SetReverb(v float32)       { f.rec("SetReverb"); f.reverb = v }
 func (f *fakeAudio) SetCompressor(v float32)   { f.rec("SetCompressor"); f.compressor = v }
+func (f *fakeAudio) SetDrivePedal(v float32)   { f.rec("SetDrivePedal"); f.drivePedal = v }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.rec("SetNativeCutoffHz")
 	f.cutoffHz = hz
@@ -330,13 +332,11 @@ func TestKnobRoutingAllPages(t *testing.T) {
 					t.Errorf("compressor = %v", a.compressor)
 				}
 			}},
-		{name: "MAIN cutoff", page: 0, knob: 4, ticks: 1, wantLabel: "Cutoff",
-			wantDisplayF: func(a *fakeAudio) string { return formatHz(a.cutoffHz) },
-			wantCall:     "SetNativeCutoffHz",
+		{name: "MAIN pedal", page: 0, knob: 4, ticks: 1, wantLabel: "Pedal", wantDisplay: "1%",
+			wantCall: "SetDrivePedal",
 			check: func(t *testing.T, a *fakeAudio) {
-				// pos 0.5 + 1/127 on the 20*1000^pos log taper: just above ~632 Hz.
-				if a.cutoffHz <= 632 || a.cutoffHz >= 720 {
-					t.Errorf("cutoffHz = %v, want in (632, 720)", a.cutoffHz)
+				if !approxEq(a.drivePedal, 1.0/127) {
+					t.Errorf("drivePedal = %v", a.drivePedal)
 				}
 			}},
 		{name: "MAIN resonance", page: 0, knob: 5, ticks: 1, wantLabel: "Resonance", wantDisplay: "31%",
@@ -640,7 +640,7 @@ func TestPageCyclingOrderAndWraparound(t *testing.T) {
 }
 
 // TestNonNativeGating: with a soundfont patch only page 0 is live, page
-// switches are refused with a "(native only)" flash, knobs 1-3 still
+// switches are refused with a "(native only)" flash, knobs 1-4 still
 // work, and every native-only slot is inert.
 func TestNonNativeGating(t *testing.T) {
 	f := newFixture(t, nativePatch, sfPatch)
@@ -664,7 +664,7 @@ func TestNonNativeGating(t *testing.T) {
 		t.Fatalf("PrevPage on soundfont moved to %d", idx)
 	}
 
-	// Knobs 1-3 (global volume/reverb/comp) stay live.
+	// Knobs 1-4 (global volume/reverb/comp/pedal) stay live.
 	f.screen.writes = nil
 	f.audio.reset()
 	f.pg.HandleKnob(1, -1)
@@ -675,8 +675,18 @@ func TestNonNativeGating(t *testing.T) {
 		t.Errorf("screen line1 = %q, want Volume", w.line1)
 	}
 
-	// Knobs 4-8 on MAIN are native-only (or unbound): fully inert.
-	for knob := 4; knob <= 8; knob++ {
+	f.screen.writes = nil
+	f.audio.reset()
+	f.pg.HandleKnob(4, 1)
+	if f.audio.calls["SetDrivePedal"] != 1 {
+		t.Fatalf("pedal knob dead on soundfont: %v", f.audio.calls)
+	}
+	if w := f.screen.last(t); w.line1 != "Pedal" {
+		t.Errorf("screen line1 = %q, want Pedal", w.line1)
+	}
+
+	// Knobs 5-8 on MAIN are native-only (or unbound): fully inert.
+	for knob := 5; knob <= 8; knob++ {
 		f.audio.reset()
 		f.screen.writes = nil
 		f.pg.HandleKnob(knob, 1)
