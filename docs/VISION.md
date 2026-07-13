@@ -184,7 +184,11 @@ more.
   the plugin's own exposed extension surface (CLAP params, LV2 control
   ports) — otherwise leave hosted engines walled off behind the plain
   CLAP/LV2 API, since that boundary is also what keeps the GPL-hosting
-  story license-clean (thread 3, above).
+  story license-clean (thread 3, above). If a richer surface is ever
+  worth building, it lives in a separate, GPL-licensed fork/addon of the
+  hosted project (not in polyclav), which polyclav's docs point users to
+  as an optional companion install — never merged into polyclav's own
+  Apache-2.0 tree.
 
 ## Open questions
 
@@ -231,11 +235,23 @@ more.
    specific named parameter on Surge/Helm/setBfree, the way native synth
    pages work)? **Lean: no, by default — wall it off behind the
    standard CLAP/LV2 parameter API.** If a real use case demands it
-   later, build the bridge through the plugin's own exposed protocol
-   surface (CLAP extensions, LV2 control ports), never by linking
-   against or reading GPL plugin source — that's the only way to add
-   deeper tie-in without disturbing the "separate programs across a
-   standard API" boundary thread 3's licensing verdict depends on.
+   later, the mechanism is a **custom CLAP extension**, not a polyclav
+   change to the plugin's source: CLAP plugins already advertise
+   optional extensions beyond the standard `params` one
+   (`clap_plugin_get_extension`), and a host that recognizes a
+   given extension ID can use its richer interface while any other host
+   just falls back to the standard one. Concretely, that extension
+   (e.g. structured parameter groupings + display names sized for an
+   8-knob page, unlike CLAP's flat generic param list) would ship in a
+   **separate, GPL-licensed fork/addon of Surge XT (or Helm/Vital)** —
+   its own repo, maintained apart from polyclav, distributed
+   independently — with polyclav's CLAP host (`plugin_clap.rs`) probing
+   for the extension and using it when present, generic bindings
+   otherwise. polyclav's own docs would point users at that fork as an
+   optional companion install; nothing from it gets linked into or
+   merged with polyclav's Apache-2.0 tree, which keeps thread 3's
+   licensing verdict intact. Worth doing only once a concrete "which
+   parameters, on which page" need shows up — not speculatively.
 
 5. **Does RNN/black-box circuit modeling generalize past the Klon
    Centaur** to other reference circuits (Tube Screamer, Big Muff, Fuzz
