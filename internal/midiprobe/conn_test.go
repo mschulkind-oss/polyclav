@@ -36,6 +36,15 @@ import (
 // to sort last in the port list — confirmed 2026-07-11, audible output on
 // a real Launchkey/XR18/CASIO setup during a routine `go test ./...` run.
 // Never loosen this back to a bare "in == out" match.
+//
+// A second, distinct leak: even targeting the exact-right "Midi Through"
+// port, a shared-ALSA-bus dev jail can have a real polyclav daemon on the
+// host also listening to it (default config treats every non-DAW port as
+// an ordinary keyboard) — that daemon renders this test's NoteOn/SysEx as
+// if someone played it. Fixed at the source, not in this test:
+// internal/midi.looksLikeLoopbackPort excludes "Midi Through" from the
+// default note-sending set, the same way looksLikeDAWPort excludes a
+// Launchkey's DAW port. Confirmed 2026-07.
 func TestRealConnLoopback(t *testing.T) {
 	ins, err := midi.PortNames()
 	if err != nil {

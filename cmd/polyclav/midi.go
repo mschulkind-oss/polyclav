@@ -86,6 +86,8 @@ func midiStatusLabel(s midi.PortStatus) string {
 		return "ok"
 	case midi.PortDAWOnly:
 		return "daw"
+	case midi.PortLoopback:
+		return "loopback"
 	case midi.PortIgnored:
 		return "ignored"
 	case midi.PortRestricted:

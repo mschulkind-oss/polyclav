@@ -242,6 +242,23 @@ func looksLikeDAWPort(name string) bool {
 	return strings.Contains(ln, "daw") || strings.Contains(ln, "midi 2")
 }
 
+// looksLikeLoopbackPort reports whether name is ALSA's built-in "Midi
+// Through" virtual patchbay port, which routes anything written to its
+// output straight back out its own input. It never carries real playing,
+// so Multiplexer excludes it from the generic multi-device note listener
+// by default, same as looksLikeDAWPort — internal/midiprobe and
+// internal/web's real-hardware loopback tests deliberately send a live
+// NoteOn/SysEx through this exact port to exercise the production
+// rtmidi/ALSA binding end-to-end. Without this exclusion, a live daemon
+// sharing the same ALSA sequencer bus (this project's dev jails
+// deliberately bridge into the host's real one to reach real hardware)
+// treats "Midi Through" as an ordinary keyboard and renders that test
+// traffic as if someone played it — confirmed audible on real hardware
+// during a routine `go test ./...` run, 2026-07.
+func looksLikeLoopbackPort(name string) bool {
+	return strings.Contains(strings.ToLower(name), "midi through")
+}
+
 func portNames(ins []drivers.In) []string {
 	out := make([]string, len(ins))
 	for i, in := range ins {

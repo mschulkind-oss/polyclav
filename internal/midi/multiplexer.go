@@ -275,6 +275,11 @@ const (
 	// reachable when Match is empty) — a Launchkey control-surface
 	// port, never a note source regardless of Ignore.
 	PortDAWOnly PortStatus = "daw"
+	// PortLoopback: excluded by the default loopback-port heuristic (only
+	// reachable when Match is empty) — ALSA's "Midi Through" virtual
+	// patchbay port, never a note source regardless of Ignore (see
+	// looksLikeLoopbackPort).
+	PortLoopback PortStatus = "loopback"
 	// PortIgnored: would otherwise send notes, but is in the Ignore list.
 	PortIgnored PortStatus = "ignored"
 	// PortRestricted: Match is set and this port's name doesn't contain it.
@@ -314,6 +319,8 @@ func classifyOne(name, needle string, lower []string) PortStatus {
 		}
 	} else if looksLikeDAWPort(name) {
 		return PortDAWOnly
+	} else if looksLikeLoopbackPort(name) {
+		return PortLoopback
 	}
 	if containsAny(ln, lower) {
 		return PortIgnored

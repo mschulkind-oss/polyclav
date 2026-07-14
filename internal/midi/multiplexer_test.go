@@ -199,6 +199,28 @@ func TestMultiplexerMatchOverridesDAWExclusion(t *testing.T) {
 	}
 }
 
+func TestMultiplexerExcludesLoopbackPortByDefault(t *testing.T) {
+	// A live daemon must never treat ALSA's "Midi Through" virtual port as
+	// an ordinary keyboard -- internal/midiprobe/internal/web's
+	// real-hardware loopback tests deliberately send test traffic through
+	// it, and this project's dev jails share the host's real ALSA
+	// sequencer bus (see looksLikeLoopbackPort's doc comment).
+	rig := newFakeMuxRig()
+	rig.setNames([]string{"Midi Through:Midi Through Port-0 14:0", "Keyboard A"})
+	m := newTestMultiplexer(rig, "", nil)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard A") }, "keyboard opens")
+	time.Sleep(30 * time.Millisecond) // give the loopback port every chance to (wrongly) open too
+	if rig.isActive("Midi Through:Midi Through Port-0 14:0") {
+		t.Error("the Midi Through loopback port must be excluded by default (empty Match)")
+	}
+	if got := m.PortCount(); got != 1 {
+		t.Errorf("PortCount = %d, want 1 (loopback port excluded)", got)
+	}
+}
+
 func TestMultiplexerMatchRestrictsToSubstring(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Yamaha P-125", "Some Other Synth"})
@@ -456,6 +478,34 @@ func TestClassifyPortsDefaultMode(t *testing.T) {
 		if info.Status != want[info.Name] {
 			t.Errorf("%s: status = %s, want %s", info.Name, info.Status, want[info.Name])
 		}
+	}
+}
+
+func TestClassifyPortsLoopbackPortExcludedByDefault(t *testing.T) {
+	names := []string{"Midi Through:Midi Through Port-0 14:0", "Yamaha P-125"}
+	// No explicit ignore entry for the loopback port -- it must be
+	// excluded on name alone, same as a DAW port, so real-hardware
+	// loopback tests (internal/midiprobe, internal/web) can never leak
+	// their test traffic into a live default-config daemon's note stream.
+	got := ClassifyPorts(names, "", nil)
+	want := map[string]PortStatus{
+		"Midi Through:Midi Through Port-0 14:0": PortLoopback,
+		"Yamaha P-125":                          PortSendingNotes,
+	}
+	for _, info := range got {
+		if info.Status != want[info.Name] {
+			t.Errorf("%s: status = %s, want %s", info.Name, info.Status, want[info.Name])
+		}
+	}
+}
+
+func TestClassifyPortsExplicitMatchBypassesLoopbackExclusion(t *testing.T) {
+	// An explicit Match is trusted as intentional, same as it bypasses the
+	// DAW exclusion (TestClassifyPortsExplicitMatch) -- someone who
+	// deliberately asks for "through" gets it.
+	got := ClassifyPorts([]string{"Midi Through:Midi Through Port-0 14:0"}, "through", nil)
+	if len(got) != 1 || got[0].Status != PortSendingNotes {
+		t.Errorf("ClassifyPorts with explicit Match on the loopback port = %+v, want PortSendingNotes", got)
 	}
 }
 
