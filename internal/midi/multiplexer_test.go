@@ -299,7 +299,26 @@ func TestMultiplexerSetIgnoreClosesAlreadyOpenPort(t *testing.T) {
 	}
 }
 
-func TestMultiplexerSetIgnoreIsCaseInsensitiveExactMatch(t *testing.T) {
+func TestMultiplexerSetIgnoreIsCaseInsensitiveSubstringMatch(t *testing.T) {
+	rig := newFakeMuxRig()
+	rig.setNames([]string{"Keyboard A", "Keyboard B"})
+	m := newTestMultiplexer(rig, "", nil)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard A") && rig.isActive("Keyboard B") }, "both open")
+
+	// A substring shared by both names ignores both -- substring match,
+	// same model as port_match (docs/MIDI_IGNORE_MATCHING.md).
+	m.SetIgnore([]string{"Keyboard"})
+	waitMuxCondition(t, func() bool { return !rig.isActive("Keyboard A") && !rig.isActive("Keyboard B") }, "both close on shared substring")
+
+	// Different case, still matches.
+	m.SetIgnore([]string{"keyboard a"})
+	waitMuxCondition(t, func() bool { return !rig.isActive("Keyboard A") && rig.isActive("Keyboard B") }, "A closes, B reopens, on case-insensitive substring match")
+}
+
+func TestMultiplexerSetIgnoreEmptyEntryDoesNotMatchEverything(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Keyboard A"})
 	m := newTestMultiplexer(rig, "", nil)
@@ -308,16 +327,11 @@ func TestMultiplexerSetIgnoreIsCaseInsensitiveExactMatch(t *testing.T) {
 
 	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard A") }, "A opens")
 
-	// A substring of the name must NOT ignore it (exact match only).
-	m.SetIgnore([]string{"Keyboard"})
+	m.SetIgnore([]string{""})
 	time.Sleep(30 * time.Millisecond)
 	if !rig.isActive("Keyboard A") {
-		t.Error("a substring in Ignore must not exclude a port -- exact match only")
+		t.Error("an empty Ignore entry must not act as a match-everything wildcard")
 	}
-
-	// Different case, exact name, must ignore it.
-	m.SetIgnore([]string{"keyboard a"})
-	waitMuxCondition(t, func() bool { return !rig.isActive("Keyboard A") }, "A closes on case-insensitive exact match")
 }
 
 func TestMultiplexerIgnoreRoundTrip(t *testing.T) {
@@ -463,14 +477,29 @@ func TestClassifyPortsExplicitMatch(t *testing.T) {
 	}
 }
 
-func TestClassifyPortsIgnoreCaseInsensitiveExact(t *testing.T) {
+func TestClassifyPortsIgnoreCaseInsensitiveSubstring(t *testing.T) {
 	got := ClassifyPorts([]string{"Some Synth"}, "", []string{"some synth"})
 	if len(got) != 1 || got[0].Status != PortIgnored {
 		t.Errorf("ClassifyPorts with a different-case exact ignore entry = %+v, want PortIgnored", got)
 	}
 
+	// A stable substring (not the full, address-suffixed name) must
+	// match -- this is the whole point: docs/MIDI_IGNORE_MATCHING.md.
 	got = ClassifyPorts([]string{"Some Synth"}, "", []string{"Some"})
+	if len(got) != 1 || got[0].Status != PortIgnored {
+		t.Errorf("ClassifyPorts with a substring ignore entry = %+v, want PortIgnored", got)
+	}
+
+	// An ALSA-style trailing address doesn't defeat a substring that
+	// omits it -- the acceptance scenario from the handoff doc.
+	got = ClassifyPorts([]string{"CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0"}, "", []string{"CASIO USB-MIDI"})
+	if len(got) != 1 || got[0].Status != PortIgnored {
+		t.Errorf("ClassifyPorts with a stable-name substring vs. an address-suffixed port = %+v, want PortIgnored", got)
+	}
+
+	// A non-matching substring must not ignore an unrelated port.
+	got = ClassifyPorts([]string{"Launchkey MK4 61 MIDI In"}, "", []string{"CASIO USB-MIDI"})
 	if len(got) != 1 || got[0].Status != PortSendingNotes {
-		t.Errorf("ClassifyPorts with a substring-only ignore entry = %+v, want PortSendingNotes (exact match only)", got)
+		t.Errorf("ClassifyPorts with a non-matching ignore entry = %+v, want PortSendingNotes", got)
 	}
 }

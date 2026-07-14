@@ -28,13 +28,17 @@ type MultiplexerConfig struct {
 	// independently via its own fixed detection string.
 	Match string
 
-	// Ignore lists exact port names (case-insensitive) to exclude from
-	// note input on top of Match/the DAW exclusion — a denylist, not an
-	// allowlist: a device NOT in this list just works the moment it's
-	// plugged in, without needing to be added anywhere first. This is
-	// only the INITIAL value seeded at construction; SetIgnore replaces
-	// it live thereafter (the web UI's devices panel calls it on a
-	// running daemon — see internal/web's /api/midi/devices).
+	// Ignore lists case-insensitive SUBSTRINGS to exclude matching ports
+	// from note input on top of Match/the DAW exclusion — a denylist, not
+	// an allowlist: a device NOT matched by this list just works the
+	// moment it's plugged in, without needing to be added anywhere first.
+	// Substring (not exact) matching mirrors Match/port_match: a stable
+	// fragment of the name (e.g. "CASIO USB-MIDI") keeps matching across
+	// a replug/reboot even though ALSA appends a volatile " <client>:<port>"
+	// address to the full port name (docs/MIDI_IGNORE_MATCHING.md). This is
+	// only the INITIAL value seeded at construction; SetIgnore replaces it
+	// live thereafter (the web UI's devices panel calls it on a running
+	// daemon — see internal/web's /api/midi/devices).
 	Ignore []string
 
 	PollInterval time.Duration
@@ -87,8 +91,8 @@ type Multiplexer struct {
 
 	mu     sync.Mutex
 	ports  map[string]*muxPort
-	ignore []string        // as given (original case) — for display/persistence
-	lower  map[string]bool // lowercased mirror of ignore — for fast case-insensitive lookup
+	ignore []string // as given (original case) — for display/persistence
+	lower  []string // lowercased mirror of ignore — substrings to match against a lowercased port name
 
 	// lastPortNames backs the port-list-changed debug log in tick() —
 	// only ever touched from the Run() goroutine, so no lock needed.
@@ -128,27 +132,28 @@ func NewMultiplexer(logger *slog.Logger, cfg MultiplexerConfig) *Multiplexer {
 		cfg:    cfg,
 		ports:  make(map[string]*muxPort),
 		ignore: append([]string(nil), cfg.Ignore...),
-		lower:  lowerSet(cfg.Ignore),
+		lower:  lowerAll(cfg.Ignore),
 	}
 }
 
-func lowerSet(names []string) map[string]bool {
-	set := make(map[string]bool, len(names))
-	for _, n := range names {
-		set[strings.ToLower(n)] = true
+func lowerAll(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = strings.ToLower(n)
 	}
-	return set
+	return out
 }
 
-// SetIgnore replaces the live ignore list (exact, case-insensitive
-// device names). Safe to call from any goroutine — the web UI's PUT
-// /api/midi/devices handler calls it directly on a running daemon. Takes
-// effect on the next poll tick (at most PollInterval away), same as any
-// other hotplug change; it does not force an immediate re-tick.
+// SetIgnore replaces the live ignore list (case-insensitive substrings —
+// see MultiplexerConfig.Ignore). Safe to call from any goroutine — the
+// web UI's PUT /api/midi/devices handler calls it directly on a running
+// daemon. Takes effect on the next poll tick (at most PollInterval
+// away), same as any other hotplug change; it does not force an
+// immediate re-tick.
 func (m *Multiplexer) SetIgnore(names []string) {
 	m.mu.Lock()
 	m.ignore = append([]string(nil), names...)
-	m.lower = lowerSet(names)
+	m.lower = lowerAll(names)
 	m.mu.Unlock()
 }
 
@@ -243,9 +248,9 @@ func (m *Multiplexer) tick(ctx context.Context) {
 }
 
 // wantedPorts applies Match (or, absent Match, the DAW-role exclusion),
-// then subtracts lower (a snapshot of the live ignore set — see
-// SetIgnore) from the currently-enumerated port names.
-func (m *Multiplexer) wantedPorts(names []string, lower map[string]bool) map[string]bool {
+// then subtracts any name matching lower (a snapshot of the live ignore
+// substrings — see SetIgnore) from the currently-enumerated port names.
+func (m *Multiplexer) wantedPorts(names []string, lower []string) map[string]bool {
 	needle := strings.ToLower(m.cfg.Match)
 	wanted := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -285,10 +290,10 @@ type PortInfo struct {
 // ClassifyPorts classifies every name in names against match/ignore,
 // sharing classifyOne with wantedPorts so the CLI (`polyclav midi list`)
 // and the web devices panel can never disagree with what the
-// Multiplexer is actually doing. ignore is matched case-insensitively
-// and exactly (not substring), same as SetIgnore.
+// Multiplexer is actually doing. ignore entries are matched
+// case-insensitively as SUBSTRINGS, same as SetIgnore.
 func ClassifyPorts(names []string, match string, ignore []string) []PortInfo {
-	lower := lowerSet(ignore)
+	lower := lowerAll(ignore)
 	needle := strings.ToLower(match)
 	out := make([]PortInfo, len(names))
 	for i, n := range names {
@@ -300,8 +305,8 @@ func ClassifyPorts(names []string, match string, ignore []string) []PortInfo {
 // classifyOne is the single source of truth behind both wantedPorts'
 // pass/fail decision and ClassifyPorts' descriptive label. needle is
 // already lowercased (the caller's match, or "" for the default mode);
-// lower is a lowercased ignore-name set.
-func classifyOne(name, needle string, lower map[string]bool) PortStatus {
+// lower is a lowercased list of ignore substrings.
+func classifyOne(name, needle string, lower []string) PortStatus {
 	ln := strings.ToLower(name)
 	if needle != "" {
 		if !strings.Contains(ln, needle) {
@@ -310,10 +315,25 @@ func classifyOne(name, needle string, lower map[string]bool) PortStatus {
 	} else if looksLikeDAWPort(name) {
 		return PortDAWOnly
 	}
-	if lower[ln] {
+	if containsAny(ln, lower) {
 		return PortIgnored
 	}
 	return PortSendingNotes
+}
+
+// containsAny reports whether ln (an already-lowercased port name)
+// contains any of substrs (already-lowercased ignore entries) — mirrors
+// port_match's substring semantics so an ignore_devices entry survives a
+// replug/reboot ALSA-address change (docs/MIDI_IGNORE_MATCHING.md). An
+// empty entry is skipped rather than treated as a match-everything
+// wildcard.
+func containsAny(ln string, substrs []string) bool {
+	for _, s := range substrs {
+		if s != "" && strings.Contains(ln, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Multiplexer) open(ctx context.Context, name string) {

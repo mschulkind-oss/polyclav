@@ -88,7 +88,7 @@ func main() {
 	playLoop := flag.Bool("loop", false, "loop the --play clip until shutdown")
 	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
 	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in polyclav.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
-	midiIgnoreFlag := flag.String("midi-ignore", "", "comma-separated exact MIDI device names to exclude from note input, overriding [midi].ignore_devices in polyclav.toml for this run (see `polyclav midi list` for exact names)")
+	midiIgnoreFlag := flag.String("midi-ignore", "", "comma-separated MIDI device name substrings to exclude from note input, overriding [midi].ignore_devices in polyclav.toml for this run (see `polyclav midi list` for names)")
 	logLevelFlag := flag.String("log-level", "info", "log verbosity: debug, info, warn, or error. debug adds MIDI hotplug port-list-changed lines — cheap enough to leave on")
 	flag.Parse()
 

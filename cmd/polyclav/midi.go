@@ -28,7 +28,7 @@ func runMIDI(args []string) int {
 
 // runMIDIList prints every currently-connected MIDI input port with its
 // live classification (sends notes / DAW-only / ignored / restricted),
-// so there is zero guessing about exact names to put in
+// so there is zero guessing about what names/substrings to put in
 // [midi].ignore_devices, --midi-ignore, or [midi].port_match — the
 // single most common friction point before this existed (previously
 // `aconnect -l`, ALSA-specific and not obviously the right tool).
@@ -73,8 +73,10 @@ func runMIDIList(args []string) int {
 		fmt.Printf("  %-10s %s\n", midiStatusLabel(info.Status), info.Name)
 	}
 	fmt.Println()
-	fmt.Println("Use the exact names above in polyclav.toml's [midi].ignore_devices,")
-	fmt.Println(`or --midi-ignore "name one,name two" for a one-off override.`)
+	fmt.Println("Use a stable substring of the names above in polyclav.toml's")
+	fmt.Println(`[midi].ignore_devices, or --midi-ignore "name one,name two" for a`)
+	fmt.Println("one-off override. Matching ignores the trailing ALSA address, so it")
+	fmt.Println("survives a replug/reboot even if that address changes.")
 	return 0
 }
 

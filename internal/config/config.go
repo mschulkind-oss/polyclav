@@ -66,14 +66,19 @@ type MIDIConfig struct {
 	// screen/transport) are unaffected by this field — they're
 	// auto-detected by internal/launchkey.Reconciler independently.
 	PortMatch string `toml:"port_match"`
-	// IgnoreDevices lists exact MIDI input port names (case-insensitive)
-	// to exclude from note input, on top of PortMatch/the default
-	// DAW-port exclusion. Empty (the default) ignores nothing.
+	// IgnoreDevices lists case-insensitive SUBSTRINGS of MIDI input port
+	// names to exclude from note input, on top of PortMatch/the default
+	// DAW-port exclusion. Empty (the default) ignores nothing. Substring
+	// (not exact) matching mirrors PortMatch: a stable name fragment
+	// (e.g. "CASIO USB-MIDI") keeps matching even though ALSA appends a
+	// volatile " <client>:<port>" address to the full port name that
+	// shifts on replug/reboot (docs/MIDI_IGNORE_MATCHING.md).
 	//
 	// Deliberately a DENYLIST, not an allowlist: a fresh device plugged
 	// in later just works without needing to be added here first — the
 	// user opts specific ALREADY-CONNECTED devices out, not in. `polyclav
-	// midi list` shows exact names to copy in; the web UI's devices panel
+	// midi list` shows names to copy in (a short stable fragment is
+	// enough, no need for the full string); the web UI's devices panel
 	// (GET/PUT /api/midi/devices) edits this same list live, optionally
 	// persisting it back into this field via a managed block.
 	IgnoreDevices []string `toml:"ignore_devices"`

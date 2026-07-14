@@ -284,11 +284,18 @@ classification) if you just want a raw port list.
 
 #### `ignore_devices` — excluding specific keyboards
 
-`ignore_devices` is a **denylist**, not an allowlist: list exact port names
-(case-insensitive, copy them from `polyclav midi list`) to exclude from note
+`ignore_devices` is a **denylist**, not an allowlist: list case-insensitive
+**substrings** of port names (copy a stable fragment from `polyclav midi
+list` — no need for the full string) to exclude matching ports from note
 input on top of `port_match`/the DAW exclusion. A device plugged in later
-that ISN'T in this list just works — you never need to add anything to make
-a new keyboard send notes, only to silence one you already have.
+that ISN'T matched by this list just works — you never need to add anything
+to make a new keyboard send notes, only to silence one you already have.
+
+Substring matching (not exact) is deliberate: the full port name ALSA
+reports ends in a volatile ` <client>:<port>` address (e.g. ` 36:0`) that
+shifts on replug/reboot/device-order changes. A stable fragment like
+`"CASIO USB-MIDI"` keeps matching across that shift; baking in the address
+would silently stop working the next time it changes.
 
 ```toml
 [midi]

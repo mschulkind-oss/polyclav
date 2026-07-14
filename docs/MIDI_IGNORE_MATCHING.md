@@ -1,5 +1,11 @@
 # Handoff: make `[midi].ignore_devices` robust to the ALSA port address
 
+## Status: implemented
+
+`ignore_devices` entries now match as a case-insensitive substring of the
+port name, same as `port_match` — see `internal/midi/multiplexer.go`
+`classifyOne`/`containsAny`. Kept below as the original problem writeup.
+
 ## Problem
 
 `[midi].ignore_devices` is meant to exclude a specific keyboard from sending
@@ -57,8 +63,8 @@ ignore_devices = ["CASIO USB-MIDI"]
 ## Where it lives (pointers, for orientation only)
 
 - Match logic: `internal/midi/multiplexer.go` `classifyOne` / the lowercased
-  exact-set it builds (`lowerSet`). `port_match`'s substring path is right next
-  to it as the model to mirror.
+  substring list it builds (`lowerAll`). `port_match`'s substring path is
+  right next to it as the model it mirrors.
 - Port names come from `in.String()` — `internal/midi/midi.go` `portNames`.
 - Config field + doc comment: `internal/config/config.go` (`IgnoreDevices`).
 - CLI hint: `cmd/polyclav/midi.go` (`runMIDIList`).
