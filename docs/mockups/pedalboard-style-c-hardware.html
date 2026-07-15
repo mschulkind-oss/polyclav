@@ -155,13 +155,18 @@ button{font:inherit;color:inherit}
 .mknob{
   width:36px;height:36px;border-radius:50%;position:relative;
   background:radial-gradient(circle at 33% 28%, var(--cap1,#4e4e4e), var(--cap2,#232323) 58%, #0e0e0e 100%);
-  box-shadow:2px 4px 6px rgba(0,0,0,.5), inset 0 1px 1px rgba(255,255,255,.28), inset 0 -2px 3px rgba(0,0,0,.55);
+  box-shadow:2px 4px 6px rgba(0,0,0,.5), inset 1px 1px 1px rgba(255,255,255,.38), inset 0 -2px 3px rgba(0,0,0,.55);
 }
 .mknob::before{ /* knurled rim */
   content:'';position:absolute;inset:0;border-radius:50%;
   background:repeating-conic-gradient(rgba(255,255,255,.17) 0deg 5deg, rgba(0,0,0,.5) 5deg 10deg);
   -webkit-mask:radial-gradient(circle, transparent 57%, #000 60%);
   mask:radial-gradient(circle, transparent 57%, #000 60%);
+}
+.mknob::after{ /* crisp key-light specular (top-left, matches scene light) */
+  content:'';position:absolute;left:13%;top:7%;width:42%;height:30%;border-radius:50%;
+  background:radial-gradient(closest-side, rgba(255,255,255,.55), rgba(255,255,255,0) 82%);
+  transform:rotate(-32deg);pointer-events:none;
 }
 .mknob .pt{position:absolute;inset:0;transform:rotate(var(--a,-135deg))}
 .mknob .pt::before{
@@ -203,19 +208,14 @@ button{font:inherit;color:inherit}
 }
 .stomp-pad:active{transform:translateY(1px)}
 
-/* TS-style body-coloured plate switch */
-.stomp-plate{
-  width:74%;height:42px;border:0;border-radius:8px;position:relative;
-  background:
-    radial-gradient(90% 120% at 30% 0%, rgba(255,255,255,.16), transparent 55%),
-    linear-gradient(165deg,#43ad57,#2e8a41 60%,#23703a);
-  box-shadow:
-    inset 0 1px 1px rgba(255,255,255,.3),
-    inset 0 -3px 5px rgba(0,0,0,.4),
-    2px 4px 6px rgba(0,0,0,.45),
-    inset 0 0 0 1px rgba(0,0,0,.35);
+/* round stomp seated on a hex base nut (Screamer) */
+.stomp.hexbase::after{
+  content:'';position:absolute;left:50%;top:50%;width:60px;height:54px;z-index:-1;
+  transform:translate(-50%,-50%);
+  clip-path:polygon(50% 0,93% 25%,93% 75%,50% 100%,7% 75%,7% 25%);
+  background:linear-gradient(155deg,#d6dade,#90969d 46%,#4b5158 94%);
+  filter:drop-shadow(2px 4px 4px rgba(0,0,0,.55));
 }
-.stomp-plate:active{transform:translateY(1px)}
 
 /* 1/4" jacks ----------------------------------------------------- */
 .jack{
@@ -236,31 +236,28 @@ button{font:inherit;color:inherit}
 /* ================================================================
    SCREEN 1 · PEDALBOARD SCENE
    ================================================================ */
+/* Full-bleed photographed board — no card framing. The plywood surface
+   runs edge-to-edge across the content area and feathers into the page
+   with a soft vignette, so it reads as a photograph, not a panel. */
 .board{
-  position:relative;border-radius:16px;
+  position:relative;
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(255,244,214,.06), transparent 58%),
     repeating-linear-gradient(45deg, rgba(255,255,255,.014) 0 2px, transparent 2px 4px),
     repeating-linear-gradient(-45deg, rgba(0,0,0,.06) 0 2px, transparent 2px 4px),
     linear-gradient(180deg,#211b13,#150f0a 80%);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.06),
-    inset 0 -16px 34px rgba(0,0,0,.5),
-    0 34px 60px -18px rgba(0,0,0,.85);
+  box-shadow:inset 0 -16px 34px rgba(0,0,0,.5);
 }
 .board::before{ /* photographic grain */
-  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  content:'';position:absolute;inset:0;pointer-events:none;
   background:var(--noise);opacity:.09;mix-blend-mode:overlay;z-index:3;
 }
-.board::after{ /* vignette */
-  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:3;
-  background:radial-gradient(135% 120% at 50% 26%, transparent 55%, rgba(0,0,0,.55));
-}
-.board-lip{
-  position:absolute;left:8px;right:8px;bottom:-13px;height:14px;z-index:0;
-  border-radius:0 0 13px 13px;
-  background:linear-gradient(180deg,#0f0b07,#050302);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 10px 18px rgba(0,0,0,.7);
+.board::after{ /* soft vignette feathering the bleed into the page */
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:3;
+  background:
+    linear-gradient(90deg, rgba(11,10,8,.8), transparent 8%, transparent 92%, rgba(11,10,8,.8)),
+    linear-gradient(180deg, rgba(11,10,8,.45), transparent 12%, transparent 80%, rgba(11,10,8,.6)),
+    radial-gradient(135% 120% at 50% 26%, transparent 55%, rgba(0,0,0,.5));
 }
 .velcro{ /* hook-and-loop strip under the pedal row */
   position:absolute;left:34px;right:34px;bottom:36px;height:36px;z-index:0;border-radius:3px;
@@ -270,18 +267,20 @@ button{font:inherit;color:inherit}
   box-shadow:inset 0 1px 2px rgba(0,0,0,.7), inset 0 -1px 0 rgba(255,255,255,.03);
 }
 .dymo{
-  position:absolute;top:20px;left:30px;z-index:2;transform:rotate(-.7deg);
+  position:absolute;top:20px;left:max(30px, calc(50% - 590px));z-index:2;transform:rotate(-.7deg);
   font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.3em;
   color:#f2f2f2;text-shadow:0 1px 1px #000;
   background:linear-gradient(180deg,#232323,#101010 55%,#1b1b1b);
   padding:4px 12px 4px 14px;border-radius:2px;
   box-shadow:0 2px 3px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.14);
 }
-.dymo.right{left:auto;right:30px;transform:rotate(.5deg)}
+.dymo.right{left:auto;right:max(30px, calc(50% - 590px));transform:rotate(.5deg)}
+.dymo svg{vertical-align:-1.5px;margin:0 2px;filter:drop-shadow(0 1px 0 rgba(0,0,0,.7))}
 .chain{
   position:relative;z-index:1;
   display:flex;align-items:flex-end;justify-content:space-between;
-  padding:66px 30px 42px;
+  padding:66px 30px 46px;
+  max-width:1240px;margin:0 auto; /* pedals hold the column; texture bleeds past */
 }
 #cables{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:visible}
 .cable-shadow{fill:none;stroke:rgba(0,0,0,.42);stroke-width:7}
@@ -340,6 +339,7 @@ button{font:inherit;color:inherit}
 .screamer .pname{font-family:var(--font-slab);font-weight:700;letter-spacing:.08em}
 .screamer .mknob{--cap1:#3c3c3c;--cap2:#151515;--pt:#f6f1de}
 .screamer .mval{color:#12300f;opacity:.85}
+.screamer .foot{gap:9px} /* clearance for the hex base nut */
 
 /* --- ANALOG CHORUS (CE-2 blue) --- */
 .chorus{
@@ -487,6 +487,17 @@ button{font:inherit;color:inherit}
     inset 0 1px 2px rgba(255,255,255,.35),
     inset 0 -4px 7px rgba(0,0,0,.65),
     0 1px 2px rgba(0,0,0,.7);
+}
+.bigknob .cap::before{ /* crisp specular on the cap dome (key light, top-left) */
+  content:'';position:absolute;left:12%;top:6%;width:46%;height:34%;border-radius:50%;
+  background:radial-gradient(closest-side, rgba(255,255,255,.42), rgba(255,255,255,0) 80%);
+  transform:rotate(-30deg);pointer-events:none;
+}
+.bigknob .knurl::after{ /* machined rim catching the key light */
+  content:'';position:absolute;inset:0;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle at 27% 20%, rgba(255,255,255,.5), rgba(255,255,255,.12) 32%, transparent 55%);
+  -webkit-mask:radial-gradient(circle closest-side, transparent 78%, #000 82%);
+  mask:radial-gradient(circle closest-side, transparent 78%, #000 82%);
 }
 .bigknob .ptr{position:absolute;inset:12px;border-radius:50%;transform:rotate(-135deg)}
 .bigknob .ptr i{
@@ -756,6 +767,9 @@ button{font:inherit;color:inherit}
 
 /* narrow screens: let the scenes scroll inside themselves */
 .boardwrap, .rackwrap{overflow-x:auto;padding-bottom:18px}
+.boardwrap{ /* break out of the content column: true full-bleed scene */
+  width:100vw;margin-left:calc(50% - 50vw);
+}
 .board{min-width:1130px}
 .rack{min-width:1130px}
 @media (max-width:1180px){
@@ -780,13 +794,13 @@ button{font:inherit;color:inherit}
   <!-- ============ SCREEN 1 · PEDALBOARD ============ -->
   <section class="screen active" id="screen-pedalboard">
     <div class="note-row">
-      <span><b>Signal chain</b> — synth ▸ drive ▸ chorus ▸ trem ▸ delay ▸ bus</span>
+      <span><b>Signal chain</b> — synth › drive › chorus › trem › delay › bus</span>
       <span>Click a pedal to edit · stomp to bypass</span>
     </div>
     <div class="boardwrap">
       <div class="board" id="board">
         <div class="dymo">POLYCLAV · SIGNAL CHAIN</div>
-        <div class="dymo right">PWR 9V DC · ISOLATED</div>
+        <div class="dymo right">PWR 9V DC <svg viewBox="0 0 9 13" width="8" height="12" aria-hidden="true"><path d="M6 0 0 7.2h3.1L2.2 13 9 5.4H5.2L6 0z" fill="#f2f2f2"/></svg> ISOLATED</div>
         <div class="velcro" aria-hidden="true"></div>
         <div class="chain">
 
@@ -824,7 +838,7 @@ button{font:inherit;color:inherit}
             </div>
             <div class="foot">
               <span class="led"></span>
-              <button class="stomp-plate stomp-ctl" aria-label="Toggle Screamer bypass"></button>
+              <button class="stomp hexbase stomp-ctl" aria-label="Toggle Screamer bypass"></button>
             </div>
           </div>
 
@@ -954,7 +968,6 @@ button{font:inherit;color:inherit}
 
         </div>
         <svg id="cables" aria-hidden="true"></svg>
-        <div class="board-lip" aria-hidden="true"></div>
       </div>
     </div>
   </section>
@@ -962,7 +975,7 @@ button{font:inherit;color:inherit}
   <!-- ============ SCREEN 2 · PEDAL EDITOR ============ -->
   <section class="screen" id="screen-editor">
     <div class="note-row">
-      <button class="crumb" data-goto="pedalboard">◂ Pedalboard</button>
+      <button class="crumb" data-goto="pedalboard">‹ Pedalboard</button>
       <span><b>Pedal editor</b> — Carbon Delay DL-380</span>
       <span>Drag knobs vertically · double-click resets</span>
     </div>
@@ -1025,12 +1038,12 @@ button{font:inherit;color:inherit}
         </div>
         <div class="sc-row">
           <span class="sc-label">Position</span>
-          <span class="sc-val mono">… ▸ TREM ▸ <b>DELAY</b> ▸ BUS</span>
+          <span class="sc-val mono">… › TREM › <b>DELAY</b> › BUS</span>
         </div>
         <div class="sc-div"></div>
         <button class="hw-btn" id="reset-defaults"><span>RESET TO DEFAULTS</span></button>
         <div class="sc-note mono">defaults · time 500 ms · feedback 30% · mix 50%</div>
-        <div class="sc-note mono">double-click any knob → its default</div>
+        <div class="sc-note mono">double-click any knob › its default</div>
         <div class="sc-div"></div>
         <span class="sc-label">Hardware</span>
         <div class="hw-hint mono">Launchkey: FX &gt; DELAY — K1 Time / K2 Feedback / K3 Mix</div>
@@ -1078,7 +1091,7 @@ button{font:inherit;color:inherit}
                 </div>
                 <div class="kval mono" id="m1-val">64%</div>
                 <div class="ksub mono" id="m1-sub">sends 38% · Delay Mix</div>
-                <div class="tape" style="--tilt:-1.4deg"><i class="dot" style="background:#128f66"></i>Echo → Delay Mix 0–60%</div>
+                <div class="tape" style="--tilt:-1.4deg"><i class="dot" style="background:#128f66"></i>Echo › Delay Mix 0–60%</div>
               </div>
 
               <!-- M2 Shimmer -->
@@ -1099,7 +1112,7 @@ button{font:inherit;color:inherit}
                 </div>
                 <div class="kval mono" id="m2-val">31%</div>
                 <div class="ksub mono" id="m2-sub">sends 31% · Chorus Depth</div>
-                <div class="tape" style="--tilt:1.1deg"><i class="dot" style="background:#2f6fc4"></i>Shimmer → Chorus Depth 0–100%</div>
+                <div class="tape" style="--tilt:1.1deg"><i class="dot" style="background:#2f6fc4"></i>Shimmer › Chorus Depth 0–100%</div>
               </div>
 
               <!-- M3 Grit -->
@@ -1120,7 +1133,7 @@ button{font:inherit;color:inherit}
                 </div>
                 <div class="kval mono" id="m3-val">78%</div>
                 <div class="ksub mono" id="m3-sub">sends 62% · Drive</div>
-                <div class="tape" style="--tilt:-.8deg"><i class="dot" style="background:#3f9a2f"></i>Grit → Drive 0–80%</div>
+                <div class="tape" style="--tilt:-.8deg"><i class="dot" style="background:#3f9a2f"></i>Grit › Drive 0–80%</div>
               </div>
 
               <!-- M4–M8 unassigned -->
