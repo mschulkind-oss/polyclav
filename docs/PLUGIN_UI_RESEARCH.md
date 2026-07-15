@@ -160,7 +160,16 @@ enclosure color + knob style riffing on its hardware archetype
 cream for tremolo, TS green for drive).
 
 **Answer:**
-> _(empty — fill in when decided)_
+> **(b) Flat-modern — decided 2026-07-14** after comparing the three
+> built studies (`docs/mockups/style-compare.html`). Rationale: the
+> simple visual language keeps design-iteration cost low and
+> composition free, while color/graphics/motion still carry usability
+> (per-pedal hues, role glyphs + gate markers, parameter-truthful
+> animation, per-pedal signature modules for personality). Must be
+> scalable: rem-based UI-scale framework with a user-facing size
+> control, no fixed heights. Reference spec:
+> `docs/mockups/pedalboard-style-b-flat-modern.html` (v2); the design
+> now moves in-tree as React components on a hidden `/app/mockup` page.
 
 ### 2. Do the pedals stay theme-aware?
 
