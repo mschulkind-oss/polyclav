@@ -70,8 +70,32 @@ run *args: build
 #   daemon — air rebuilds (just build-bin) + restarts on go/rs/toml/h saves
 #   web    — next dev with HMR on :3000, /api/* proxied to the daemon :8666
 # Browse http://localhost:3000/app/ (mockup playground: /app/mockup/).
+# ⚠ :8666 is the daemon's own port — it serves the web build EMBEDDED at
+#   compile time and NEVER auto-reloads. If "nothing reloads", check you're
+#   on :3000, not :8666.
+# air is mise-pinned (mise.toml "go:github.com/air-verse/air"): on a fresh
+# checkout the shim exists but errors until `mise install` runs. If air dies
+# at startup, hivemind takes next dev down with it — so pre-flight both tools
+# and fail loudly instead of flashing a dead hivemind.
 # Auto-reloading dev loop for both halves (hivemind runs Procfile.dev).
 dev:
+    @if ! air -v >/dev/null 2>&1; then \
+        echo "air is missing or its mise shim errors — trying 'mise install' once ..."; \
+        command -v mise >/dev/null 2>&1 && mise install; \
+        if ! air -v >/dev/null 2>&1; then \
+            echo "error: air still unusable — fix with: mise install  (or: go install github.com/air-verse/air@latest)"; \
+            exit 1; \
+        fi; \
+    fi
+    @if ! command -v hivemind >/dev/null 2>&1; then \
+        echo "error: hivemind not found — install it (nix profile install nixpkgs#hivemind / brew install hivemind / go install github.com/DarthSim/hivemind@latest)"; \
+        exit 1; \
+    fi
+    @echo "────────────────────────────────────────────────────────────────────"
+    @echo "  dev UI:   http://localhost:3000/app/   (auto-reloads; mockup at /app/mockup/)"
+    @echo "  WARNING:  :8666 serves the daemon's EMBEDDED web build — it does"
+    @echo "            NOT auto-reload. Always browse :3000 during dev."
+    @echo "────────────────────────────────────────────────────────────────────"
     hivemind Procfile.dev
 
 # Build and install both binaries to PREFIX/bin (default ~/.local/bin).

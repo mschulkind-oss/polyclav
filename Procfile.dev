@@ -4,5 +4,9 @@
 # web:    next dev serves the app on :3000 with HMR and proxies /api/* to
 #         the daemon (next.config.ts).
 # Browse http://localhost:3000/app/ for live-reloading UI work.
+# ⚠ :8666 serves the web build EMBEDDED in the daemon binary — it never
+#   auto-reloads (only `just build` refreshes it). Use :3000 during dev.
+# If the daemon line dies instantly, air is probably not installed yet
+# (`mise install`); hivemind then kills the web process too by design.
 daemon: air
 web: cd web && pnpm dev
