@@ -21,16 +21,25 @@ export interface LfoSectionProps {
   lfo?: LfoValues;
 }
 
-/** Triangle wave, 26-unit wavelength so `pb-wavescroll` loops seamlessly. */
+/** Triangle wavelength in SVG user units — the scroll period `pb-wavescroll` translates by. */
+export const LFO_WAVELEN = 26;
+/** viewBox width in SVG user units — the visible scroll window. */
+const VIEW_W = 118;
+
+/**
+ * Triangle wave overdrawn ≥ one wavelength past the visible window so the
+ * one-wavelength `pb-wavescroll` translate loops seamlessly (the svg clips
+ * the overdraw via `pb-scroll-clip`).
+ */
 export function lfoTriPath(depth: number): string {
-  const wavelen = 26;
+  const wl = LFO_WAVELEN;
   const mid = 13;
   const amp = 2 + (depth / 100) * 8;
   const top = (mid - amp).toFixed(2);
   const bot = (mid + amp).toFixed(2);
   let d = `M0 ${mid}`;
-  for (let x = 0; x < 118 + wavelen; x += wavelen) {
-    d += ` L${x + wavelen / 4} ${top} L${x + (3 * wavelen) / 4} ${bot} L${x + wavelen} ${mid}`;
+  for (let x = 0; x < VIEW_W + wl; x += wl) {
+    d += ` L${x + wl / 4} ${top} L${x + (3 * wl) / 4} ${bot} L${x + wl} ${mid}`;
   }
   return d;
 }
@@ -66,8 +75,16 @@ export function LfoSection({ lfo = LFO_DEFAULTS }: LfoSectionProps = {}) {
         <span className="pb-slot-ix pb-num">{formatValue(lfo.rateHz, s.rateHz)}</span>
       </div>
       <div className="pb-viz pb-scope-viz" aria-hidden="true">
-        <svg className="pb-scope-svg" viewBox="0 0 118 26" aria-hidden="true">
-          <g className="pb-wave-anim" style={{ "--pb-wave-cycle": cycle } as CSSProperties}>
+        <svg className="pb-scope-svg pb-scroll-clip" viewBox="0 0 118 26" aria-hidden="true">
+          <g
+            className="pb-wave-anim"
+            style={
+              {
+                "--pb-wave-cycle": cycle,
+                "--pb-scroll-period": `${LFO_WAVELEN}px`,
+              } as CSSProperties
+            }
+          >
             <path d={lfoTriPath(lfo.depth)} strokeWidth="1.5" strokeLinejoin="round" />
           </g>
         </svg>

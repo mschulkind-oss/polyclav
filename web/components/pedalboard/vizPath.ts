@@ -16,3 +16,16 @@ export function polyPath(
   }
   return d;
 }
+
+/**
+ * Largest x coordinate in an absolute M/L path — the drawn x-extent. The
+ * scrolling vizzes' seamless-loop canon requires extent ≥ viewBox width +
+ * scroll period; their regression tests assert it with this.
+ */
+export function pathMaxX(d: string): number {
+  let max = Number.NEGATIVE_INFINITY;
+  for (const m of d.matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)/g)) {
+    max = Math.max(max, Number(m[1]));
+  }
+  return max;
+}

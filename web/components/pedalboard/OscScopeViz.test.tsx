@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { OscScopeViz, scopePath } from "@/components/pedalboard/OscScopeViz";
+import { OscScopeViz, SCOPE_PERIOD, scopePath } from "@/components/pedalboard/OscScopeViz";
+import { pathMaxX } from "@/components/pedalboard/vizPath";
 import { OSC_WAVES } from "@/lib/pedalboard/model";
 
 describe("scopePath", () => {
@@ -33,5 +34,19 @@ describe("OscScopeViz", () => {
     const after = container.querySelector(".pb-scope path")?.getAttribute("d");
     expect(after).not.toBe(before);
     expect(after).toBe(scopePath("square"));
+  });
+
+  it("seamless loop: clipped window, ≥ one-period overdraw, translate = drawn period", () => {
+    const { container } = render(<OscScopeViz wave="tri" />);
+    const svg = container.querySelector("svg");
+    // the overdraw must be clipped — `:where(.pb-root) svg` leaves overflow visible
+    expect(svg?.classList.contains("pb-scroll-clip")).toBe(true);
+    const viewW = Number(svg?.getAttribute("viewBox")?.split(" ")[2]);
+    const g = container.querySelector<SVGGElement>(".pb-scope");
+    // the keyframe translates by --pb-scroll-period; it must equal the drawn period
+    expect(g?.style.getPropertyValue("--pb-scroll-period")).toBe(`${SCOPE_PERIOD}px`);
+    for (const w of OSC_WAVES) {
+      expect(pathMaxX(scopePath(w))).toBeGreaterThanOrEqual(viewW + SCOPE_PERIOD);
+    }
   });
 });

@@ -1,12 +1,15 @@
+import type { CSSProperties } from "react";
 import type { OscWave } from "@/lib/pedalboard/model";
 
 /**
  * The oscillator card's signature module: a scope trace of the selected
  * waveform, drifting slowly left (`pb-scopescroll`, synth.extra.css). The
- * viewBox shows exactly 2 periods; the path carries 3 so the one-period
- * translate loops seamlessly. Coordinates are SVG user units, not --u.
+ * viewBox shows exactly 2 periods; the path carries 3 and the svg clips the
+ * overdraw (`pb-scroll-clip`) so the one-period translate — exactly
+ * `--pb-scroll-period`, set below — loops seamlessly. Coordinates are SVG
+ * user units, not --u.
  */
-const PERIOD = 59; // 118 / 2 — two visible periods
+export const SCOPE_PERIOD = 59; // 118 / 2 — two visible periods
 const PERIODS = 3;
 const MID = 13;
 const AMP = 8;
@@ -31,32 +34,21 @@ export function scopePath(wave: OscWave): string {
   const top = MID - AMP;
   const bot = MID + AMP;
   const pts: Pt[] = [];
+  const p = SCOPE_PERIOD;
   for (let k = 0; k < PERIODS; k++) {
-    const x = k * PERIOD;
+    const x = k * p;
     switch (wave) {
       case "saw":
-        pts.push([x, bot], [x + PERIOD, top], [x + PERIOD, bot]);
+        pts.push([x, bot], [x + p, top], [x + p, bot]);
         break;
       case "square":
-        pts.push(
-          [x, top],
-          [x + PERIOD / 2, top],
-          [x + PERIOD / 2, bot],
-          [x + PERIOD, bot],
-          [x + PERIOD, top],
-        );
+        pts.push([x, top], [x + p / 2, top], [x + p / 2, bot], [x + p, bot], [x + p, top]);
         break;
       case "tri":
-        pts.push([x, MID], [x + PERIOD / 4, top], [x + (3 * PERIOD) / 4, bot], [x + PERIOD, MID]);
+        pts.push([x, MID], [x + p / 4, top], [x + (3 * p) / 4, bot], [x + p, MID]);
         break;
       case "pulse":
-        pts.push(
-          [x, top],
-          [x + PERIOD / 4, top],
-          [x + PERIOD / 4, bot],
-          [x + PERIOD, bot],
-          [x + PERIOD, top],
-        );
+        pts.push([x, top], [x + p / 4, top], [x + p / 4, bot], [x + p, bot], [x + p, top]);
         break;
     }
   }
@@ -71,9 +63,12 @@ export interface OscScopeVizProps {
 export function OscScopeViz({ wave }: OscScopeVizProps) {
   return (
     <div className="pb-viz pb-scope-viz" aria-hidden="true">
-      <svg className="pb-scope-svg" viewBox="0 0 118 26" aria-hidden="true">
+      <svg className="pb-scope-svg pb-scroll-clip" viewBox="0 0 118 26" aria-hidden="true">
         <line className="pb-axis" x1="0" y1="13" x2="118" y2="13" />
-        <g className="pb-scope">
+        <g
+          className="pb-scope"
+          style={{ "--pb-scroll-period": `${SCOPE_PERIOD}px` } as CSSProperties}
+        >
           <path d={scopePath(wave)} strokeWidth="1.5" strokeLinejoin="round" />
         </g>
       </svg>

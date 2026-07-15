@@ -30,8 +30,9 @@ Rules:
   (the reference's `sizeEl(el, size)`).
 - `dragValue(..., scale)` takes the current numeric `--pb-scale` so drag feel is
   identical at every zoom.
-- SVG internals (viewBox coordinates, `translateX(-26px)` in `pb-wavescroll`,
-  9px SVG text) are user units, NOT `--u` — leave them alone.
+- SVG internals (viewBox coordinates, the `--pb-scroll-period` translate in
+  `pb-wavescroll`/`pb-scopescroll`, 9px SVG text) are user units, NOT `--u` —
+  leave them alone.
 
 ## The alignment contract (role -> row)
 
@@ -92,7 +93,11 @@ A11y: `role="slider"`, `aria-valuemin/max/now/text`, `tabindex 0`,
 - **Signature viz**: `pb-viz`, `pb-fillpath` (drive heat), `pb-wave-anim` +
   `pb-wave-b` (chorus; set `--pb-wave-cycle` = 1/rate s), `pb-opto` +
   `pb-trem-ghost` (trem; set `--pb-trem-cycle` = 1/rate s), `pb-strip-tail`
-  (delay dots), `pb-axis`
+  (delay dots), `pb-axis`. Scrolling waves (chorus, LFO, osc scope): draw
+  viewBox width + ≥ 1 period, put `pb-scroll-clip` on the svg, and set
+  `--pb-scroll-period` (SVG user units, e.g. `26px`) on the animated group —
+  the `pb-wavescroll`/`pb-scopescroll` keyframes translate by exactly that,
+  so the loop reset lands on identical pixels
 - **Stomp**: `pb-stomp` (+`pb-on`, `pb-big`), `pb-stomp-dot`
 - **Bus**: `pb-bus`, `pb-meters` (`pb-mL`/`pb-mR`), `pb-bus-pair` +
   `pb-r1`/`pb-r2`/`pb-r3`, `pb-bus-sub`

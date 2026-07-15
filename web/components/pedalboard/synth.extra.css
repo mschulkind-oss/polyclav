@@ -92,8 +92,9 @@
 }
 @keyframes pb-scopescroll {
   to {
-    /* SVG user units, deliberately not --u: one scope period */
-    transform: translateX(-59px);
+    /* SVG user units, deliberately not --u: exactly one drawn scope period —
+       the viz sets --pb-scroll-period to the period its path uses */
+    transform: translateX(calc(-1 * var(--pb-scroll-period, 59px)));
   }
 }
 .pb-root .pb-fcurve {

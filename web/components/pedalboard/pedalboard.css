@@ -637,6 +637,12 @@
   stroke: none;
   opacity: 0.1;
 }
+/* Scrolling-viz window: every scroller overdraws ≥ 1 period past its
+   viewBox, so the svg must clip — the shared `:where(.pb-root) svg` rule
+   leaves overflow visible, which turns the loop reset into a visible snap. */
+.pb-scroll-clip {
+  overflow: hidden;
+}
 .pb-wave-anim {
   animation: pb-wavescroll var(--pb-wave-cycle, 1.1111s) linear infinite;
 }
@@ -648,8 +654,9 @@
 }
 @keyframes pb-wavescroll {
   to {
-    /* SVG user units, deliberately not --u: one 26-unit wavelength */
-    transform: translateX(-26px);
+    /* SVG user units, deliberately not --u: exactly one drawn wavelength —
+       each scroller sets --pb-scroll-period to the period its path uses */
+    transform: translateX(calc(-1 * var(--pb-scroll-period, 26px)));
   }
 }
 .pb-trem-ghost {
