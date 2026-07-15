@@ -24,6 +24,11 @@ export interface PedalboardProps {
   enabled?: Record<string, boolean>;
   /** Fired with the pedal id on stomp instead of flipping internal state. */
   onToggle?: (pedalId: string) => void;
+  /**
+   * Fired with the param id ("delay.time_ms", "bus.gain" …) when any board
+   * knob is turned, instead of updating internal state — pair with `values`.
+   */
+  onParamChange?: (paramId: string, value: number) => void;
 }
 
 /**
@@ -67,16 +72,30 @@ function signatureViz(pedal: PedalSpec, values: Record<string, number>, on: bool
  * The pedalboard screen (reference screen 1): source node → wires → the four
  * pedal strips with their signature modules → stereo bus, all on one shared
  * grid so every role row lines up, plus the rail hint and the role legend.
- * Standalone it owns its stomp state and shows the static mock values; the
- * playground page passes values/enabled/onToggle so the editor screen and the
- * board share one source of truth.
+ * Every knob on the board is adjustable in place — the editor is never
+ * required just to turn one. Standalone it owns its stomp and value state
+ * (seeded from the spec defaults); the playground page passes
+ * values/enabled/onToggle/onParamChange so the editor screen and the board
+ * share one source of truth.
  */
-export function Pedalboard({ onOpenPedal, values, enabled, onToggle }: PedalboardProps) {
+export function Pedalboard({
+  onOpenPedal,
+  values,
+  enabled,
+  onToggle,
+  onParamChange,
+}: PedalboardProps) {
   const [localEnabled, setLocalEnabled] = useState(INITIAL_ENABLED);
+  const [localValues, setLocalValues] = useState<Record<string, number>>({});
   const enabledMap = enabled ?? localEnabled;
+  const valueMap = values ?? localValues;
   const toggle = (pedalId: string) => {
     if (onToggle) onToggle(pedalId);
     else setLocalEnabled((prev) => ({ ...prev, [pedalId]: !(prev[pedalId] ?? true) }));
+  };
+  const changeParam = (paramId: string, value: number) => {
+    if (onParamChange) onParamChange(paramId, value);
+    else setLocalValues((prev) => ({ ...prev, [paramId]: value }));
   };
   return (
     <>
@@ -92,7 +111,7 @@ export function Pedalboard({ onOpenPedal, values, enabled, onToggle }: Pedalboar
           <SrcNode />
           <Wire />
           {CHAIN.map((pedal) => {
-            const vals = pedalValues(pedal, values);
+            const vals = pedalValues(pedal, valueMap);
             const on = enabledMap[pedal.id] ?? true;
             return (
               <Fragment key={pedal.id}>
@@ -105,17 +124,18 @@ export function Pedalboard({ onOpenPedal, values, enabled, onToggle }: Pedalboar
                   extra={signatureViz(pedal, vals, on)}
                   labelOff={pedal.id === "delay" ? "Parked" : undefined}
                   miniSizes={pedal.id === "delay" ? { "delay.time_ms": 44 } : undefined}
+                  onParamChange={changeParam}
                 />
                 <Wire />
               </Fragment>
             );
           })}
-          <BusCard />
+          <BusCard values={valueMap} onParamChange={changeParam} />
         </div>
       </div>
       <p className="pb-rail-hint">
-        Click a pedal to open it in the editor · stomp switches toggle bypass · parked pedals keep
-        their settings
+        Click a pedal to open it in the editor · drag its knobs to tweak in place · stomp switches
+        toggle bypass · parked pedals keep their settings
       </p>
       <RoleLegend />
     </>

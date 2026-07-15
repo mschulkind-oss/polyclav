@@ -37,6 +37,12 @@ export interface PedalStripProps {
   labelOff?: string;
   /** Mini-knob size overrides per param id (the delay's Time mini is 44). */
   miniSizes?: Record<string, number>;
+  /**
+   * Makes every param mini adjustable in place (full knob canon); omitted,
+   * the minis stay display-only readouts. Knob interaction is contained —
+   * it never triggers onOpen.
+   */
+  onParamChange?: (paramId: string, value: number) => void;
 }
 
 /**
@@ -56,6 +62,7 @@ export function PedalStrip({
   extra,
   labelOff,
   miniSizes,
+  onParamChange,
 }: PedalStripProps) {
   const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return; // keys inside (e.g. the stomp) keep their meaning
@@ -97,6 +104,7 @@ export function PedalStrip({
             param={param}
             value={values[param.id] ?? param.defaultValue}
             size={miniSizes?.[param.id]}
+            onChange={onParamChange && ((v: number) => onParamChange(param.id, v))}
           />
         );
       })}
@@ -106,10 +114,20 @@ export function PedalStrip({
   );
 }
 
-function StripParam({ param, value, size }: { param: ParamSpec; value: number; size?: number }) {
+function StripParam({
+  param,
+  value,
+  size,
+  onChange,
+}: {
+  param: ParamSpec;
+  value: number;
+  size?: number;
+  onChange?: (v: number) => void;
+}) {
   return (
     <div className={`pb-param pb-r-${param.role}`} data-role={param.role}>
-      <MiniKnob spec={param} value={value} size={size} />
+      <MiniKnob spec={param} value={value} size={size} onChange={onChange} />
       <div className="pb-p-name" title={ROLE_NAMES[param.role]}>
         <RoleGlyph role={param.role} />
         {param.label}

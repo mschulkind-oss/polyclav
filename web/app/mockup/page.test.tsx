@@ -77,6 +77,32 @@ test("editor edits reflect back into the board's delay strip (shared state)", ()
   expect(stripTime()).toBe("380 ms");
 });
 
+test("board knob edits flow into the editor knobs (same shared state)", () => {
+  const { screens } = renderPage();
+  const delayStrip = within(screens[0]).getByRole("button", { name: "Open Delay in editor" });
+  const boardTime = within(delayStrip).getByRole("slider", { name: "Time" });
+  const editorTime = within(screens[1]).getByRole("slider", { name: "Time" });
+  expect(editorTime.getAttribute("aria-valuenow")).toBe("380");
+  // ArrowUp steps 1/100 of the 1–1000 ms range: 380 → 389.99
+  fireEvent.keyDown(boardTime, { key: "ArrowUp" });
+  expect(editorTime.getAttribute("aria-valuenow")).toBe("389.99");
+  expect(delayStrip.querySelector(".pb-r-time .pb-p-val")?.textContent).toBe("390 ms");
+  // and the drag never opened the editor screen
+  expect(screens[0]).toHaveClass("pb-active");
+  // the editor's Reset also pulls the board knob back
+  fireEvent.click(within(screens[1]).getByRole("button", { name: "Reset to defaults" }));
+  expect(boardTime.getAttribute("aria-valuenow")).toBe("380");
+});
+
+test("bus knob edits land in the shared mock state", () => {
+  const { screens } = renderPage();
+  const comp = within(screens[0]).getByRole("slider", { name: "Comp" });
+  expect(comp.getAttribute("aria-valuenow")).toBe("35");
+  fireEvent.keyDown(comp, { key: "ArrowUp" });
+  expect(comp.getAttribute("aria-valuenow")).toBe("36");
+  expect(comp.getAttribute("aria-valuetext")).toBe("36%");
+});
+
 test("the editor stomp and the board's delay stomp share bypass state", () => {
   const { screens } = renderPage();
   const chip = () => screens[1].querySelector(".pb-screen-head .pb-chip")?.textContent;
@@ -102,12 +128,12 @@ test("selecting a non-native patch gates the synth screen", () => {
   expect(within(screens[2]).queryByRole("note")).toBeNull();
 });
 
-test("A+ / A− drive --pb-scale on the enclosing pb-root", () => {
+test("A+ / A− drive --pb-scale on the enclosing pb-root (default 1.1)", () => {
   const { container } = renderPage();
   const root = container.querySelector<HTMLElement>(".pb-root");
-  expect(root?.style.getPropertyValue("--pb-scale")).toBe("1");
-  fireEvent.click(screen.getByRole("button", { name: "Larger UI" }));
   expect(root?.style.getPropertyValue("--pb-scale")).toBe("1.1");
+  fireEvent.click(screen.getByRole("button", { name: "Larger UI" }));
+  expect(root?.style.getPropertyValue("--pb-scale")).toBe("1.2");
   fireEvent.click(screen.getByRole("button", { name: "Smaller UI" }));
-  expect(root?.style.getPropertyValue("--pb-scale")).toBe("1");
+  expect(root?.style.getPropertyValue("--pb-scale")).toBe("1.1");
 });

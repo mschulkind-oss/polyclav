@@ -78,6 +78,56 @@ test("controlled mode: values and bypass come from props, stomps report up", () 
   expect(delayStrip).not.toHaveClass("pb-bypassed");
 });
 
+test("standalone board knobs are live: chorus Rate retimes the wave viz", () => {
+  const { container } = render(<Pedalboard />);
+  const chorusStrip = screen.getByRole("button", { name: "Open Chorus in editor" });
+  const rate = within(chorusStrip).getByRole("slider", { name: "Rate" });
+  fireEvent.keyDown(rate, { key: "ArrowUp" }); // 0.9 + (8 − 0.1)/100 = 0.979 Hz
+  expect(chorusStrip.querySelector(".pb-r-time .pb-p-val")?.textContent).toBe("1.0 Hz");
+  const wave = container.querySelector<SVGGElement>(".pb-viz .pb-wave-anim");
+  expect(wave?.style.getPropertyValue("--pb-wave-cycle")).toBe("1.0215s"); // 1 / 0.979 Hz
+});
+
+test("raising trem Depth above 0 un-freezes the opto lamp once engaged", () => {
+  render(<Pedalboard />);
+  const tremStrip = screen.getByRole("button", { name: "Open Trem in editor" });
+  fireEvent.click(within(tremStrip).getByRole("button", { name: "Bypassed" })); // engage
+  const opto = () => tremStrip.querySelector(".pb-viz svg");
+  expect(opto()).toHaveClass("pb-depth-zero"); // engaged but depth still 0
+  fireEvent.keyDown(within(tremStrip).getByRole("slider", { name: "Depth" }), { key: "ArrowUp" });
+  expect(tremStrip.querySelector(".pb-r-shape .pb-p-val")?.textContent).toBe("1%");
+  expect(opto()).not.toHaveClass("pb-depth-zero");
+});
+
+test("bus knobs are live too and share the board's value state", () => {
+  const { container } = render(<Pedalboard />);
+  fireEvent.keyDown(screen.getByRole("slider", { name: "Comp" }), { key: "ArrowUp" });
+  const comp = container.querySelector(".pb-bus-pair.pb-r1 .pb-param[data-role='shape']");
+  expect(comp?.querySelector(".pb-p-val")?.textContent).toBe("36%");
+});
+
+test("controlled mode: board knob edits report up through onParamChange", () => {
+  const onParamChange = vi.fn();
+  const onOpenPedal = vi.fn();
+  render(<Pedalboard values={{}} onParamChange={onParamChange} onOpenPedal={onOpenPedal} />);
+  const delayStrip = screen.getByRole("button", { name: "Open Delay in editor" });
+  const time = within(delayStrip).getByRole("slider", { name: "Time" });
+  fireEvent.pointerDown(time, { clientY: 300, pointerId: 1 });
+  fireEvent.pointerMove(time, { clientY: 300 - 200 * (44 / 120) }); // full sweep of the 44 mini
+  fireEvent.pointerUp(time);
+  fireEvent.click(time); // the click a completed drag synthesizes
+  expect(onParamChange).toHaveBeenLastCalledWith("delay.time_ms", 1000);
+  fireEvent.wheel(within(delayStrip).getByRole("slider", { name: "Feedback" }), { deltaY: -100 });
+  expect(onParamChange.mock.lastCall?.[0]).toBe("delay.feedback");
+  expect(onParamChange.mock.lastCall?.[1]).toBeCloseTo(35.9, 6); // 35 + 1% of 0–90
+  // controlled: the display only moves via the values prop, never internally
+  expect(delayStrip.querySelector(".pb-r-time .pb-p-val")?.textContent).toBe("380 ms");
+  // and none of that knob traffic opened the editor
+  expect(onOpenPedal).not.toHaveBeenCalled();
+  fireEvent.click(delayStrip);
+  expect(onOpenPedal).toHaveBeenCalledWith("delay");
+});
+
 test("clicking a strip reports the pedal id to open", () => {
   const onOpenPedal = vi.fn();
   render(<Pedalboard onOpenPedal={onOpenPedal} />);

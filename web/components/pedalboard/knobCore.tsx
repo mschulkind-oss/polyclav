@@ -142,6 +142,12 @@ export interface KnobInteractionOpts {
   defaultValue: number;
   onChange: (v: number) => void;
   disabled: boolean;
+  /**
+   * Multiplies the drag travel (canon: ~200 scaled px = full sweep at 1).
+   * Minis pass `size / 120` so a knob a third the diameter also sweeps in a
+   * third the distance. Wheel and key steps are unaffected. Default 1.
+   */
+  travelScale?: number;
 }
 
 export interface KnobHandlers {
@@ -214,9 +220,8 @@ export function useKnobInteraction(opts: KnobInteractionOpts): KnobInteraction {
       const s = live.current;
       if (!start || s.disabled) return;
       const dyUp = start.y - e.clientY;
-      s.onChange(
-        dragValue(start.value, dyUp, s.min, s.max, e.shiftKey, readScale(e.currentTarget)),
-      );
+      const scale = readScale(e.currentTarget) * (s.travelScale ?? 1);
+      s.onChange(dragValue(start.value, dyUp, s.min, s.max, e.shiftKey, scale));
     },
     onPointerUp: endDrag,
     onPointerCancel: endDrag,

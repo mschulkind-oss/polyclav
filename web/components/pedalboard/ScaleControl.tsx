@@ -5,8 +5,11 @@ import { useCallback, useEffect, useState } from "react";
 /** The UI-scale ladder (reference SCALES) — legal values for --pb-scale. */
 export const SCALES = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4] as const;
 
+/** Default --pb-scale: the board reads best a notch above 100%. */
+export const DEFAULT_SCALE = 1.1;
+
 const SCALE_KEY = "polyclav-ui-scale";
-const DEFAULT_IX = SCALES.indexOf(1);
+const DEFAULT_IX = SCALES.indexOf(DEFAULT_SCALE);
 
 /** Index of the ladder step closest to `scale`. */
 function nearestIx(scale: number): number {
@@ -22,7 +25,7 @@ export interface UiScale {
   scale: number;
   inc: () => void;
   dec: () => void;
-  /** Back to 100%. */
+  /** Back to the 110% default. */
   reset: () => void;
   /** Snap to the ladder step nearest `v` (wires ScaleControl's onScale). */
   set: (v: number) => void;
@@ -31,7 +34,7 @@ export interface UiScale {
 /**
  * Owns the UI-scale ladder, persisted to localStorage under
  * "polyclav-ui-scale" (reference applyScale). The stored value is read in an
- * effect so statically-exported HTML hydrates cleanly at the default 100%.
+ * effect so statically-exported HTML hydrates cleanly at the default 110%.
  */
 export function useUiScale(): UiScale {
   const [ix, setIx] = useState(DEFAULT_IX);
@@ -67,6 +70,11 @@ export interface ScaleControlProps {
  * choose" knob for the whole interface. Controlled: pair it with
  * useUiScale() (`onScale={set}`) and put `--pb-scale: scale` inline on
  * .pb-root; every dimension in the system derives from it.
+ *
+ * The `.pb-scalectl` class is the fixed-position hook: CSS floats the
+ * control at the viewport's bottom-right, sized in plain px (never
+ * var(--u)) so repeated clicks never chase a moving target. Its mount
+ * point in the JSX is therefore irrelevant to where it appears.
  */
 export function ScaleControl({ scale, onScale }: ScaleControlProps) {
   const ix = nearestIx(scale);
@@ -82,8 +90,8 @@ export function ScaleControl({ scale, onScale }: ScaleControlProps) {
       <button
         type="button"
         className="pb-scale-val pb-num"
-        title="Click to reset to 100%"
-        onClick={() => onScale(1)}
+        title="Click to reset to 110%"
+        onClick={() => onScale(DEFAULT_SCALE)}
       >
         {Math.round(scale * 100)}%
       </button>

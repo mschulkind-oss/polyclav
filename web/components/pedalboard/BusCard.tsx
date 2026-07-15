@@ -1,3 +1,5 @@
+"use client";
+
 import { Led } from "@/components/pedalboard/Led";
 import { MiniKnob } from "@/components/pedalboard/MiniKnob";
 import { ROLE_NAMES, RoleGlyph } from "@/components/pedalboard/RoleGlyph";
@@ -8,6 +10,11 @@ import { BUS_PARAMS } from "@/lib/pedalboard/model";
 export interface BusCardProps {
   /** Value overrides per param id; defaults to each spec's defaultValue. */
   values?: Record<string, number>;
+  /**
+   * Makes the four bus minis adjustable in place (full knob canon); omitted,
+   * they stay display-only readouts.
+   */
+  onParamChange?: (paramId: string, value: number) => void;
 }
 
 /**
@@ -16,7 +23,7 @@ export interface BusCardProps {
  * rows (2–3), level meters breathe in the header, and the "Post · stereo out"
  * footer lands on the stomp row so everything stays aligned.
  */
-export function BusCard({ values }: BusCardProps) {
+export function BusCard({ values, onParamChange }: BusCardProps) {
   const pairs: ParamSpec[][] = [BUS_PARAMS.slice(0, 2), BUS_PARAMS.slice(2, 4)];
   return (
     <article className="pb-bus">
@@ -34,7 +41,11 @@ export function BusCard({ values }: BusCardProps) {
             const value = values?.[param.id] ?? param.defaultValue;
             return (
               <div key={param.id} className="pb-param" data-role={param.role}>
-                <MiniKnob spec={param} value={value} />
+                <MiniKnob
+                  spec={param}
+                  value={value}
+                  onChange={onParamChange && ((v: number) => onParamChange(param.id, v))}
+                />
                 <div className="pb-p-name" title={ROLE_NAMES[param.role]}>
                   <RoleGlyph role={param.role} />
                   {param.label}

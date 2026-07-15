@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { PedalStrip, type PedalStripProps } from "@/components/pedalboard/PedalStrip";
 import { CHAIN, type PedalSpec } from "@/lib/pedalboard/model";
@@ -104,6 +104,47 @@ test("delay parks: labelOff passes through and its Time mini renders oversized",
   expect(timeMini?.style.width).toBe("calc(var(--u) * 44)");
   const fbMini = container.querySelector<HTMLElement>(".pb-r-shape .pb-mini");
   expect(fbMini?.style.width).toBe("calc(var(--u) * 36)");
+});
+
+test("minis stay display-only without onParamChange", () => {
+  renderStrip("chorus");
+  expect(screen.queryAllByRole("slider")).toHaveLength(0);
+});
+
+test("onParamChange turns every param mini into a slider", () => {
+  renderStrip("chorus", { onParamChange: () => {} });
+  const card = screen.getByRole("button", { name: "Open Chorus in editor" });
+  expect(
+    within(card)
+      .getAllByRole("slider")
+      .map((s) => s.getAttribute("aria-label")),
+  ).toEqual(["Rate", "Depth", "Mix"]);
+});
+
+test("dragging a param knob reports its id and never opens the editor", () => {
+  const onOpen = vi.fn();
+  const onParamChange = vi.fn();
+  renderStrip("chorus", { onOpen, onParamChange });
+  const rate = screen.getByRole("slider", { name: "Rate" });
+  fireEvent.pointerDown(rate, { clientY: 300, pointerId: 1 });
+  fireEvent.pointerMove(rate, { clientY: 270 }); // half the 60px mini sweep of 0.1–8 Hz
+  fireEvent.pointerUp(rate);
+  fireEvent.click(rate); // the click a completed drag synthesizes
+  expect(onParamChange).toHaveBeenCalledTimes(1);
+  expect(onParamChange.mock.calls[0][0]).toBe("chorus.rate");
+  expect(onParamChange.mock.calls[0][1]).toBeCloseTo(4.85, 6); // 0.9 + 7.9 / 2
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
+test("wheel and keys on a strip knob report the right param id", () => {
+  const onOpen = vi.fn();
+  const onParamChange = vi.fn();
+  renderStrip("chorus", { onOpen, onParamChange });
+  fireEvent.wheel(screen.getByRole("slider", { name: "Mix" }), { deltaY: -100 });
+  expect(onParamChange).toHaveBeenLastCalledWith("chorus.mix", 31); // 30 + 1% of 0–100
+  fireEvent.keyDown(screen.getByRole("slider", { name: "Depth" }), { key: "ArrowDown" });
+  expect(onParamChange).toHaveBeenLastCalledWith("chorus.depth", 44); // 45 − 1/100 of 0–100
+  expect(onOpen).not.toHaveBeenCalled();
 });
 
 test("gate params carry the gate dot; non-gate params do not", () => {

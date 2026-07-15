@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { expect, test, vi } from "vitest";
 import { BusCard } from "@/components/pedalboard/BusCard";
 
 test("bus packs its four params as pairs into rows 2–3 of the shared grid", () => {
@@ -40,4 +40,32 @@ test("value overrides replace the spec defaults", () => {
   const vals = Array.from(container.querySelectorAll(".pb-p-val")).map((v) => v.textContent);
   expect(vals[3]).toBe("−12.0 dB");
   expect(vals[0]).toBe("0.0 dB");
+});
+
+test("minis stay display-only without onParamChange", () => {
+  render(<BusCard />);
+  expect(screen.queryAllByRole("slider")).toHaveLength(0);
+});
+
+test("onParamChange makes all four bus minis adjustable and reports edits by id", () => {
+  const onParamChange = vi.fn();
+  render(<BusCard onParamChange={onParamChange} />);
+  const sliders = screen.getAllByRole("slider");
+  expect(sliders.map((s) => s.getAttribute("aria-label"))).toEqual([
+    "Gain",
+    "Comp",
+    "Reverb",
+    "Master",
+  ]);
+  fireEvent.keyDown(screen.getByRole("slider", { name: "Comp" }), { key: "ArrowUp" });
+  expect(onParamChange).toHaveBeenLastCalledWith("bus.comp", 36); // 35 + 1/100 of 0–100
+  fireEvent.wheel(screen.getByRole("slider", { name: "Gain" }), { deltaY: -100 });
+  expect(onParamChange).toHaveBeenLastCalledWith("bus.gain", 0.48); // 0 + 1% of ±24 dB
+});
+
+test("bus knob edits render back through controlled values", () => {
+  const { container, rerender } = render(<BusCard values={{ "bus.comp": 35 }} />);
+  rerender(<BusCard values={{ "bus.comp": 62 }} />);
+  const vals = Array.from(container.querySelectorAll(".pb-p-val")).map((v) => v.textContent);
+  expect(vals[1]).toBe("62%");
 });

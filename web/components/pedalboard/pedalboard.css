@@ -14,7 +14,7 @@
 
 /* ---------- tokens + scale root ---------- */
 .pb-root {
-  --pb-scale: 1; /* set by the A−/A+ control, persisted */
+  --pb-scale: 1.1; /* default 110%; set by the A−/A+ control, persisted */
   --u: calc(1px * var(--pb-scale));
   --pb-bg: #0b0c0f;
   --pb-card: #0e1014;
@@ -212,22 +212,35 @@
   border-bottom-color: var(--pb-txt);
 }
 
-/* UI-scale control — the "people can choose" knob for the whole interface */
+/* UI-scale control — the "people can choose" knob for the whole interface.
+   Floats fixed at the viewport's bottom-right, deliberately sized in plain
+   px (NEVER var(--u)): changing the zoom must not move or resize the very
+   control being clicked. Card chrome + shadow lift it above the scaled
+   page content. */
 .pb-scalectl {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
   display: flex;
   align-items: center;
-  gap: calc(var(--u) * 2);
+  gap: 4px;
+  padding: 6px;
+  background: var(--pb-card);
+  border: 1px solid var(--pb-line);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   color: var(--pb-txt3);
 }
 .pb-scalectl button {
-  width: calc(var(--u) * 26);
-  height: calc(var(--u) * 26);
+  min-width: 28px;
+  min-height: 28px;
   border: 1px solid var(--pb-line);
-  border-radius: calc(var(--u) * 5);
+  border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(var(--u) * 11);
+  font-size: 11px;
   font-weight: 700;
   color: var(--pb-txt2);
   transition:
@@ -239,9 +252,9 @@
   border-color: #33363e;
 }
 .pb-scalectl .pb-scale-val {
-  min-width: calc(var(--u) * 46);
+  min-width: 46px;
   text-align: center;
-  font-size: calc(var(--u) * 10);
+  font-size: 10px;
   letter-spacing: 0.08em;
   cursor: pointer;
 }

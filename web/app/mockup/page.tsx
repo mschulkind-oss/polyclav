@@ -87,6 +87,7 @@ export default function MockupPage() {
             values={mock.values}
             enabled={mock.enabled}
             onToggle={mock.togglePedal}
+            onParamChange={mock.setValue}
             onOpenPedal={() => mock.setTab("editor")}
           />
         </section>

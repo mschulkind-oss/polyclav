@@ -17,12 +17,15 @@ playground page `/app/mockup` with static mock data only (no API calls).
 ## Scaling: `--pb-scale` and `--u`
 
 The reference used `1rem = 10px x scale`. Here `.pb-root` defines
-`--pb-scale: 1` and `--u: calc(1px * var(--pb-scale))`; every dimension in the
-stylesheet is `calc(var(--u) * N)` where N = the reference's rem x 10 (px at
-scale 1). The A-/A+ control just sets `--pb-scale` inline on `.pb-root`
-(steps `0.8 0.9 1 1.1 1.2 1.3 1.4`) and the whole system resizes. Rules:
+`--pb-scale: 1.1` (default 110%) and `--u: calc(1px * var(--pb-scale))`; every
+dimension in the stylesheet is `calc(var(--u) * N)` where N = the reference's
+rem x 10 (px at scale 1). The A-/A+ control just sets `--pb-scale` inline on
+`.pb-root` (steps `0.8 0.9 1 1.1 1.2 1.3 1.4`) and the whole system resizes.
+Rules:
 
-- Never hard-code px for layout — only 1px/2px hairline borders stay literal px.
+- Never hard-code px for layout — only 1px/2px hairline borders stay literal
+  px. Sole exception: `.pb-scalectl` itself is plain-px and position: fixed,
+  so the zoom control never moves or resizes while being clicked.
 - Sizing an element from JS/JSX: `style={{ width: \`calc(var(--u) * ${size})\` }}`
   (the reference's `sizeEl(el, size)`).
 - `dragValue(..., scale)` takes the current numeric `--pb-scale` so drag feel is

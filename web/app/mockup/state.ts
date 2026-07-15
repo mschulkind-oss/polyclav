@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { INITIAL_ENABLED } from "@/components/pedalboard/Pedalboard";
-import { CHAIN } from "@/lib/pedalboard/model";
+import { BUS_PARAMS, CHAIN } from "@/lib/pedalboard/model";
 
 /** The four playground screens, in tab order. */
 export type TabId = "board" | "editor" | "synth" | "macros";
@@ -13,7 +13,7 @@ export interface PedalboardMock {
   /** Active patch index into PATCHES (0 = Minimoog, the native default). */
   patchIx: number;
   setPatchIx: (ix: number) => void;
-  /** Pedal param values keyed by param id — shared by the board and editor. */
+  /** Pedal + bus param values keyed by param id — shared by the board and editor. */
   values: Record<string, number>;
   setValue: (paramId: string, value: number) => void;
   /** Back to the spec defaults for one pedal (the editor's Reset button). */
@@ -23,13 +23,17 @@ export interface PedalboardMock {
   togglePedal: (pedalId: string) => void;
 }
 
-/** Spec defaults (= the reference's live values) for one pedal or the chain. */
+/**
+ * Spec defaults (= the reference's live values) for one pedal, or — with no
+ * pedalId — the whole chain plus the stereo bus (its four board minis edit
+ * the same shared map).
+ */
 function chainDefaults(pedalId?: string): Record<string, number> {
-  return Object.fromEntries(
-    CHAIN.filter((pedal) => pedalId === undefined || pedal.id === pedalId).flatMap((pedal) =>
-      pedal.params.map((p) => [p.id, p.defaultValue]),
-    ),
-  );
+  const params =
+    pedalId === undefined
+      ? [...CHAIN.flatMap((pedal) => pedal.params), ...BUS_PARAMS]
+      : (CHAIN.find((pedal) => pedal.id === pedalId)?.params ?? []);
+  return Object.fromEntries(params.map((p) => [p.id, p.defaultValue]));
 }
 
 /**
