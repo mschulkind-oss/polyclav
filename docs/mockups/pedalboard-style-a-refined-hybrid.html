@@ -1,0 +1,994 @@
+<!-- Art-direction study Style A — Refined Hybrid — companion to docs/PLUGIN_UI_RESEARCH.md. One of three competing styles. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Style A — Refined Hybrid</title>
+<style>
+/* ============================================================
+   Style A — Refined Hybrid
+   Believable powder-coated pedal enclosures on quiet flat dark
+   app chrome. One light source: directly above, slightly front.
+   ============================================================ */
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:dark}
+button{font:inherit;color:inherit;background:none;border:0}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  background:radial-gradient(1200px 620px at 50% -12%, #16171b, #101114 70%) #101114;
+  color:#e7eaf0;
+  font-size:14px;
+  line-height:1.45;
+  min-height:100vh;
+}
+.wrap{max-width:1224px;margin:0 auto;padding:0 28px 36px;min-height:100vh;display:flex;flex-direction:column}
+.wrap>main{flex:1}
+.num,.kval,.mini-val,.bch-val,.mapped,.hw-map{font-variant-numeric:tabular-nums}
+
+/* ---------- app chrome: header ---------- */
+header.app{
+  display:flex;align-items:center;gap:14px;
+  padding:16px 2px 15px;margin-bottom:20px;
+  border-bottom:1px solid #26282e;
+}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{display:block}
+.wordmark{font-size:19px;font-weight:700;letter-spacing:.005em;color:#f0f2f6}
+.badge{
+  font-size:10.5px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
+  color:#b9bfc9;border:1px solid #383c44;background:#17181c;
+  padding:5px 11px;border-radius:999px;white-space:nowrap;
+}
+.tabs{
+  display:flex;gap:2px;margin-left:auto;
+  background:#141518;border:1px solid #2b2e34;border-radius:9px;padding:3px;
+}
+.tab{
+  padding:8px 16px;border-radius:6px;cursor:pointer;
+  font-size:12.5px;font-weight:600;letter-spacing:.02em;color:#9aa1ac;
+}
+.tab:hover{color:#cfd4dc}
+.tab.active{
+  background:linear-gradient(180deg,#2b2f36,#23262c);color:#eef1f5;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 1px 2px rgba(0,0,0,.4);
+}
+.tab:focus-visible,.pedal:focus-visible,.btn:focus-visible,.stomp:focus-visible,.crumb:focus-visible{
+  outline:2px solid #5a90d9;outline-offset:2px;
+}
+.engine{display:flex;align-items:center;gap:7px;color:#818894;font-size:11.5px;white-space:nowrap;margin-left:4px}
+.gdot{
+  width:7px;height:7px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 35% 30%, #b6f0c8, #3ec06a 60%, #1f7a3f);
+  box-shadow:0 0 6px rgba(62,192,106,.55);
+}
+
+/* ---------- shared flat chrome ---------- */
+.section-head{display:flex;align-items:baseline;justify-content:space-between;margin:2px 2px 14px}
+.section-head h2{font-size:15px;font-weight:650;letter-spacing:.01em;color:#e7eaf0}
+.hint{font-size:12px;color:#7b828d}
+.card-flat,.card{
+  background:#1a1c20;border:1px solid #2b2e34;border-radius:10px;
+}
+.card{padding:16px 18px}
+.card h3{
+  font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:#8a919c;padding-bottom:9px;margin-bottom:12px;border-bottom:1px solid #26282e;
+}
+.btn{
+  display:inline-block;appearance:none;cursor:pointer;
+  border:1px solid #3a3e46;border-radius:8px;padding:9px 14px;
+  background:linear-gradient(180deg,#26292f,#1e2126);
+  color:#dfe3ea;font-size:12.5px;font-weight:600;letter-spacing:.02em;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 1px 2px rgba(0,0,0,.4);
+}
+.btn:hover{border-color:#4a4f58;background:linear-gradient(180deg,#2b2f36,#22252b)}
+.btn:active{transform:translateY(1px)}
+.btn[disabled]{opacity:.65;cursor:default;transform:none}
+.btn-accent{border-color:#365446;color:#8fe0bd}
+.btn-accent:hover{border-color:#417a5f}
+kbd{
+  font:600 11px ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  background:#22252b;border:1px solid #3a3e46;border-bottom-color:#2a2d33;
+  border-radius:5px;padding:2px 6px;color:#cfd4dc;
+  box-shadow:0 1px 0 rgba(0,0,0,.5);
+}
+.micro{font-size:11.5px;color:#7b828d;margin-top:10px;line-height:1.5}
+
+/* ---------- screens ---------- */
+.screen{display:none}
+.screen.visible{display:block;animation:rise .18s ease both}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ============================================================
+   SCREEN 1 — the stage
+   ============================================================ */
+.stage{
+  border:1px solid #2b2e34;border-radius:12px;
+  background:radial-gradient(110% 130% at 50% -10%, #1d1f24, #17181c 75%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+  padding:30px 18px 26px;
+  overflow-x:auto;
+}
+.chain{display:flex;align-items:center;justify-content:center;min-width:1060px}
+.conn{flex:none;margin:0 3px;opacity:.9}
+
+/* source node */
+.synth{
+  position:relative;flex:none;width:110px;padding:14px 12px 12px;text-align:center;
+}
+.synth .gdot{position:absolute;top:10px;right:10px}
+.synth svg{display:block;margin:2px auto 8px}
+.synth-name{font-size:12px;font-weight:700;letter-spacing:.12em;color:#dfe3ea}
+.synth-sub{font-size:10px;color:#7b828d;margin-top:2px}
+
+/* output bus strip */
+.bus{flex:none;width:212px;padding:12px 14px 14px}
+.bus-head{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:10px;font-weight:700;letter-spacing:.14em;color:#8a919c;
+  padding-bottom:8px;margin-bottom:10px;border-bottom:1px solid #26282e;
+}
+.bus-body{display:flex;gap:10px}
+.bus-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 6px;flex:1}
+.bch{display:flex;flex-direction:column;align-items:center;gap:1px}
+.bch-label{font-size:8.5px;font-weight:700;letter-spacing:.1em;color:#8a919c}
+.bch-val{font-size:10.5px;color:#cfd4dc}
+.meters{display:flex;gap:4px;align-items:flex-end;padding:4px 0 14px}
+.meter{
+  position:relative;width:6px;height:118px;border-radius:3px;background:#101114;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.7),0 1px 0 rgba(255,255,255,.04);overflow:hidden;
+}
+.meter i{
+  position:absolute;left:1px;right:1px;bottom:1px;border-radius:2px;
+  background:linear-gradient(180deg,#d8c95a,#46b06a 30%,#2f8f55);
+}
+
+/* ---------- mini knobs (board + bus) ---------- */
+.mini-wrap{position:relative;width:44px;height:44px;display:grid;place-items:center;flex:none}
+.mini-wrap::before{ /* tick-ring: 5 marks across the 270° sweep */
+  content:"";position:absolute;inset:0;border-radius:50%;opacity:.55;
+  background:conic-gradient(from -136.5deg,
+    var(--tick,rgba(255,255,255,.8)) 0deg 3deg,transparent 3deg 66deg,
+    var(--tick,rgba(255,255,255,.8)) 66deg 69deg,transparent 69deg 133.5deg,
+    var(--tick,rgba(255,255,255,.8)) 133.5deg 136.5deg,transparent 136.5deg 201deg,
+    var(--tick,rgba(255,255,255,.8)) 201deg 204deg,transparent 204deg 268.5deg,
+    var(--tick,rgba(255,255,255,.8)) 268.5deg 271.5deg,transparent 271.5deg 360deg);
+  -webkit-mask:radial-gradient(closest-side,transparent 81%,#000 84%);
+  mask:radial-gradient(closest-side,transparent 81%,#000 84%);
+}
+.mini-knob{
+  width:32px;height:32px;border-radius:50%;position:relative;
+  background:
+    radial-gradient(circle at 33% 27%, rgba(255,255,255,.14), rgba(255,255,255,0) 44%),
+    radial-gradient(circle at 50% 45%, #383c43, #23262b 62%, #16181c);
+  border:1px solid #0b0c0e;
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.25),inset 0 -2px 3px rgba(0,0,0,.55),0 2px 4px rgba(0,0,0,.45);
+}
+.mini-knob::after{
+  content:"";position:absolute;top:3px;left:50%;width:2px;height:10px;margin-left:-1px;
+  border-radius:1px;background:#e8ebf1;box-shadow:0 0 1px rgba(0,0,0,.8);
+  transform-origin:1px 12px;transform:rotate(var(--rot,0deg));
+}
+.mini-wrap.flat::before{--tick:rgba(255,255,255,.4)}
+.mini-wrap.flat .mini-knob{
+  background:radial-gradient(circle at 35% 30%, #3a3e45, #24272c 60%, #1a1c20);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -2px 3px rgba(0,0,0,.5),0 1px 2px rgba(0,0,0,.4);
+}
+.mini-wrap.flat .mini-knob::after{background:#b9bec7}
+
+/* ---------- pedal enclosures ---------- */
+.pedal{
+  position:relative;flex:none;width:156px;height:252px;
+  display:flex;flex-direction:column;
+  padding:10px 8px 14px;border-radius:10px;cursor:pointer;
+  border:1px solid rgba(0,0,0,.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.32),
+    inset 0 -1px 0 rgba(0,0,0,.28),
+    0 2px 3px rgba(0,0,0,.35),
+    0 16px 22px -10px rgba(0,0,0,.6);
+  transition:transform .14s ease, box-shadow .14s ease;
+  user-select:none;-webkit-user-select:none;
+}
+.pedal::before{ /* one shared overhead sheen — curved sheet metal */
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(130% 55% at 50% -6%, rgba(255,255,255,.17), rgba(255,255,255,0) 60%);
+}
+.pedal:hover{
+  transform:translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.32),
+    inset 0 -1px 0 rgba(0,0,0,.28),
+    0 3px 5px rgba(0,0,0,.35),
+    0 22px 28px -10px rgba(0,0,0,.65);
+}
+.enc-drive{ /* Tube-Screamer green enamel */
+  --ink:#eef6e9;--ink-dim:rgba(238,246,233,.72);
+  background:linear-gradient(180deg,#63b050 0%,#4d9a40 48%,#3a7d31 100%);
+}
+.enc-chorus{ /* CE-2 bright blue */
+  --ink:#eaf5fd;--ink-dim:rgba(234,245,253,.72);
+  background:linear-gradient(180deg,#48ace9 0%,#2f8ccb 48%,#22699f 100%);
+}
+.enc-trem{ /* blackface cream, brown-sugar accents */
+  --ink:#553d1f;--ink-dim:rgba(85,61,31,.72);--tick:rgba(85,60,30,.65);
+  background:linear-gradient(180deg,#f2e9d5 0%,#e6d9bd 50%,#d5c5a3 100%);
+}
+.enc-delay{ /* Carbon-Copy dark metallic green + metal-flake sparkle */
+  --ink:#dcefe2;--ink-dim:rgba(220,239,226,.7);
+  background-color:#22392e;
+  background-image:
+    radial-gradient(circle at 3px 4px, rgba(225,255,238,.17) 0 .5px, transparent 1px),
+    radial-gradient(circle at 8px 2px, rgba(255,255,255,.13) 0 .5px, transparent 1px),
+    radial-gradient(circle at 2px 9px, rgba(190,240,215,.11) 0 .5px, transparent 1px),
+    linear-gradient(180deg,#345244 0%,#263e33 50%,#1a2c23 100%);
+  background-size:9px 11px,13px 17px,19px 23px,100% 100%;
+  background-position:0 0,4px 7px,9px 3px,0 0;
+}
+.pedal-head{display:flex;align-items:center;justify-content:space-between;padding:2px 6px 0}
+.status{
+  font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink);opacity:.9;
+}
+.mini-area{flex:1;display:flex;align-items:center;justify-content:center;gap:2px;padding-top:4px}
+.mini{display:flex;flex-direction:column;align-items:center;gap:1px;width:45px}
+.mini-label{font-size:8.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-dim)}
+.mini-val{font-size:10.5px;font-weight:600;color:var(--ink)}
+.pedal.is-off .mini-area{opacity:.68;filter:saturate(.75)}
+.pedal.is-off{filter:saturate(.86)}
+
+/* recessed name plate */
+.plate{
+  margin:6px 10px 0;padding:7px 8px;text-align:center;border-radius:6px;
+  font-size:13px;font-weight:700;letter-spacing:.18em;text-indent:.18em;
+  color:var(--ink);text-shadow:0 1px 1px rgba(0,0,0,.35);
+  background:linear-gradient(180deg,rgba(0,0,0,.30),rgba(0,0,0,.17));
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.45),inset 0 -1px 0 rgba(255,255,255,.08),0 1px 0 rgba(255,255,255,.2);
+}
+.enc-trem .plate{
+  color:#f2e9d5;text-shadow:0 1px 1px rgba(0,0,0,.5);
+  background:linear-gradient(180deg,#6b4b27,#523a1e);
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.5),inset 0 -1px 0 rgba(255,255,255,.12),0 1px 0 rgba(255,255,255,.5);
+}
+
+/* jewel LED */
+.led{
+  width:12px;height:12px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 35% 28%, #ffd9d4 0 14%, #ff5a4e 38%, #a01812 72%, #5c0b08);
+  border:1px solid rgba(0,0,0,.55);
+  box-shadow:0 0 9px 2px rgba(255,70,50,.5),0 0 0 2px rgba(0,0,0,.28),inset 0 -1px 2px rgba(0,0,0,.45);
+}
+.is-off .led{
+  background:radial-gradient(circle at 35% 28%, #632723 0 16%, #3d1512 55%, #270b09);
+  box-shadow:0 0 0 2px rgba(0,0,0,.28),inset 0 1px 2px rgba(0,0,0,.7),0 1px 0 rgba(255,255,255,.07);
+}
+.led.sm{width:9px;height:9px}
+
+/* brushed-metal footswitch */
+.stomp-row{display:flex;justify-content:center;padding-top:12px}
+.stomp-rim{
+  width:54px;height:54px;border-radius:50%;display:grid;place-items:center;flex:none;
+  background:linear-gradient(180deg,#3d4148,#17191d);
+  box-shadow:inset 0 1px 1px rgba(255,255,255,.25),inset 0 -1px 2px rgba(0,0,0,.6),0 2px 4px rgba(0,0,0,.4);
+}
+.stomp{
+  position:relative;width:40px;height:40px;border-radius:50%;cursor:pointer;overflow:hidden;
+  background:radial-gradient(circle at 50% 30%, #d6dae0, #a7adb6 42%, #7c828b 72%, #5d636b);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 -3px 5px rgba(0,0,0,.35),0 2px 3px rgba(0,0,0,.5);
+}
+.stomp::before{ /* spin-brushed texture */
+  content:"";position:absolute;inset:3px;border-radius:50%;opacity:.18;
+  background:repeating-conic-gradient(rgba(255,255,255,.5) 0deg .8deg, rgba(0,0,0,.3) .8deg 1.8deg);
+}
+.stomp:active{transform:translateY(1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -2px 4px rgba(0,0,0,.35),0 1px 2px rgba(0,0,0,.5)}
+.stomp-rim.lg{width:70px;height:70px}
+.stomp.lg{width:53px;height:53px}
+
+/* ============================================================
+   SCREEN 2 — pedal editor
+   ============================================================ */
+.crumb{cursor:pointer;color:#8a919c;font-size:15px;font-weight:650;padding:0}
+.crumb:hover{color:#cfd4dc}
+.crumb-sep{color:#4a4f58;margin:0 8px;font-weight:400}
+.editor-grid{display:grid;grid-template-columns:492px minmax(0,1fr);gap:22px;align-items:start}
+.hero{
+  position:relative;border-radius:14px;padding:22px 24px 24px;
+  border:1px solid rgba(0,0,0,.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.28),
+    inset 0 -1px 0 rgba(0,0,0,.28),
+    0 3px 5px rgba(0,0,0,.4),
+    0 26px 34px -14px rgba(0,0,0,.65);
+  user-select:none;-webkit-user-select:none;
+}
+.hero::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(130% 50% at 50% -6%, rgba(255,255,255,.14), rgba(255,255,255,0) 58%);
+}
+.hero-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
+.plate-lg{
+  display:inline-block;margin:0;padding:9px 22px;font-size:19px;letter-spacing:.26em;text-indent:.26em;
+}
+.hero-sub{font-size:11px;color:var(--ink-dim);margin-top:7px;letter-spacing:.04em;padding-left:2px}
+.hero-state{display:flex;align-items:center;gap:8px;padding-top:6px}
+.hero-knobs{display:flex;justify-content:space-between;padding:0 6px;margin-bottom:8px}
+.kmod{display:flex;flex-direction:column;align-items:center;width:136px}
+.klabel{
+  font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink,#cfd4dc);opacity:.88;margin-bottom:9px;
+}
+.kval{margin-top:7px;text-align:center;color:var(--ink,#e7eaf0)}
+.kval .num{font-size:19px;font-weight:700}
+.kval .u{font-size:12px;opacity:.7;font-weight:600}
+.kval .of{font-size:10.5px;opacity:.55;margin-left:5px;font-weight:500}
+.krange{font-size:10px;color:var(--ink-dim,#7b828d);margin-top:1px}
+.hero-foot{display:flex;justify-content:center;padding-top:10px}
+.stomp-col{display:flex;flex-direction:column;align-items:center;gap:7px}
+.foot-label{font-size:9px;font-weight:700;letter-spacing:.18em;color:var(--ink-dim)}
+
+/* ---------- big interactive knobs ---------- */
+.bigknob{
+  position:relative;width:122px;height:122px;flex:none;
+  cursor:ns-resize;touch-action:none;user-select:none;-webkit-user-select:none;
+}
+.kring{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:block}
+.kring .tarc{fill:none;stroke:rgba(255,255,255,.10);stroke-width:4;stroke-linecap:round}
+.kring .varc{fill:none;stroke:var(--arc,#e8ebf1);stroke-width:4;stroke-linecap:round}
+.cap{
+  position:absolute;inset:15.5%;border-radius:50%;
+  background:
+    radial-gradient(circle at 33% 27%, rgba(255,255,255,.15), rgba(255,255,255,0) 44%),
+    radial-gradient(circle at 50% 45%, #33373e, #22252a 62%, #16181d 100%);
+  border:1px solid #0b0c0e;
+  box-shadow:inset 0 2px 1px rgba(255,255,255,.2),inset 0 -3px 5px rgba(0,0,0,.55),0 4px 8px rgba(0,0,0,.5),0 1px 2px rgba(0,0,0,.5);
+}
+.cap::after{ /* knurled rim */
+  content:"";position:absolute;inset:5%;border-radius:50%;opacity:.9;
+  background:repeating-conic-gradient(rgba(255,255,255,.06) 0deg 3deg, rgba(0,0,0,.08) 3deg 6deg);
+  -webkit-mask:radial-gradient(closest-side,transparent 70%,#000 73%);
+  mask:radial-gradient(closest-side,transparent 70%,#000 73%);
+}
+.ptr{position:absolute;inset:0;transform:rotate(-135deg)}
+.ptr::before{
+  content:"";position:absolute;top:7%;left:50%;width:4.5%;min-width:3px;height:30%;
+  transform:translateX(-50%);border-radius:3px;
+  background:var(--ptr,#e9edf3);box-shadow:0 0 2px rgba(0,0,0,.7);
+}
+
+/* editor side column */
+.editor-side{display:flex;flex-direction:column;gap:16px}
+.rows{display:flex;flex-direction:column}
+.row{
+  display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+  padding:7px 0;border-bottom:1px solid #22242a;font-size:12.5px;
+}
+.row:last-child{border-bottom:0;padding-bottom:0}
+.row:first-child{padding-top:0}
+.rk{color:#8a919c;flex:none}
+.rv{color:#dfe3ea;text-align:right}
+.ledwrap{display:inline-flex;align-items:center;gap:7px}
+.hw-map{font-size:12px;color:#cfd4dc;line-height:2;margin-bottom:12px}
+
+/* ============================================================
+   SCREEN 3 — macros
+   ============================================================ */
+.macro-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.macro-card{
+  background:#1a1c20;border:1px solid #2b2e34;border-radius:10px;
+  padding:14px 16px 15px;display:flex;flex-direction:column;align-items:center;
+}
+.mhead{display:flex;align-items:center;gap:9px;width:100%;margin-bottom:12px}
+.mchip{
+  font:700 10.5px ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  letter-spacing:.06em;color:#b9bfc9;background:#22252b;border:1px solid #33373e;
+  border-radius:5px;padding:3px 7px;
+}
+.mname{font-size:13px;font-weight:650;color:#e7eaf0}
+.macro-card .bigknob{width:106px;height:106px}
+.macro-card .kval{color:#e7eaf0;margin-top:8px}
+.macro-card .kval .num{font-size:17px}
+.massign{
+  display:flex;align-items:center;gap:7px;margin-top:10px;
+  font-size:11.5px;font-weight:600;color:#b9bfc9;
+}
+.massign .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--arc);box-shadow:0 0 5px var(--arc)}
+.mapped{color:#8a919c;font-weight:500}
+.mrange{font-size:10.5px;color:#6b7280;margin-top:3px}
+.macro-card.unassigned{--arc:#3f434b;--ptr:#798088}
+.macro-card.unassigned .mname{color:#6b7280;font-weight:500}
+.macro-card.unassigned .kval,.macro-card.unassigned .massign{color:#6b7280}
+.macro-card.unassigned .cap{
+  background:radial-gradient(circle at 33% 27%, rgba(255,255,255,.06), rgba(255,255,255,0) 44%),
+             radial-gradient(circle at 50% 45%, #292c32, #1f2126 62%, #17191d 100%);
+}
+
+/* ---------- footer ---------- */
+footer.app-foot{
+  display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+  margin-top:26px;padding-top:14px;border-top:1px solid #26282e;
+  font-size:11.5px;color:#6b7280;
+}
+
+/* ---------- responsive grace ---------- */
+@media (max-width:1120px){
+  .macro-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .editor-grid{grid-template-columns:1fr}
+  .hero{max-width:540px}
+}
+@media (max-width:760px){
+  header.app{flex-wrap:wrap}
+  .tabs{margin-left:0;order:5;width:100%;justify-content:stretch}
+  .tab{flex:1}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="app">
+    <div class="brand">
+      <svg class="logo" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="1" y="1" width="22" height="22" rx="6" fill="#1d2025" stroke="#33373e"/>
+        <path d="M5 12 C 6.5 6.5, 8.5 6.5, 10 12 C 11.5 17.5, 13.5 17.5, 15 12 C 16 8.5, 17.5 8.5, 19 12"
+              fill="none" stroke="#56d1a3" stroke-width="1.7" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">polyclav</span>
+    </div>
+    <span class="badge">Style A — Refined Hybrid</span>
+    <nav class="tabs" role="tablist" aria-label="Screens">
+      <button class="tab active" role="tab" aria-selected="true" data-tab="board">Pedalboard</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="editor">Pedal editor</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="macros">Macros</button>
+    </nav>
+    <span class="engine"><span class="gdot"></span>engine · 48 kHz</span>
+  </header>
+
+  <main>
+
+    <!-- ================= SCREEN 1 : PEDALBOARD ================= -->
+    <section class="screen visible" id="screen-board" role="tabpanel">
+      <div class="section-head">
+        <h2>Signal chain</h2>
+        <p class="hint">Series routing · click a pedal to open its editor</p>
+      </div>
+      <div class="stage">
+        <div class="chain">
+
+          <div class="synth card-flat">
+            <span class="gdot"></span>
+            <svg width="64" height="24" viewBox="0 0 64 24" aria-hidden="true">
+              <path d="M2 18 L14 6 L14 18 L26 6 L26 18 L38 6 L38 18 L50 6 L50 18 L62 6"
+                    fill="none" stroke="#8a919c" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <div class="synth-name">SYNTH</div>
+            <div class="synth-sub">8-voice source</div>
+          </div>
+
+          <svg class="conn" width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
+            <path d="M0 6 h15" stroke="#3d414a" stroke-width="2"/>
+            <path d="M14 2 l6 4 -6 4" fill="none" stroke="#3d414a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+
+          <!-- DRIVE : Tube-Screamer green -->
+          <article class="pedal enc-drive" data-fx="drive" tabindex="0" role="button"
+                   aria-label="DRIVE pedal, enabled — open editor" title="Open DRIVE in the pedal editor">
+            <div class="pedal-head">
+              <span class="led"></span>
+              <span class="status" data-on="ON" data-off="BYPASS">ON</span>
+            </div>
+            <div class="mini-area">
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" style="--rot:-94.5deg"></div></div>
+                <span class="mini-label">Drive</span><span class="mini-val">15%</span>
+              </div>
+            </div>
+            <div class="plate">DRIVE</div>
+            <div class="stomp-row">
+              <span class="stomp-rim"><button class="stomp" data-stomp="drive" aria-label="Toggle DRIVE bypass"></button></span>
+            </div>
+          </article>
+
+          <svg class="conn" width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
+            <path d="M0 6 h15" stroke="#3d414a" stroke-width="2"/>
+            <path d="M14 2 l6 4 -6 4" fill="none" stroke="#3d414a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+
+          <!-- CHORUS : CE-2 bright blue -->
+          <article class="pedal enc-chorus" data-fx="chorus" tabindex="0" role="button"
+                   aria-label="CHORUS pedal, enabled — open editor" title="Open CHORUS in the pedal editor">
+            <div class="pedal-head">
+              <span class="led"></span>
+              <span class="status" data-on="ON" data-off="BYPASS">ON</span>
+            </div>
+            <div class="mini-area">
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" style="--rot:-113.2deg"></div></div>
+                <span class="mini-label">Rate</span><span class="mini-val">0.9 Hz</span>
+              </div>
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" style="--rot:-13.5deg"></div></div>
+                <span class="mini-label">Depth</span><span class="mini-val">45%</span>
+              </div>
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" style="--rot:-54deg"></div></div>
+                <span class="mini-label">Mix</span><span class="mini-val">30%</span>
+              </div>
+            </div>
+            <div class="plate">CHORUS</div>
+            <div class="stomp-row">
+              <span class="stomp-rim"><button class="stomp" data-stomp="chorus" aria-label="Toggle CHORUS bypass"></button></span>
+            </div>
+          </article>
+
+          <svg class="conn" width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
+            <path d="M0 6 h15" stroke="#3d414a" stroke-width="2"/>
+            <path d="M14 2 l6 4 -6 4" fill="none" stroke="#3d414a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+
+          <!-- TREM : blackface cream -->
+          <article class="pedal enc-trem is-off" data-fx="trem" tabindex="0" role="button"
+                   aria-label="TREM pedal, bypassed — open editor" title="Open TREM in the pedal editor">
+            <div class="pedal-head">
+              <span class="led"></span>
+              <span class="status" data-on="ON" data-off="BYPASS">BYPASS</span>
+            </div>
+            <div class="mini-area">
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" style="--rot:4.1deg"></div></div>
+                <span class="mini-label">Rate</span><span class="mini-val">5.2 Hz</span>
+              </div>
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" style="--rot:-135deg"></div></div>
+                <span class="mini-label">Depth</span><span class="mini-val">0%</span>
+              </div>
+            </div>
+            <div class="plate">TREM</div>
+            <div class="stomp-row">
+              <span class="stomp-rim"><button class="stomp" data-stomp="trem" aria-label="Toggle TREM bypass"></button></span>
+            </div>
+          </article>
+
+          <svg class="conn" width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
+            <path d="M0 6 h15" stroke="#3d414a" stroke-width="2"/>
+            <path d="M14 2 l6 4 -6 4" fill="none" stroke="#3d414a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+
+          <!-- DELAY : Carbon-Copy dark metallic green -->
+          <article class="pedal enc-delay is-off" data-fx="delay" tabindex="0" role="button"
+                   aria-label="DELAY pedal, parked — open editor" title="Open DELAY in the pedal editor">
+            <div class="pedal-head">
+              <span class="led"></span>
+              <span class="status" data-on="ON" data-off="PARKED">PARKED</span>
+            </div>
+            <div class="mini-area">
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" id="mini-delay-time" style="--rot:-32.6deg"></div></div>
+                <span class="mini-label">Time</span><span class="mini-val" id="val-delay-time">380 ms</span>
+              </div>
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" id="mini-delay-fb" style="--rot:-30deg"></div></div>
+                <span class="mini-label">Fdbk</span><span class="mini-val" id="val-delay-fb">35%</span>
+              </div>
+              <div class="mini">
+                <div class="mini-wrap"><div class="mini-knob" id="mini-delay-mix" style="--rot:-67.5deg"></div></div>
+                <span class="mini-label">Mix</span><span class="mini-val" id="val-delay-mix">25%</span>
+              </div>
+            </div>
+            <div class="plate">DELAY</div>
+            <div class="stomp-row">
+              <span class="stomp-rim"><button class="stomp" data-stomp="delay" aria-label="Toggle DELAY bypass"></button></span>
+            </div>
+          </article>
+
+          <svg class="conn" width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
+            <path d="M0 6 h15" stroke="#3d414a" stroke-width="2"/>
+            <path d="M14 2 l6 4 -6 4" fill="none" stroke="#3d414a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+
+          <!-- OUTPUT BUS -->
+          <div class="bus card-flat">
+            <div class="bus-head"><span>OUTPUT BUS</span><span class="gdot"></span></div>
+            <div class="bus-body">
+              <div class="bus-grid">
+                <div class="bch">
+                  <span class="bch-label">GAIN</span>
+                  <div class="mini-wrap flat"><div class="mini-knob" style="--rot:0deg"></div></div>
+                  <span class="bch-val">0.0 dB</span>
+                </div>
+                <div class="bch">
+                  <span class="bch-label">COMP</span>
+                  <div class="mini-wrap flat"><div class="mini-knob" style="--rot:-69deg"></div></div>
+                  <span class="bch-val">3.2:1</span>
+                </div>
+                <div class="bch">
+                  <span class="bch-label">REVERB</span>
+                  <div class="mini-wrap flat"><div class="mini-knob" style="--rot:-86.4deg"></div></div>
+                  <span class="bch-val">18%</span>
+                </div>
+                <div class="bch">
+                  <span class="bch-label">MASTER</span>
+                  <div class="mini-wrap flat"><div class="mini-knob" style="--rot:40.5deg"></div></div>
+                  <span class="bch-val">−4.5 dB</span>
+                </div>
+              </div>
+              <div class="meters" aria-hidden="true">
+                <div class="meter"><i style="height:64%"></i></div>
+                <div class="meter"><i style="height:52%"></i></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SCREEN 2 : PEDAL EDITOR ================= -->
+    <section class="screen" id="screen-editor" role="tabpanel">
+      <div class="section-head">
+        <h2><button class="crumb" id="crumb-back">Pedalboard</button><span class="crumb-sep">/</span>DELAY</h2>
+        <p class="hint">Drag knobs vertically · double-click resets</p>
+      </div>
+      <div class="editor-grid">
+
+        <section class="hero enc-delay is-off" data-fx="delay">
+          <div class="hero-head">
+            <div class="hero-title">
+              <div class="plate plate-lg">DELAY</div>
+              <div class="hero-sub">dark analog repeat · slot 4 of 4</div>
+            </div>
+            <div class="hero-state">
+              <span class="led"></span>
+              <span class="status" data-on="ENGAGED" data-off="PARKED">PARKED</span>
+            </div>
+          </div>
+          <div class="hero-knobs">
+            <div class="kmod">
+              <div class="klabel">Time</div>
+              <div class="bigknob" id="k-time" data-min="1" data-max="1000" data-value="380" data-def="300"
+                   data-dp="0" data-unit=" ms" data-sync="delay-time" style="--arc:#56d1a3"
+                   role="slider" aria-label="Delay time" aria-valuemin="1" aria-valuemax="1000" aria-valuenow="380">
+                <div class="cap"><div class="ptr"></div></div>
+              </div>
+              <div class="kval"><span class="num">380</span><span class="u"> ms</span></div>
+              <div class="krange">1–1000 ms</div>
+            </div>
+            <div class="kmod">
+              <div class="klabel">Feedback</div>
+              <div class="bigknob" id="k-fb" data-min="0" data-max="90" data-value="35" data-def="30"
+                   data-dp="0" data-unit="%" data-sync="delay-fb" style="--arc:#56d1a3"
+                   role="slider" aria-label="Delay feedback" aria-valuemin="0" aria-valuemax="90" aria-valuenow="35">
+                <div class="cap"><div class="ptr"></div></div>
+              </div>
+              <div class="kval"><span class="num">35</span><span class="u">%</span></div>
+              <div class="krange">0–90%</div>
+            </div>
+            <div class="kmod">
+              <div class="klabel">Mix</div>
+              <div class="bigknob" id="k-mix" data-min="0" data-max="100" data-value="25" data-def="20"
+                   data-dp="0" data-unit="%" data-sync="delay-mix" style="--arc:#56d1a3"
+                   role="slider" aria-label="Delay mix" aria-valuemin="0" aria-valuemax="100" aria-valuenow="25">
+                <div class="cap"><div class="ptr"></div></div>
+              </div>
+              <div class="kval"><span class="num">25</span><span class="u">%</span></div>
+              <div class="krange">0–100%</div>
+            </div>
+          </div>
+          <div class="hero-foot">
+            <div class="stomp-col">
+              <span class="stomp-rim lg"><button class="stomp lg" data-stomp="delay" aria-label="Toggle DELAY bypass"></button></span>
+              <span class="foot-label">STOMP</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="editor-side">
+          <div class="card">
+            <h3>State</h3>
+            <div class="rows">
+              <div class="row">
+                <span class="rk">Footswitch</span>
+                <span class="rv">
+                  <span class="ledwrap is-off" data-fx="delay">
+                    <span class="led sm"></span>
+                    <span class="status" data-on="Engaged — in signal path" data-off="Parked — settings kept"
+                          style="font-size:12.5px;font-weight:500;letter-spacing:0;text-transform:none;color:#dfe3ea">Parked — settings kept</span>
+                  </span>
+                </span>
+              </div>
+              <div class="row"><span class="rk">Chain slot</span><span class="rv">4 of 4 · after TREM</span></div>
+              <div class="row"><span class="rk">Tail</span><span class="rv">Buffered — repeats spill on bypass</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Defaults</h3>
+            <button class="btn" id="btn-reset">Reset to defaults</button>
+            <p class="micro">Time 300 ms · Feedback 30% · Mix 20% — or double-click any knob to reset it alone.</p>
+          </div>
+          <div class="card">
+            <h3>Hardware</h3>
+            <p class="hw-map">Launchkey: FX &gt; DELAY — <kbd>K1</kbd> Time / <kbd>K2</kbd> Feedback / <kbd>K3</kbd> Mix</p>
+            <button class="btn btn-accent" id="btn-hw">Edit on hardware</button>
+            <p class="micro">Focuses the DELAY page on the Launchkey so its pots write straight to these three parameters.</p>
+          </div>
+        </aside>
+
+      </div>
+    </section>
+
+    <!-- ================= SCREEN 3 : MACROS ================= -->
+    <section class="screen" id="screen-macros" role="tabpanel">
+      <div class="section-head">
+        <h2>Macros</h2>
+        <p class="hint">Launchkey MACROS bank · M1–M8 mirror these knobs · ring color = target pedal</p>
+      </div>
+      <div class="macro-grid">
+
+        <article class="macro-card" data-rmin="0" data-rmax="60" style="--arc:#56d1a3">
+          <header class="mhead"><span class="mchip">M1</span><span class="mname">Echo</span></header>
+          <div class="bigknob" id="m1" data-min="0" data-max="100" data-value="64" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 1 Echo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="64">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">64</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="dot"></span><span class="mtarget">Delay · Mix</span><span class="mapped">= 38%</span></div>
+          <div class="mrange">Sweep maps 0–60%</div>
+        </article>
+
+        <article class="macro-card" data-rmin="0" data-rmax="100" style="--arc:#3fa9e8">
+          <header class="mhead"><span class="mchip">M2</span><span class="mname">Shimmer</span></header>
+          <div class="bigknob" id="m2" data-min="0" data-max="100" data-value="31" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 2 Shimmer" aria-valuemin="0" aria-valuemax="100" aria-valuenow="31">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">31</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="dot"></span><span class="mtarget">Chorus · Depth</span><span class="mapped">= 31%</span></div>
+          <div class="mrange">Sweep maps 0–100%</div>
+        </article>
+
+        <article class="macro-card" data-rmin="0" data-rmax="80" style="--arc:#7bc24a">
+          <header class="mhead"><span class="mchip">M3</span><span class="mname">Grit</span></header>
+          <div class="bigknob" id="m3" data-min="0" data-max="100" data-value="78" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 3 Grit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="78">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">78</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="dot"></span><span class="mtarget">Drive · Drive</span><span class="mapped">= 62%</span></div>
+          <div class="mrange">Sweep maps 0–80%</div>
+        </article>
+
+        <article class="macro-card unassigned">
+          <header class="mhead"><span class="mchip">M4</span><span class="mname">Unassigned</span></header>
+          <div class="bigknob" id="m4" data-min="0" data-max="100" data-value="0" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 4, unassigned" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">0</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="mtarget">No target</span></div>
+          <div class="mrange">Dormant</div>
+        </article>
+
+        <article class="macro-card unassigned">
+          <header class="mhead"><span class="mchip">M5</span><span class="mname">Unassigned</span></header>
+          <div class="bigknob" id="m5" data-min="0" data-max="100" data-value="0" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 5, unassigned" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">0</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="mtarget">No target</span></div>
+          <div class="mrange">Dormant</div>
+        </article>
+
+        <article class="macro-card unassigned">
+          <header class="mhead"><span class="mchip">M6</span><span class="mname">Unassigned</span></header>
+          <div class="bigknob" id="m6" data-min="0" data-max="100" data-value="0" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 6, unassigned" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">0</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="mtarget">No target</span></div>
+          <div class="mrange">Dormant</div>
+        </article>
+
+        <article class="macro-card unassigned">
+          <header class="mhead"><span class="mchip">M7</span><span class="mname">Unassigned</span></header>
+          <div class="bigknob" id="m7" data-min="0" data-max="100" data-value="0" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 7, unassigned" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">0</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="mtarget">No target</span></div>
+          <div class="mrange">Dormant</div>
+        </article>
+
+        <article class="macro-card unassigned">
+          <header class="mhead"><span class="mchip">M8</span><span class="mname">Unassigned</span></header>
+          <div class="bigknob" id="m8" data-min="0" data-max="100" data-value="0" data-def="0" data-dp="0" data-unit="%"
+               role="slider" aria-label="Macro 8, unassigned" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="cap"><div class="ptr"></div></div>
+          </div>
+          <div class="kval"><span class="num">0</span><span class="u">%</span><span class="of">of sweep</span></div>
+          <div class="massign"><span class="mtarget">No target</span></div>
+          <div class="mrange">Dormant</div>
+        </article>
+
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-foot">
+    <span>Art-direction study · Style A of 3 · Refined Hybrid — believable enclosures on quiet flat chrome</span>
+    <span>Static mock, no audio · drag large knobs vertically · double-click resets</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ---------- geometry: 0deg = up, knob sweep -135..+135 clockwise ---------- */
+  function polar(r,a){
+    var rad=a*Math.PI/180;
+    return [60+r*Math.sin(rad), 60-r*Math.cos(rad)];
+  }
+  function arcD(a0,a1,r){
+    if(a1-a0<0.6) return '';
+    var s=polar(r,a0), e=polar(r,a1);
+    var la=(a1-a0)>180?1:0;
+    return 'M'+s[0].toFixed(2)+' '+s[1].toFixed(2)+
+           ' A'+r+' '+r+' 0 '+la+' 1 '+e[0].toFixed(2)+' '+e[1].toFixed(2);
+  }
+
+  /* ---------- tabs ---------- */
+  var tabs=document.querySelectorAll('.tab');
+  function showTab(id){
+    tabs.forEach(function(t){
+      var on=t.dataset.tab===id;
+      t.classList.toggle('active',on);
+      t.setAttribute('aria-selected',on?'true':'false');
+    });
+    document.querySelectorAll('.screen').forEach(function(s){
+      s.classList.toggle('visible', s.id==='screen-'+id);
+    });
+  }
+  tabs.forEach(function(t){
+    t.addEventListener('click',function(){ showTab(t.dataset.tab); });
+  });
+  document.getElementById('crumb-back').addEventListener('click',function(){ showTab('board'); });
+
+  /* ---------- pedal body -> editor ---------- */
+  document.querySelectorAll('.pedal').forEach(function(p){
+    p.addEventListener('click',function(){ showTab('editor'); });
+    p.addEventListener('keydown',function(e){
+      if(e.key==='Enter'||e.key===' '){ e.preventDefault(); showTab('editor'); }
+    });
+  });
+
+  /* ---------- stomp switches / bypass state ---------- */
+  var fxState={drive:true, chorus:true, trem:false, delay:false};
+  function renderFx(name){
+    var on=fxState[name];
+    document.querySelectorAll('[data-fx="'+name+'"]').forEach(function(node){
+      node.classList.toggle('is-off',!on);
+      var st=node.matches('.status')?node:node.querySelector('.status');
+      if(st) st.textContent=on?(st.dataset.on||'ON'):(st.dataset.off||'BYPASS');
+    });
+  }
+  document.querySelectorAll('[data-stomp]').forEach(function(b){
+    b.addEventListener('click',function(e){
+      e.stopPropagation();
+      var n=b.dataset.stomp;
+      fxState[n]=!fxState[n];
+      renderFx(n);
+    });
+  });
+  Object.keys(fxState).forEach(renderFx);
+
+  /* ---------- live sync + macro mapping (delegated; attach before knob init) ---------- */
+  document.addEventListener('knobchange',function(e){
+    var k=e.target;
+    if(!k || !k.dataset) return;
+    /* macro card: recompute mapped target value */
+    var card=k.closest ? k.closest('.macro-card') : null;
+    if(card && card.dataset.rmax!==undefined){
+      var rmin=parseFloat(card.dataset.rmin), rmax=parseFloat(card.dataset.rmax);
+      var mapped=Math.round(rmin + e.detail.value/100*(rmax-rmin));
+      var el=card.querySelector('.mapped');
+      if(el) el.textContent='= '+mapped+'%';
+    }
+    /* editor knob: mirror onto the board's mini knob */
+    if(k.dataset.sync){
+      var min=parseFloat(k.dataset.min), max=parseFloat(k.dataset.max);
+      var t=(e.detail.value-min)/(max-min);
+      var mini=document.getElementById('mini-'+k.dataset.sync);
+      if(mini) mini.style.setProperty('--rot', (-135+270*t).toFixed(1)+'deg');
+      var val=document.getElementById('val-'+k.dataset.sync);
+      if(val) val.textContent=e.detail.value.toFixed(parseInt(k.dataset.dp||'0',10))+(k.dataset.unit||'');
+    }
+  });
+
+  /* ---------- big interactive knobs ---------- */
+  var NS='http://www.w3.org/2000/svg';
+  function initKnob(root){
+    var min=parseFloat(root.dataset.min), max=parseFloat(root.dataset.max);
+    var def=parseFloat(root.dataset.def), dp=parseInt(root.dataset.dp||'0',10);
+    var value=parseFloat(root.dataset.value);
+
+    var svg=document.createElementNS(NS,'svg');
+    svg.setAttribute('viewBox','0 0 120 120');
+    svg.setAttribute('class','kring');
+    for(var i=0;i<=10;i++){
+      var a=-135+27*i, big=(i===0||i===5||i===10);
+      var p1=polar(big?50.5:52.5,a), p2=polar(58,a);
+      var ln=document.createElementNS(NS,'line');
+      ln.setAttribute('x1',p1[0].toFixed(2)); ln.setAttribute('y1',p1[1].toFixed(2));
+      ln.setAttribute('x2',p2[0].toFixed(2)); ln.setAttribute('y2',p2[1].toFixed(2));
+      ln.setAttribute('stroke', big?'rgba(255,255,255,.38)':'rgba(255,255,255,.20)');
+      ln.setAttribute('stroke-width', big?'1.6':'1');
+      svg.appendChild(ln);
+    }
+    var track=document.createElementNS(NS,'path');
+    track.setAttribute('class','tarc');
+    track.setAttribute('d',arcD(-135,135,46));
+    svg.appendChild(track);
+    var varc=document.createElementNS(NS,'path');
+    varc.setAttribute('class','varc');
+    svg.appendChild(varc);
+    root.insertBefore(svg,root.firstChild);
+
+    var ptr=root.querySelector('.ptr');
+    var mod=root.closest('.kmod')||root.closest('.macro-card');
+    var num=mod?mod.querySelector('.kval .num'):null;
+
+    function render(){
+      var t=(value-min)/(max-min);
+      var ang=-135+270*t;
+      ptr.style.transform='rotate('+ang.toFixed(2)+'deg)';
+      varc.setAttribute('d',arcD(-135,ang,46));
+      if(num) num.textContent=value.toFixed(dp);
+      root.setAttribute('aria-valuenow',value.toFixed(dp));
+      root.dispatchEvent(new CustomEvent('knobchange',{bubbles:true,detail:{value:value}}));
+    }
+    function set(v){
+      value=Math.max(min,Math.min(max,v));
+      render();
+    }
+
+    /* vertical pointer-drag: up = clockwise, 200px of travel = full sweep */
+    var dragging=false, sy=0, sv=0;
+    root.addEventListener('pointerdown',function(e){
+      dragging=true; sy=e.clientY; sv=value;
+      root.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    root.addEventListener('pointermove',function(e){
+      if(!dragging) return;
+      set(sv+(sy-e.clientY)/200*(max-min));
+    });
+    root.addEventListener('pointerup',function(){ dragging=false; });
+    root.addEventListener('pointercancel',function(){ dragging=false; });
+    root.addEventListener('dblclick',function(){ set(def); });
+
+    set(value);
+    return { set:set, reset:function(){ set(def); } };
+  }
+
+  var reg={};
+  document.querySelectorAll('.bigknob').forEach(function(k){ reg[k.id]=initKnob(k); });
+
+  /* ---------- editor actions ---------- */
+  document.getElementById('btn-reset').addEventListener('click',function(){
+    reg['k-time'].reset(); reg['k-fb'].reset(); reg['k-mix'].reset();
+  });
+  var hwBtn=document.getElementById('btn-hw');
+  hwBtn.addEventListener('click',function(){
+    hwBtn.textContent='Focused on Launchkey';
+    hwBtn.disabled=true;
+    setTimeout(function(){ hwBtn.textContent='Edit on hardware'; hwBtn.disabled=false; },1400);
+  });
+})();
+</script>
+</body>
+</html>
