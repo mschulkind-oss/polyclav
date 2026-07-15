@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>polyclav — Pedalboard UI mockups (docs/PEDALBOARD_UI.md)</title>
+<style>
+  /* Tokens copied from web/app/globals.css so mockups match the shipped app. */
+  :root {
+    --bg: #f4f4f6; --card: #ffffff; --fg: #17181a; --muted: #6a6d74;
+    --border: #d9dbe0; --accent: #3d6bff; --ok: #2fb35f; --bad: #d64541;
+    --led-off: #3a3d44;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101114; --card: #1a1c20; --fg: #e7e8ea; --muted: #9a9aa2;
+      --border: #32353c; --accent: #6b8cff; --ok: #3ccc72; --bad: #e05a56;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f4f6; --card: #ffffff; --fg: #17181a; --muted: #6a6d74;
+    --border: #d9dbe0; --accent: #3d6bff; --ok: #2fb35f; --bad: #d64541;
+  }
+  :root[data-theme="dark"] {
+    --bg: #101114; --card: #1a1c20; --fg: #e7e8ea; --muted: #9a9aa2;
+    --border: #32353c; --accent: #6b8cff; --ok: #3ccc72; --bad: #e05a56;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 22px;
+    border-bottom: 1px solid var(--border); background: var(--card); flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .spacer { flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 2px 10px; font-size: 12px; color: var(--muted);
+  }
+  .chip b { color: var(--fg); font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; flex: none; }
+  .dot.ok { background: var(--ok); }
+  .mockbanner {
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+    border-bottom: 1px solid var(--border);
+    padding: 6px 22px; font-size: 12px; color: var(--muted);
+  }
+  .mockbanner b { color: var(--fg); }
+  nav.tabs {
+    display: flex; gap: 4px; padding: 10px 22px 0; max-width: 1100px; margin: 0 auto;
+  }
+  nav.tabs button {
+    font: inherit; font-size: 13px; padding: 7px 14px; cursor: pointer;
+    background: transparent; color: var(--muted);
+    border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+  }
+  nav.tabs button.active {
+    background: var(--card); color: var(--fg); border-color: var(--border); font-weight: 600;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+  section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px;
+  }
+  section h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 12px; font-weight: 650;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .screen { display: none; }
+  .screen.active { display: grid; gap: 16px; }
+  .note { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
+  .btn {
+    font: inherit; font-size: 12.5px; padding: 5px 12px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--fg);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.small { font-size: 11.5px; padding: 3px 9px; }
+
+  /* ---------- toggle switch ---------- */
+  .switch { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .switch .track {
+    width: 30px; height: 16px; border-radius: 999px; background: var(--border); position: relative; transition: background .15s;
+  }
+  .switch .track::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--card); transition: left .15s;
+  }
+  .switch.on .track { background: var(--accent); }
+  .switch.on .track::after { left: 16px; }
+
+  /* ---------- pedalboard strip ---------- */
+  .chainrow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 4px 0 8px; }
+  .flowarrow { align-self: center; color: var(--muted); padding: 0 7px; font-size: 15px; flex: none; }
+  .srcnode {
+    align-self: center; flex: none; border: 1px dashed var(--border); border-radius: 8px;
+    color: var(--muted); font-size: 12px; padding: 8px 12px; letter-spacing: .05em;
+  }
+  .pedal {
+    flex: none; width: 148px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); padding: 10px 12px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 6px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .pedal .stomp { margin-top: auto; }
+  .pedal:hover { border-color: var(--accent); }
+  .pedal.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .pedal .top { display: flex; align-items: center; gap: 8px; }
+  .led { width: 9px; height: 9px; border-radius: 50%; background: var(--led-off, #555); flex: none;
+         box-shadow: inset 0 0 1px rgba(0,0,0,.4); }
+  .led.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .pedal .name { font-weight: 650; font-size: 13px; letter-spacing: .04em; }
+  .pedal .params { display: grid; gap: 2px; font-size: 12px; }
+  .pedal .params div { display: flex; justify-content: space-between; }
+  .pedal .params .l { color: var(--muted); }
+  .pedal .params .v { font-variant-numeric: tabular-nums; }
+  .pedal.bypassed .params .v { color: var(--muted); }
+  .pedal.bypassed { opacity: .82; }
+  .busstrip {
+    align-self: center; flex: none; display: flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+    font-size: 11.5px; color: var(--muted); padding: 8px 10px;
+  }
+  .busstrip span { padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; }
+  .flash { animation: flash 1s ease-out; }
+  @keyframes flash { 0% { color: var(--accent); } 100% { color: inherit; } }
+
+  /* ---------- pedal editor ---------- */
+  .editor { display: grid; gap: 14px; }
+  .editor .headrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .editor .headrow h3 { margin: 0; font-size: 15px; letter-spacing: .05em; }
+  .sliderrow { display: grid; grid-template-columns: 110px 1fr 84px; align-items: center; gap: 12px; }
+  .sliderrow label { font-size: 13px; color: var(--fg); }
+  .sliderrow .val { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .sliderrow .taper { font-size: 10.5px; color: var(--muted); display: block; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .hwhint {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border-top: 1px solid var(--border); padding-top: 12px; font-size: 12.5px; color: var(--muted);
+  }
+  .hwhint .kbd {
+    border: 1px solid var(--border); border-radius: 5px; background: var(--bg);
+    padding: 1px 7px; font-size: 11.5px; color: var(--fg); font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- macros ---------- */
+  .macrogrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .macro {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+    padding: 12px; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 4px 12px; align-items: center;
+  }
+  .macro > * { min-width: 0; }
+  .macro .knob { grid-row: span 3; }
+  .knob {
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 2px solid var(--border); background: var(--card); position: relative;
+  }
+  .knob::after {
+    content: ""; position: absolute; left: 50%; top: 4px; width: 2px; height: 15px;
+    background: var(--accent); border-radius: 2px; transform-origin: 50% 22px;
+    transform: translateX(-50%) rotate(var(--rot, 0deg));
+  }
+  .knob.idle { opacity: .45; }
+  .knob.idle::after { background: var(--muted); }
+  .macro .slotname { font-weight: 650; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
+  .macro .slotname .n { color: var(--muted); font-weight: 500; font-size: 11.5px; }
+  .macro select, .macro input[type=text], .macro input[type=number] {
+    font: inherit; font-size: 12px; color: var(--fg); background: var(--card);
+    border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; width: 100%;
+  }
+  .macro .range { display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+  .macro .range input { width: 46px; flex: none; padding: 3px 4px; }
+  .macro.empty { opacity: .6; }
+  .macro.empty .assign { color: var(--muted); font-style: italic; font-size: 12.5px; }
+
+  /* ---------- hardware map ---------- */
+  .hwgrid { display: grid; grid-template-columns: minmax(430px, 3fr) minmax(260px, 2fr); gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .hwgrid { grid-template-columns: 1fr; } }
+  .device {
+    border: 1px solid var(--border); border-radius: 14px; background: var(--bg);
+    padding: 16px; display: grid; gap: 14px;
+  }
+  .lcd {
+    width: 190px; background: #101408; color: #cde86a; border-radius: 6px;
+    border: 1px solid var(--border);
+    font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 6px 10px; letter-spacing: .1em;
+  }
+  .knobrow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+  .hwknob { display: grid; justify-items: center; gap: 4px; cursor: pointer; padding: 4px 0; border-radius: 8px; }
+  .hwknob:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .hwknob .knob { width: 36px; height: 36px; }
+  .hwknob .knob::after { height: 10px; transform-origin: 50% 14px; }
+  .hwknob .kl { font-size: 10px; color: var(--muted); }
+  .hwknob .kn { font-size: 11px; font-weight: 600; text-align: center; line-height: 1.15; }
+  .hwknob.unbound .kn { color: var(--muted); font-weight: 400; }
+  .hwknob.live .knob { border-color: var(--accent); box-shadow: 0 0 7px var(--accent); }
+  .padrow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+  .pad { aspect-ratio: 1.6; border-radius: 5px; background: var(--led-off, #3a3d44); border: 1px solid rgba(0,0,0,.25); }
+  .pad.orange { background: #e8963c; }
+  .pad.dim { background: color-mix(in srgb, var(--muted) 45%, var(--bg)); }
+  .pad.c1 { background: #4c7dff; } .pad.c2 { background: #37b563; } .pad.c3 { background: #c8503e; } .pad.c4 { background: #b28de0; }
+  .transportrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tbtn {
+    font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 5px; padding: 3px 8px; background: var(--card);
+  }
+  .tbtn.hot { color: var(--fg); border-color: var(--accent); }
+  .devlegend { font-size: 11px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .catcols { display: grid; gap: 10px; }
+  .cat { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .cat .cathead {
+    padding: 6px 12px; font-size: 12px; font-weight: 650; letter-spacing: .05em;
+    background: var(--bg); display: flex; align-items: center; gap: 8px;
+  }
+  .cat .cathead .avail { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: auto; }
+  .cat ul { list-style: none; margin: 0; padding: 4px 0; }
+  .cat li {
+    padding: 4px 12px 4px 24px; font-size: 12.5px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+  }
+  .cat li:hover { color: var(--fg); }
+  .cat li.here { color: var(--fg); font-weight: 600; }
+  .cat li.here::before { content: "▸"; color: var(--accent); margin-left: -14px; }
+  .livechip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .livechip .dot { width: 8px; height: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>polyclav</h1>
+  <span class="chip"><span class="dot ok"></span> Launchkey <b>connected</b></span>
+  <span class="chip">patch <b>Rhodes Mk I</b></span>
+  <span class="spacer"></span>
+  <button class="btn small" id="themebtn">theme</button>
+</header>
+<div class="mockbanner"><b>Mockup</b> — companion to <b>docs/PEDALBOARD_UI.md</b>. Tabs below are mockup navigation only: Pedalboard, Pedal editor and Macros live on the dashboard; Hardware Map is its own page (/app/hardware).</div>
+
+<nav class="tabs">
+  <button class="active" data-screen="board">1 · Pedalboard</button>
+  <button data-screen="editor">2 · Pedal editor</button>
+  <button data-screen="macros">3 · Macros</button>
+  <button data-screen="hwmap">4 · Hardware map</button>
+</nav>
+
+<main>
+
+<!-- ============ 1 · PEDALBOARD ============ -->
+<div class="screen active" id="board">
+  <section class="wide">
+    <h2>Signal chain
+      <span class="spacer"></span>
+      <span class="switch on" id="follow"><span class="track"></span> Follow hardware</span>
+    </h2>
+    <div class="chainrow">
+      <div class="srcnode">SYNTH</div>
+      <div class="flowarrow">→</div>
+
+      <div class="pedal" data-goto="editor">
+        <div class="top"><span class="led on"></span><span class="name">DRIVE</span></div>
+        <div class="params">
+          <div><span class="l">Drive</span><span class="v">15%</span></div>
+        </div>
+        <button class="btn small stomp">on</button>
+      </div>
+      <div class="flowarrow">→</div>
+
+      <div class="pedal" data-goto="editor">
+        <div class="top"><span class="led on"></span><span class="name">CHORUS</span></div>
+        <div class="params">
+          <div><span class="l">Rate</span><span class="v flash">0.9 Hz</span></div>
+          <div><span class="l">Depth</span><span class="v">45%</span></div>
+          <div><span class="l">Mix</span><span class="v">30%</span></div>
+        </div>
+        <button class="btn small stomp">on</button>
+      </div>
+      <div class="flowarrow">→</div>
+
+      <div class="pedal bypassed" data-goto="editor">
+        <div class="top"><span class="led"></span><span class="name">TREM</span></div>
+        <div class="params">
+          <div><span class="l">Rate</span><span class="v">5.2 Hz</span></div>
+          <div><span class="l">Depth</span><span class="v">0%</span></div>
+        </div>
+        <button class="btn small stomp">off</button>
+      </div>
+      <div class="flowarrow">→</div>
+
+      <div class="pedal bypassed selected" data-goto="editor">
+        <div class="top"><span class="led"></span><span class="name">DELAY</span></div>
+        <div class="params">
+          <div><span class="l">Time</span><span class="v">380 ms</span></div>
+          <div><span class="l">Feedback</span><span class="v">35%</span></div>
+          <div><span class="l">Mix</span><span class="v">25%</span></div>
+        </div>
+        <button class="btn small stomp">off — parked</button>
+      </div>
+      <div class="flowarrow">→</div>
+
+      <div class="busstrip">
+        <span>GAIN</span><span>COMP</span><span>REVERB</span><span>MASTER</span>
+      </div>
+    </div>
+    <p class="note">Chain order is fixed (pedalboard convention: gain → modulation → time). A pedal is lit when enabled <em>and</em> its gate knob &gt; 0. “off — parked” = stomped off with settings kept. Click a pedal to edit. Values tick live (SSE) when a Launchkey knob turns.</p>
+  </section>
+</div>
+
+<!-- ============ 2 · PEDAL EDITOR ============ -->
+<div class="screen" id="editor">
+  <section class="wide editor">
+    <div class="headrow">
+      <span class="led"></span>
+      <h3>DELAY</h3>
+      <span class="chip">analog delay · BBD</span>
+      <span class="spacer"></span>
+      <button class="btn stomp">stomp: off — parked</button>
+      <button class="btn">reset to defaults</button>
+    </div>
+
+    <div class="sliderrow">
+      <label>Time <span class="taper">exp taper</span></label>
+      <input type="range" min="0" max="1000" value="551">
+      <span class="val">380 ms</span>
+    </div>
+    <div class="sliderrow">
+      <label>Feedback</label>
+      <input type="range" min="0" max="900" value="350">
+      <span class="val">35%</span>
+    </div>
+    <div class="sliderrow">
+      <label>Mix <span class="taper">gate — 0 = true bypass</span></label>
+      <input type="range" min="0" max="1000" value="250">
+      <span class="val">25%</span>
+    </div>
+
+    <div class="hwhint">
+      <span>Launchkey:</span>
+      <span class="kbd">FX ▸ DELAY</span>
+      <span class="kbd">K1 Time</span>
+      <span class="kbd">K2 Feedback</span>
+      <span class="kbd">K3 Mix</span>
+      <span class="spacer"></span>
+      <button class="btn primary">Edit on hardware</button>
+    </div>
+    <p class="note">Sliders are registry-driven (label · unit · range · taper come from <code>GET /api/chain</code>). “Edit on hardware” → <code>POST /api/nav {"category":"FX","page":"DELAY"}</code> — the device jumps to this page and flashes its banner.</p>
+  </section>
+</div>
+
+<!-- ============ 3 · MACROS ============ -->
+<div class="screen" id="macros">
+  <section class="wide">
+    <h2>Macros <span class="chip">Launchkey · MACROS category · knobs 1–8</span></h2>
+    <div class="macrogrid">
+
+      <div class="macro">
+        <div class="knob" style="--rot: 64deg"></div>
+        <div class="slotname"><span class="n">M1</span> Echo</div>
+        <select><option>Delay · Mix</option></select>
+        <div class="range">range <input type="number" value="0.0" step="0.1"> – <input type="number" value="0.6" step="0.1"></div>
+      </div>
+
+      <div class="macro">
+        <div class="knob" style="--rot: -38deg"></div>
+        <div class="slotname"><span class="n">M2</span> Shimmer</div>
+        <select><option>Chorus · Depth</option></select>
+        <div class="range">range <input type="number" value="0.0" step="0.1"> – <input type="number" value="1.0" step="0.1"></div>
+      </div>
+
+      <div class="macro">
+        <div class="knob" style="--rot: 105deg"></div>
+        <div class="slotname"><span class="n">M3</span> Grit</div>
+        <select><option>Drive · Drive</option></select>
+        <div class="range">range <input type="number" value="0.0" step="0.1"> – <input type="number" value="0.8" step="0.1"></div>
+      </div>
+
+      <div class="macro empty">
+        <div class="knob idle"></div>
+        <div class="slotname"><span class="n">M4</span> —</div>
+        <div class="assign">unassigned — pick a target</div>
+        <select><option>—</option><option>Drive · Drive</option><option>Chorus · Rate</option><option>Chorus · Depth</option><option>Chorus · Mix</option><option>Tremolo · Rate</option><option>Tremolo · Depth</option><option>Delay · Time</option><option>Delay · Feedback</option><option>Delay · Mix</option><option>Bus · Reverb</option><option>Bus · Comp</option></select>
+      </div>
+
+      <div class="macro empty"><div class="knob idle"></div><div class="slotname"><span class="n">M5</span> —</div><div class="assign">unassigned</div><select><option>—</option></select></div>
+      <div class="macro empty"><div class="knob idle"></div><div class="slotname"><span class="n">M6</span> —</div><div class="assign">unassigned</div><select><option>—</option></select></div>
+      <div class="macro empty"><div class="knob idle"></div><div class="slotname"><span class="n">M7</span> —</div><div class="assign">unassigned</div><select><option>—</option></select></div>
+      <div class="macro empty"><div class="knob idle"></div><div class="slotname"><span class="n">M8</span> —</div><div class="assign">unassigned</div><select><option>—</option></select></div>
+
+    </div>
+    <p class="note">Slot N ≡ MACROS-category knob N on the device. Target list = every registry param (pedals + bus). Range narrows the sweep; the LCD shows the slot name on turn. Assignment is web-only by design (v1 dictation stance) — the device performs, the browser configures.</p>
+  </section>
+</div>
+
+<!-- ============ 4 · HARDWARE MAP ============ -->
+<div class="screen" id="hwmap">
+  <section class="wide">
+    <h2>Hardware map <span class="livechip"><span class="dot ok"></span> live — following device</span></h2>
+    <div class="hwgrid">
+
+      <div class="device">
+        <div class="lcd">DELAY&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4/4<br>Time&nbsp;&nbsp;&nbsp;&nbsp;380 ms</div>
+        <div class="knobrow">
+          <div class="hwknob live"><span class="knob" style="--rot: 40deg"></span><span class="kl">K1</span><span class="kn">Time</span></div>
+          <div class="hwknob"><span class="knob" style="--rot: -20deg"></span><span class="kl">K2</span><span class="kn">Feedback</span></div>
+          <div class="hwknob"><span class="knob" style="--rot: -45deg"></span><span class="kl">K3</span><span class="kn">Mix</span></div>
+          <div class="hwknob unbound"><span class="knob idle"></span><span class="kl">K4</span><span class="kn">—</span></div>
+          <div class="hwknob unbound"><span class="knob idle"></span><span class="kl">K5</span><span class="kn">—</span></div>
+          <div class="hwknob unbound"><span class="knob idle"></span><span class="kl">K6</span><span class="kn">—</span></div>
+          <div class="hwknob unbound"><span class="knob idle"></span><span class="kl">K7</span><span class="kn">—</span></div>
+          <div class="hwknob unbound"><span class="knob idle"></span><span class="kl">K8</span><span class="kn">—</span></div>
+        </div>
+        <div class="padrow">
+          <div class="pad c1" title="patch 1"></div><div class="pad c2"></div><div class="pad c3"></div><div class="pad c4"></div>
+          <div class="pad dim"></div><div class="pad dim"></div><div class="pad dim"></div><div class="pad dim"></div>
+        </div>
+        <div class="padrow">
+          <div class="pad dim" title="page 1 DRIVE"></div><div class="pad dim" title="page 2 CHORUS"></div><div class="pad dim" title="page 3 TREM"></div><div class="pad orange" title="page 4 DELAY (active)"></div>
+          <div class="pad"></div><div class="pad"></div><div class="pad"></div><div class="pad"></div>
+        </div>
+        <div class="transportrow">
+          <span class="tbtn hot">◀ Track</span><span class="tbtn hot">Track ▶</span>
+          <span class="tbtn hot">Scene ▲</span><span class="tbtn hot">Scene ▼</span>
+          <span class="tbtn">◀◀</span><span class="tbtn">▶▶</span><span class="tbtn hot">▶ Play</span><span class="tbtn">■ Stop</span><span class="tbtn">● Rec</span><span class="tbtn">Loop</span><span class="tbtn">Shift</span>
+        </div>
+        <div class="devlegend">
+          <span>top pads = patch select</span>
+          <span>bottom pads 1–4 = FX pages (■ active)</span>
+          <span>Track ◀▶ = category · Scene ▲▼ = page</span>
+          <span>click a knob → edit that param</span>
+        </div>
+      </div>
+
+      <div class="catcols">
+        <div class="cat">
+          <div class="cathead">VOICE <span class="avail">native patches only</span></div>
+          <ul><li>MAIN</li><li>OSC</li><li>FILTER</li><li>AMP</li><li>LFO/MOD</li></ul>
+        </div>
+        <div class="cat">
+          <div class="cathead">FX <span class="avail">all patches</span></div>
+          <ul><li>DRIVE</li><li>CHORUS</li><li>TREM</li><li class="here">DELAY</li></ul>
+        </div>
+        <div class="cat">
+          <div class="cathead">MIX <span class="avail">all patches</span></div>
+          <ul><li>GLOBALS</li></ul>
+        </div>
+        <div class="cat">
+          <div class="cathead">MACROS <span class="avail">all patches</span></div>
+          <ul><li>M1–M8</li></ul>
+        </div>
+      </div>
+
+    </div>
+    <p class="note">Everything on this page renders from <code>GET /api/hwmap</code> — the dictated map as data, so this page can never disagree with the device. SSE <code>nav</code> highlights the page the device is on; SSE <code>chain</code> makes the moving knob glow (K1 here). Clicking a knob or page navigates to its direct-edit view.</p>
+  </section>
+</div>
+
+</main>
+
+<script>
+  // Mockup-only interactivity: tabs, theme toggle, stomp/follow toggles.
+  const tabs = document.querySelectorAll("nav.tabs button");
+  const screens = document.querySelectorAll(".screen");
+  function show(id) {
+    tabs.forEach(b => b.classList.toggle("active", b.dataset.screen === id));
+    screens.forEach(s => s.classList.toggle("active", s.id === id));
+  }
+  tabs.forEach(b => b.addEventListener("click", () => show(b.dataset.screen)));
+  document.querySelectorAll(".pedal[data-goto]").forEach(p =>
+    p.addEventListener("click", e => {
+      if (e.target.classList.contains("stomp")) return;
+      show(p.dataset.goto);
+    }));
+  document.querySelectorAll(".pedal .stomp").forEach(btn =>
+    btn.addEventListener("click", () => {
+      const pedal = btn.closest(".pedal");
+      const off = pedal.classList.toggle("bypassed");
+      pedal.querySelector(".led").classList.toggle("on", !off);
+      btn.textContent = off ? "off — parked" : "on";
+    }));
+  document.getElementById("follow").addEventListener("click", e => e.currentTarget.classList.toggle("on"));
+  document.getElementById("themebtn").addEventListener("click", () => {
+    const r = document.documentElement;
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const cur = r.dataset.theme || (dark ? "dark" : "light");
+    r.dataset.theme = cur === "dark" ? "light" : "dark";
+  });
+</script>
+</body>
+</html>

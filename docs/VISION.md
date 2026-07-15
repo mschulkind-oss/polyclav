@@ -146,7 +146,9 @@ fixing structurally — a Category × Page navigation model (Track ←/→
 picks a category, Scene ↑/↓ stays page-within-category exactly as
 today) with a new backend-agnostic **FX** category holding DRIVE and
 DELAY as separate pages — rather than hunting for one more free knob
-per effect. Proposal only; not yet built.
+per effect. Proposal only; not yet built. `docs/PEDALBOARD_UI.md`
+(2026-07-14) now specs the full exposure plan end-to-end: chain
+registry, web pedalboard UI, dictated FX pages, and macros.
 
 ### 1c. Chorus pedal
 
@@ -212,7 +214,7 @@ reverse.
 **Not yet done:** same gap as the delay pedal (Section 1b) — Rust DSP +
 FFI + Go wrapper functions exist, but no Launchkey knob, REST field, or
 per-patch persistence. Blocked on the same `docs/LAUNCHKEY_NAVIGATION.md`
-Category x Page work.
+Category x Page work; exposure plan in `docs/PEDALBOARD_UI.md`.
 
 ### 1d. Tremolo pedal
 
@@ -247,7 +249,8 @@ assert exactly (unlike chorus/delay, where mixing can produce
 constructive overshoot).
 
 **Not yet done:** same gap as chorus and the delay pedal — DSP + FFI +
-Go wrapper exist; no knob/REST/persistence binding yet.
+Go wrapper exist; no knob/REST/persistence binding yet. Exposure plan
+in `docs/PEDALBOARD_UI.md`.
 
 ### 2. Physically-modeled organ engine — "build our own Hammond"
 

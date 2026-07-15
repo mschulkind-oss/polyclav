@@ -92,6 +92,14 @@ defining property instead of a one-off exception on MAIN.
   room for a 4th (e.g. exposing the feedback-loop lowpass cutoff as a
   "tone" knob later, currently a fixed constant).
 
+> **Update (2026-07-14):** `docs/PEDALBOARD_UI.md` dictates the full
+> FX page set for the pedals that now exist — DRIVE / CHORUS / TREM /
+> DELAY, one page per pedal, generated from a chain registry — and
+> adds a fourth always-available category, **MACROS** (8 knob slots
+> assigned from the web UI). That doc resolves Open Question 5 below
+> for today's effects; the category mechanics proposed here are
+> unchanged and become its Phase 2 prerequisite.
+
 ### 3. MIX — new
 
 Also backend-agnostic. This is the page `docs/ROADMAP.md` §0/§5
