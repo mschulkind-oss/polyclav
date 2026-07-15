@@ -8,9 +8,26 @@ setup:
 build-rust:
     cargo build --release --manifest-path audio-core/Cargo.toml
 
-build: build-rust
+# The dev auto-reloader (.air.toml) uses this so a Go/Rust save never waits
+# on a Next.js export.
+# Backend binary only — embeds internal/web/static/app as-is.
+build-bin: build-rust
     mkdir -p bin
     go build -o bin/polyclav ./cmd/polyclav
+
+# Without pnpm (e.g. a no-Node release box) falls back to the committed
+# export with a warning instead of failing.
+# Refresh the embedded web export from the web/ sources on disk.
+web-sync:
+    @if command -v pnpm >/dev/null 2>&1; then \
+        if [ ! -d web/node_modules ]; then (cd web && pnpm install --frozen-lockfile); fi; \
+        just web-build; \
+    else \
+        echo "warning: pnpm not found — using the committed web export (may be stale)"; \
+    fi
+
+# Everything-fresh build: web export rebuilt from disk, then the binary embeds it.
+build: web-sync build-bin
 
 format:
     cargo fmt --manifest-path audio-core/Cargo.toml
@@ -49,6 +66,13 @@ done: check-ci
 
 run *args: build
     ./bin/polyclav {{args}}
+
+#   daemon — air rebuilds (just build-bin) + restarts on go/rs/toml/h saves
+#   web    — next dev with HMR on :3000, /api/* proxied to the daemon :8666
+# Browse http://localhost:3000/app/ (mockup playground: /app/mockup/).
+# Auto-reloading dev loop for both halves (hivemind runs Procfile.dev).
+dev:
+    hivemind Procfile.dev
 
 # Build and install both binaries to PREFIX/bin (default ~/.local/bin).
 # Override the location with `PREFIX=/usr/local just install`.

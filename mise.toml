@@ -5,6 +5,9 @@
 go = "1.26.3"
 just = "1.51.0"
 rust = "1.95.0"
+# Dev-loop auto-reloader for the daemon (`just dev`, Procfile.dev). Installed
+# via `go install`, so it needs no extra backend; not part of any CI gate.
+"go:github.com/air-verse/air" = "1.65.3"
 
 [env]
 GOCACHE = "{{ config_root }}/.gocache"

@@ -1,0 +1,42 @@
+# air (air-verse/air) — daemon auto-reload for `just dev` / Procfile.dev.
+# Watches Go + Rust + config sources, rebuilds via `just build-bin` (backend
+# only — the web side hot-reloads through `next dev`, so touching web/ must
+# NOT restart the daemon), then restarts ./bin/polyclav with the web API on.
+root = "."
+tmp_dir = ".air"
+
+[build]
+  cmd = "just build-bin"
+  bin = "bin/polyclav"
+  args_bin = ["--web", "on"]
+  include_ext = ["go", "rs", "toml", "h", "mod", "sum"]
+  exclude_dir = [
+    ".air",
+    ".cargo",
+    ".git",
+    ".gocache",
+    ".rustup",
+    "bin",
+    "docs",
+    "internal/web/static",
+    "node_modules",
+    "scratch",
+    "soundfonts",
+    "swarf",
+    "target",
+    "trash",
+    "web",
+  ]
+  exclude_file = [".air.toml", ".mise.local.toml"]
+  # Debounce bursts of saves; give the daemon time to release audio + MIDI
+  # devices gracefully before a hard kill.
+  delay = 300
+  send_interrupt = true
+  kill_delay = "3s"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

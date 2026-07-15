@@ -1,6 +1,8 @@
-# Web-UI dev loop (docs/WEB_UI.md): run with `hivemind Procfile.dev`.
-# The daemon serves the API on 127.0.0.1:8666 (--web on); next dev serves
-# the app on :3000 and proxies /api/* to the daemon (next.config.ts).
+# Full dev loop (docs/WEB_UI.md): run with `just dev` (= hivemind Procfile.dev).
+# daemon: air rebuilds (just build-bin) + restarts on Go/Rust/config saves
+#         (.air.toml), serving the API on 127.0.0.1:8666 (--web on).
+# web:    next dev serves the app on :3000 with HMR and proxies /api/* to
+#         the daemon (next.config.ts).
 # Browse http://localhost:3000/app/ for live-reloading UI work.
-daemon: just run --web on
+daemon: air
 web: cd web && pnpm dev
