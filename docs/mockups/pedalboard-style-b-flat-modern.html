@@ -1,25 +1,31 @@
-<!-- Art-direction study Style B — Flat Modern — companion to docs/PLUGIN_UI_RESEARCH.md. One of three competing styles. -->
+<!-- Style B — Flat Modern — the chosen direction (docs/PLUGIN_UI_RESEARCH.md OQ1).
+     v2 refinement: rem-based UI-scale framework, role-aligned knob grid,
+     per-pedal signature modules, drag/wheel/fine-adjust interaction canon. -->
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Style B — Flat Modern</title>
+<title>polyclav — Flat Modern (Style B)</title>
 <style>
 /* ============================================================
-   STYLE B — FLAT MODERN
-   Vital / Strymon-plugin / FabFilter school.
-   Near-black canvas, thin-line SVG arcs, one hue per pedal,
-   motion driven by the real parameter values.
+   STYLE B — FLAT MODERN · v2
+   Framework rules:
+   · 1rem = 10px × --ui-scale  → EVERY dimension in rem except
+     1px hairlines (borders stay crisp at any scale).
+   · No fixed card heights: strips share one grid template, so
+     headers / role rows / viz band / stomps align by construction.
+   · Param ROLES give cross-pedal consistency: row 1 = time,
+     row 2 = intensity, row 3 = blend. Same knob, same place.
    ============================================================ */
 
-/* ---------- reset ---------- */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 button{background:none;border:none;color:inherit;font:inherit;cursor:pointer}
-svg{display:block;overflow:hidden}
+svg{display:block;overflow:visible}
 
-/* ---------- tokens ---------- */
+/* ---------- tokens + scale root ---------- */
 :root{
+  --ui-scale:1;                 /* set by the A−/A+ control, persisted */
   --bg:#0b0c0f;
   --card:#0e1014;
   --card-hi:#111319;
@@ -35,82 +41,97 @@ svg{display:block;overflow:hidden}
   --violet:#b18cff;  /* trem   */
   --mint:#2fe6a8;    /* delay  */
   --neutral:#aeb6c4; /* bus / source */
-  --off:#4a4e58;     /* bypassed accent */
+  --off:#4a4e58;
 }
+html{color-scheme:dark;font-size:calc(10px * var(--ui-scale))}
 
-/* ---------- base ---------- */
-html{color-scheme:dark}
 body{
   min-height:100vh;
   background:
-    radial-gradient(1100px 520px at 50% -12%, #12141b 0%, rgba(18,20,27,0) 60%),
+    radial-gradient(110rem 52rem at 50% -12%, #12141b 0%, rgba(18,20,27,0) 60%),
     var(--bg);
   color:var(--txt);
   font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  font-size:13px;
+  font-size:1.3rem;
   line-height:1.45;
   font-variant-numeric:tabular-nums;
   -webkit-font-smoothing:antialiased;
-  display:flex;
-  flex-direction:column;
+  display:flex;flex-direction:column;
 }
 .num{font-variant-numeric:tabular-nums}
 :focus-visible{outline:1px solid var(--txt3);outline-offset:2px;border-radius:2px}
 
-.kicker{
-  font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;
-  color:var(--txt3);
+.kicker{font-size:1.1rem;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--txt3)}
+
+/* Interactive surfaces never select text (drag-to-turn must not highlight) */
+.strip,.bus,.srcnode,.hero,.macro,.knob,.mini,.stomp,.tabs,.scalectl{
+  user-select:none;-webkit-user-select:none;
 }
 
 /* ---------- header ---------- */
 header{
-  display:flex;align-items:stretch;justify-content:space-between;
-  height:64px;padding:0 32px;
+  display:flex;align-items:stretch;justify-content:space-between;gap:2rem;
+  height:6.4rem;padding:0 3.2rem;
   border-bottom:1px solid var(--line-soft);
+  flex-wrap:wrap;
 }
-.brand{display:flex;align-items:center;gap:14px}
-.chain-glyph{display:flex;gap:4px}
-.chain-glyph i{width:4px;height:4px;border-radius:50%;display:block}
+.brand{display:flex;align-items:center;gap:1.4rem}
+.chain-glyph{display:flex;gap:.4rem}
+.chain-glyph i{width:.4rem;height:.4rem;border-radius:50%;display:block}
 .chain-glyph i:nth-child(1){background:var(--amber)}
 .chain-glyph i:nth-child(2){background:var(--cyan)}
 .chain-glyph i:nth-child(3){background:var(--violet)}
 .chain-glyph i:nth-child(4){background:var(--mint)}
-.wordmark{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.wordmark{font-size:1.6rem;font-weight:700;letter-spacing:-.01em}
 .badge{
-  border:1px solid var(--line);border-radius:999px;
-  padding:5px 12px;
-  font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--txt2);
+  border:1px solid var(--line);border-radius:999px;padding:.5rem 1.2rem;
+  font-size:1rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--txt2);
 }
-.tabs{display:flex;gap:8px}
+.head-right{display:flex;align-items:stretch;gap:2.4rem}
+.tabs{display:flex;gap:.8rem}
 .tab{
-  display:flex;align-items:center;padding:0 16px;
-  font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  display:flex;align-items:center;padding:0 1.6rem;
+  font-size:1.1rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
   color:var(--txt3);
-  border-bottom:2px solid transparent;
-  margin-bottom:-1px;
+  border-bottom:2px solid transparent;margin-bottom:-1px;
   transition:color .18s ease,border-color .18s ease;
 }
 .tab:hover{color:var(--txt2)}
 .tab.active{color:var(--txt);border-bottom-color:var(--txt)}
 
+/* UI-scale control — the "people can choose" knob for the whole interface */
+.scalectl{display:flex;align-items:center;gap:.2rem;color:var(--txt3)}
+.scalectl button{
+  width:2.6rem;height:2.6rem;border:1px solid var(--line);border-radius:.5rem;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.1rem;font-weight:700;color:var(--txt2);
+  transition:border-color .15s ease,color .15s ease;
+}
+.scalectl button:hover{color:var(--txt);border-color:#33363e}
+.scalectl .scale-val{
+  min-width:4.6rem;text-align:center;
+  font-size:1rem;letter-spacing:.08em;cursor:pointer;
+}
+.scalectl .scale-val:hover{color:var(--txt2)}
+
 /* ---------- screens ---------- */
-main{width:100%;max-width:1232px;margin:0 auto;padding:28px 32px 56px;flex:1}
+main{width:100%;max-width:126rem;margin:0 auto;padding:2.8rem 3.2rem 5.6rem;flex:1}
 .screen{display:none}
 .screen.active{display:block;animation:rise .28s ease both}
-@keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes rise{from{opacity:0;transform:translateY(.5rem)}to{opacity:1;transform:none}}
 
 .screen-head{
   display:flex;align-items:flex-end;justify-content:space-between;
-  margin-bottom:26px;gap:24px;
+  margin-bottom:2.6rem;gap:2.4rem;
 }
-.screen-head .sub{margin-top:6px;color:var(--txt2);font-size:13px}
-.screen-head .meta{font-size:11px;letter-spacing:.08em;color:var(--txt3);text-transform:uppercase}
+.screen-head .sub{margin-top:.6rem;color:var(--txt2);font-size:1.3rem}
+.screen-head .meta{font-size:1.1rem;letter-spacing:.08em;color:var(--txt3);text-transform:uppercase}
 
 /* ---------- pedalboard rail ---------- */
-.rail{display:flex;align-items:center}
+.railwrap{overflow-x:auto;padding-bottom:.8rem}
+.rail{display:flex;align-items:stretch;min-width:min-content}
 .wire{
-  position:relative;flex:1;min-width:22px;height:1px;
+  position:relative;flex:1;min-width:2.2rem;height:1px;align-self:center;
   background:repeating-linear-gradient(90deg,#3a3e47 0 3px,transparent 3px 9px);
   animation:wireflow 1.5s linear infinite;
 }
@@ -122,170 +143,214 @@ main{width:100%;max-width:1232px;margin:0 auto;padding:28px 32px 56px;flex:1}
 .wire::after{right:-1px}
 @keyframes wireflow{to{background-position:9px 0}}
 
-/* cards share one top-lit material: faint vertical grade + 1px inner highlight */
+/* shared card material */
 .strip,.bus,.srcnode,.hero,.hwbar,.macro{
   background:linear-gradient(180deg,var(--card-hi) 0%,var(--card) 26%);
   border:1px solid var(--line);
-  border-radius:10px;
+  border-radius:1rem;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.035);
 }
 
-/* --- source node --- */
-.srcnode{
-  width:100px;height:152px;padding:14px 12px;flex:none;
-  display:flex;flex-direction:column;align-items:center;gap:10px;
-  --accent:var(--neutral);
+/* THE alignment contract: strips, source, and bus share one grid template.
+   Rows: header · time · intensity · blend · viz · stomp.
+   No fixed heights — rows size identically across every card. */
+.strip,.srcnode,.bus{
+  display:grid;
+  grid-template-rows:2.4rem 8rem 8rem 8rem 3.4rem 3rem;
+  row-gap:1.2rem;
+  padding:1.6rem 1.4rem;
+  flex:none;
 }
-.srcnode .src-glyph{margin-top:6px;color:var(--txt3)}
-.src-sub{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--txt3);text-align:center;margin-top:auto}
-
-/* --- pedal strip --- */
-.strip{
-  position:relative;width:150px;height:400px;padding:16px 14px;flex:none;
-  display:flex;flex-direction:column;gap:12px;
-  cursor:pointer;
-  transition:border-color .18s ease;
-}
-.strip::before{  /* signature accent rule, top edge */
-  content:'';position:absolute;top:-1px;left:14px;width:26px;height:2px;
+.strip{position:relative;width:15rem;cursor:pointer;transition:border-color .18s ease}
+.strip::before{
+  content:'';position:absolute;top:-1px;left:1.4rem;width:2.6rem;height:2px;
   background:var(--accent);
   transition:width .22s ease,opacity .22s ease;
 }
 .strip:hover{border-color:#2f323a}
-.strip:hover::before{width:44px}
+.strip:hover::before{width:4.4rem}
 .strip.bypassed::before{opacity:.3}
 .strip.bypassed{--accent:var(--off)}
 
-.strip-top,.src-top,.bus-top{display:flex;align-items:center;gap:8px;width:100%}
+.srcnode{width:10.6rem;--accent:var(--neutral)}
+.src-glyph{grid-row:3;align-self:center;justify-self:center;color:var(--txt3);width:5.6rem;height:2.2rem}
+.src-sub{
+  grid-row:6;align-self:center;text-align:center;
+  font-size:.9rem;letter-spacing:.12em;text-transform:uppercase;color:var(--txt3);
+}
+
+.strip-top,.src-top,.bus-top{grid-row:1;display:flex;align-items:center;gap:.8rem;min-width:0}
 .strip-top h3,.src-top h3,.bus-top h3{
-  font-size:12px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;
+  font-size:1.2rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap;
 }
 .bypassed .strip-top h3{color:var(--txt3)}
-.slot-ix{margin-left:auto;font-size:9px;letter-spacing:.1em;color:var(--txt3)}
+.slot-ix{margin-left:auto;font-size:.9rem;letter-spacing:.1em;color:var(--txt3)}
 
 /* LED */
-.led{position:relative;width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+.led{position:relative;width:.7rem;height:.7rem;border-radius:50%;background:var(--accent);flex:none}
 .led::after{
-  content:'';position:absolute;inset:-5px;border-radius:50%;
-  background:radial-gradient(circle,var(--accent) 0%,transparent 62%);
-  opacity:.4;
+  content:'';position:absolute;inset:-.5rem;border-radius:50%;
+  background:radial-gradient(circle,var(--accent) 0%,transparent 62%);opacity:.4;
 }
 .strip:not(.bypassed) .led,
 .hero:not(.bypassed) .led,
-.srcnode .led{animation:breathe 3.2s ease-in-out infinite}
+.srcnode .led,.bus .led{animation:breathe 3.2s ease-in-out infinite}
 .bypassed .led{background:#33363e;animation:none}
 .bypassed .led::after{display:none}
 @keyframes breathe{0%,100%{opacity:1}50%{opacity:.5}}
 
-/* params + mini knobs */
-.params{display:flex;flex-direction:column;gap:9px;align-items:center}
-.param{display:flex;flex-direction:column;align-items:center;gap:1px}
-.p-name{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--txt3);margin-top:3px}
-.p-val{font-size:13px;font-weight:600;color:var(--txt)}
+/* ---------- role slots ----------
+   Same role → same row on every pedal. Empty slots stay empty on
+   purpose (a faint ring says "this pedal has no such control"). */
+.param{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.1rem;min-width:0}
+.param.r-time{grid-row:2}
+.param.r-shape{grid-row:3}
+.param.r-blend{grid-row:4}
+.slot-empty{grid-row:var(--row);display:flex;align-items:center;justify-content:center}
+.slot-empty::before{
+  content:'';width:2.2rem;height:2.2rem;border-radius:50%;
+  border:1px dashed #1a1d23;
+}
+.p-name{
+  display:flex;align-items:center;gap:.4rem;
+  font-size:1rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--txt3);
+  margin-top:.3rem;white-space:nowrap;
+}
+.p-val{font-size:1.3rem;font-weight:600;color:var(--txt)}
 .bypassed .p-val{color:var(--txt2)}
+
+/* role glyphs — one shape per job, everywhere */
+.glyph{width:1rem;height:1rem;flex:none;color:var(--txt3);opacity:.9}
+.gate-dot{
+  width:.6rem;height:.6rem;border-radius:.15rem;flex:none;
+  border:1px solid var(--txt3);opacity:.7;
+}
+.legend{
+  margin-top:1.6rem;display:flex;flex-wrap:wrap;gap:.6rem 2rem;align-items:center;
+  font-size:1rem;letter-spacing:.06em;color:var(--txt3);
+}
+.legend .lg-item{display:flex;align-items:center;gap:.6rem}
+
+/* mini knobs (display-only) */
+.mini{position:relative}
+.mini svg{width:100%;height:100%}
 .mini .k-track{stroke:var(--ghost);stroke-width:1.5}
 .mini .k-arc{stroke:var(--accent);stroke-width:2}
 .mini .k-ptr{stroke:#e9ebf1;stroke-width:1.25;stroke-linecap:round}
 .bypassed .mini .k-ptr{stroke:#7b8089}
 
-/* strip visualizers */
-.viz{margin-top:auto;color:var(--accent);width:100%;display:flex;justify-content:center}
+/* ---------- signature band ----------
+   Each pedal's one personal module lives in this fixed row. */
+.viz{grid-row:5;align-self:center;justify-self:center;color:var(--accent);display:flex;align-items:center;gap:.8rem}
+.viz svg{width:11.8rem;height:2.6rem}
 .viz path,.viz line{stroke:currentColor;fill:none}
-.wave-anim{animation:wavescroll 1.1111s linear infinite}  /* 0.9 Hz — true chorus rate */
+.viz .fillpath{fill:currentColor;stroke:none;opacity:.1}
+.wave-anim{animation:wavescroll var(--wave-cycle,1.1111s) linear infinite}
+.wave-b{opacity:.35}
 .bypassed .wave-anim{animation-play-state:paused}
 @keyframes wavescroll{to{transform:translateX(-26px)}}
 .trem-ghost{stroke-dasharray:3 4;opacity:.22}
 .viz .axis{stroke:var(--line-soft);stroke-width:1}
-.strip-tail circle{fill:currentColor}
+/* trem's opto-lamp: throbs at rate when the pedal is live */
+.opto{fill:currentColor;animation:optopulse var(--trem-cycle,192ms) ease-in-out infinite}
+.bypassed .opto,.depth-zero .opto{animation-play-state:paused;opacity:.25}
+@keyframes optopulse{0%,100%{opacity:1}50%{opacity:.25}}
+/* delay's board dots ping in time when live */
+.strip-tail{width:11.8rem;height:2rem}
+.strip-tail circle{fill:currentColor;transform-box:fill-box;transform-origin:center}
+.strip:not(.bypassed) .strip-tail circle{animation:ping linear infinite}
+.strip-tail line{stroke:currentColor}
 
-/* stomp switch */
+/* stomp switch — pinned to the last grid row on every card */
 .stomp{
-  display:flex;align-items:center;justify-content:center;gap:8px;
-  width:100%;height:30px;flex:none;
-  border:1px solid var(--line);border-radius:6px;
-  font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  grid-row:6;align-self:end;
+  display:flex;align-items:center;justify-content:center;gap:.8rem;
+  width:100%;height:3rem;
+  border:1px solid var(--line);border-radius:.6rem;
+  font-size:1rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
   color:var(--txt3);
   transition:border-color .15s ease,color .15s ease;
+  white-space:nowrap;overflow:hidden;
 }
 .stomp:hover{border-color:#33363e}
 .stomp .stomp-dot{
-  width:7px;height:7px;border-radius:2px;flex:none;
+  width:.7rem;height:.7rem;border-radius:.2rem;flex:none;
   border:1px solid #4a4e58;background:transparent;
   transition:background .15s ease,border-color .15s ease;
 }
 .stomp.on{color:var(--txt);border-color:#2e3138}
 .stomp.on .stomp-dot{background:var(--accent);border-color:var(--accent)}
-.stomp.big{height:40px;font-size:11px}
+.stomp.big{height:4rem;font-size:1.1rem}
 
-/* --- bus strip --- */
-.bus{
-  width:250px;height:320px;padding:16px;flex:none;
-  display:flex;flex-direction:column;gap:14px;
-  --accent:var(--neutral);
-}
-.bus-top .meters{margin-left:auto}
+/* ---------- bus ---------- */
+.bus{width:24rem;--accent:var(--neutral)}
+.bus-top .meters{margin-left:auto;width:1.4rem;height:2.4rem}
 .meters rect{fill:#4c5560;transform-box:fill-box;transform-origin:bottom}
 .meters .mL{animation:meterA 2.3s ease-in-out infinite}
 .meters .mR{animation:meterB 3.1s ease-in-out infinite}
 @keyframes meterA{0%,100%{transform:scaleY(.45)}42%{transform:scaleY(.8)}70%{transform:scaleY(.58)}}
 @keyframes meterB{0%,100%{transform:scaleY(.55)}30%{transform:scaleY(.72)}65%{transform:scaleY(.42)}}
-.bus-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 8px;justify-items:center}
-.bus-sub{margin-top:auto;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt3);text-align:center}
+.bus-pair{display:flex;justify-content:space-evenly;align-items:center}
+.bus-pair.r1{grid-row:2}
+.bus-pair.r2{grid-row:3}
+.bus-pair.r3{grid-row:4}
+.bus-sub{
+  grid-row:6;align-self:center;text-align:center;
+  font-size:.9rem;letter-spacing:.14em;text-transform:uppercase;color:var(--txt3);
+}
 
-.rail-hint{margin-top:20px;font-size:11px;color:var(--txt3);letter-spacing:.04em}
+.rail-hint{margin-top:1.2rem;font-size:1.1rem;color:var(--txt3);letter-spacing:.04em}
 
 /* ---------- editor ---------- */
-.crumb{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+.crumb{display:flex;align-items:center;gap:1rem;font-size:1.1rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
 .crumb-link{color:var(--txt3);transition:color .15s ease}
 .crumb-link:hover{color:var(--txt2)}
 .crumb .sep{color:var(--txt3)}
 .crumb-cur{color:var(--txt)}
 .chip{
-  border:1px solid var(--line);border-radius:999px;padding:6px 14px;
-  font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--txt2);
-  transition:color .18s ease,border-color .18s ease;
+  border:1px solid var(--line);border-radius:999px;padding:.6rem 1.4rem;
+  font-size:1rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--txt2);
+  transition:color .18s ease,border-color .18s ease;white-space:nowrap;
 }
 .chip.live{color:var(--mint);border-color:rgba(47,230,168,.45)}
 
 .hero{--accent:var(--mint);padding:0;overflow:hidden}
-.hero-main{display:grid;grid-template-columns:236px 1fr;min-height:300px}
+.hero-main{display:grid;grid-template-columns:minmax(20rem,23.6rem) 1fr;min-height:30rem}
 .hero-id{
-  padding:28px 26px;border-right:1px solid var(--line-soft);
-  display:flex;flex-direction:column;gap:0;
+  padding:2.8rem 2.6rem;border-right:1px solid var(--line-soft);
+  display:flex;flex-direction:column;
 }
-.hero-title{display:flex;align-items:center;gap:12px}
-.hero-title h2{font-size:24px;font-weight:750;letter-spacing:.06em}
-.hero-rule{width:28px;height:2px;background:var(--accent);margin-top:12px}
-.hero-sub{margin-top:12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3)}
-.hero-id .stomp{margin-top:auto}
+.hero-title{display:flex;align-items:center;gap:1.2rem}
+.hero-title h2{font-size:2.4rem;font-weight:750;letter-spacing:.06em}
+.hero-rule{width:2.8rem;height:2px;background:var(--accent);margin-top:1.2rem}
+.hero-sub{margin-top:1.2rem;font-size:1.1rem;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3)}
+.hero-id .stomp{margin-top:auto;grid-row:auto}
 .ghostbtn{
-  display:flex;align-items:center;justify-content:center;gap:7px;
-  width:100%;height:32px;margin-top:10px;
-  border:1px solid transparent;border-radius:6px;
-  font-size:10px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;
-  color:var(--txt3);
+  display:flex;align-items:center;justify-content:center;gap:.7rem;
+  width:100%;height:3.2rem;margin-top:1rem;
+  border:1px solid transparent;border-radius:.6rem;
+  font-size:1rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--txt3);
   transition:color .15s ease,border-color .15s ease;
 }
 .ghostbtn:hover{color:var(--txt2);border-color:var(--line)}
-.ghostbtn svg{flex:none}
+.ghostbtn svg{flex:none;width:1.2rem;height:1.2rem}
 
 .hero-knobs{
-  display:flex;align-items:center;justify-content:space-evenly;
-  padding:30px 24px 22px;
+  display:flex;align-items:end;justify-content:space-evenly;flex-wrap:wrap;
+  gap:2rem;padding:3rem 2.4rem 2.2rem;
 }
-.kgroup{display:flex;flex-direction:column;align-items:center;gap:12px}
-.k-label{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--txt2)}
-.k-minmax{font-size:10px;color:var(--txt3);letter-spacing:.06em}
+.kgroup{display:flex;flex-direction:column;align-items:center;gap:1.2rem}
+.k-label{display:flex;align-items:center;gap:.6rem;font-size:1.1rem;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--txt2)}
+.k-minmax{font-size:1rem;color:var(--txt3);letter-spacing:.06em}
 .knob-hint{
-  grid-column:1 / -1;
-  padding:0 24px 18px;text-align:right;
-  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3);
+  padding:0 2.4rem 1.8rem;text-align:right;
+  font-size:1rem;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3);
 }
 
 /* big / macro knobs */
 .knob,.knob-ghost{position:relative;display:inline-block}
-.knob{cursor:ns-resize;touch-action:none;user-select:none;-webkit-user-select:none}
+.knob svg,.knob-ghost svg{width:100%;height:100%}
+.knob{cursor:ns-resize;touch-action:none}
 .knob .k-track{stroke:#282b32;stroke-width:2;transition:stroke .15s ease}
 .knob:hover .k-track{stroke:#33363e}
 .knob .k-arc{stroke:var(--accent);stroke-width:2.5}
@@ -293,21 +358,23 @@ main{width:100%;max-width:1232px;margin:0 auto;padding:28px 32px 56px;flex:1}
 .knob .k-otrack{stroke:var(--ghost-dim);stroke-width:2}
 .knob .k-orange{stroke:var(--accent);stroke-width:3;opacity:.45}
 .knob .k-otick{stroke:var(--accent);stroke-width:1.5}
+.knob .k-gate{fill:none;stroke:var(--txt3);stroke-width:1}
 .knob-ghost .k-track{stroke:var(--ghost-dim);stroke-width:2}
 .k-read{
   position:absolute;inset:0;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:1px;pointer-events:none;
+  align-items:center;justify-content:center;gap:.1rem;pointer-events:none;
 }
-.k-num{font-size:26px;font-weight:650;letter-spacing:-.01em;transition:color .12s ease}
-.k-unit{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--txt3)}
+.k-num{font-size:2.2rem;font-weight:650;letter-spacing:-.01em;transition:color .12s ease}
+.knob.xl .k-num{font-size:2.9rem}
+.k-unit{font-size:1rem;letter-spacing:.12em;text-transform:uppercase;color:var(--txt3)}
 .knob.dragging .k-num{color:var(--accent)}
-.knob.md .k-num{font-size:19px}
-.knob-ghost .k-num{font-size:19px;color:var(--txt3)}
+.knob.md .k-num{font-size:1.9rem}
+.knob-ghost .k-num{font-size:1.9rem;color:var(--txt3)}
 
 /* echo tail */
-.hero-tail{border-top:1px solid var(--line-soft);padding:18px 26px 20px}
-.tail-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
-.tail-caption{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt3)}
+.hero-tail{border-top:1px solid var(--line-soft);padding:1.8rem 2.6rem 2rem}
+.tail-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:.8rem}
+.tail-caption{font-size:1.1rem;letter-spacing:.08em;text-transform:uppercase;color:var(--txt3)}
 .tail-wrap{color:#6a7280}
 .t-tick{stroke:var(--line);stroke-width:1}
 .t-lab{fill:var(--txt3);font-size:9px;letter-spacing:.08em}
@@ -318,54 +385,49 @@ main{width:100%;max-width:1232px;margin:0 auto;padding:28px 32px 56px;flex:1}
   transform-box:fill-box;transform-origin:center;
   animation:dryping linear infinite;
 }
-.e-dot{
-  fill:currentColor;
-  transform-box:fill-box;transform-origin:center;
-  animation:ping linear infinite;
-}
+.e-dot{fill:currentColor;transform-box:fill-box;transform-origin:center;animation:ping linear infinite}
 .t-ms{fill:var(--txt3);font-size:9px;letter-spacing:.08em}
 @keyframes ping{0%{transform:scale(2)}9%{transform:scale(1)}100%{transform:scale(1)}}
 @keyframes dryping{0%{transform:scaleY(1.35)}8%{transform:scaleY(1)}100%{transform:scaleY(1)}}
 
 /* hardware bar */
 .hwbar{
-  margin-top:16px;padding:16px 24px;
-  display:flex;align-items:center;justify-content:space-between;gap:24px;
+  margin-top:1.6rem;padding:1.6rem 2.4rem;
+  display:flex;align-items:center;justify-content:space-between;gap:2.4rem;flex-wrap:wrap;
 }
-.hw-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.hw-path{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--txt2)}
-.hw-map{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--txt2)}
+.hw-left{display:flex;align-items:center;gap:1.4rem;flex-wrap:wrap}
+.hw-path{font-size:1.1rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--txt2)}
+.hw-map{display:flex;align-items:center;gap:.8rem;font-size:1.1rem;color:var(--txt2)}
 .kchip{
-  border:1px solid var(--line);border-radius:4px;padding:2px 7px;
-  font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--mint);
+  border:1px solid var(--line);border-radius:.4rem;padding:.2rem .7rem;
+  font-size:1rem;font-weight:600;letter-spacing:.08em;color:var(--mint);
 }
 .hw-btn{
-  border:1px solid rgba(47,230,168,.5);border-radius:6px;
-  padding:9px 18px;flex:none;
-  font-size:11px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;
-  color:var(--mint);
+  border:1px solid rgba(47,230,168,.5);border-radius:.6rem;
+  padding:.9rem 1.8rem;flex:none;
+  font-size:1.1rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--mint);
   transition:background .15s ease;
 }
 .hw-btn:hover{background:rgba(47,230,168,.08)}
 .hw-btn.sent{color:var(--txt);border-color:var(--line)}
 
 /* ---------- macros ---------- */
-.macro-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
-.macro{padding:18px 18px 16px;display:flex;flex-direction:column;align-items:center;gap:12px}
-.m-head{display:flex;align-items:center;gap:10px;width:100%}
+.macro-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(23rem,1fr));gap:1.6rem}
+.macro{padding:1.8rem 1.8rem 1.6rem;display:flex;flex-direction:column;align-items:center;gap:1.2rem}
+.m-head{display:flex;align-items:center;gap:1rem;width:100%}
 .m-chip{
-  border:1px solid var(--accent);border-radius:4px;padding:2px 7px;
-  font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--accent);
+  border:1px solid var(--accent);border-radius:.4rem;padding:.2rem .7rem;
+  font-size:1rem;font-weight:700;letter-spacing:.1em;color:var(--accent);
 }
-.m-name{font-size:13px;font-weight:650}
+.m-name{font-size:1.3rem;font-weight:650}
 .m-target{
-  display:flex;align-items:center;gap:7px;
-  font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--txt2);
+  display:flex;align-items:center;gap:.7rem;
+  font-size:1.1rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--txt2);
 }
-.t-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}
+.t-dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);flex:none}
 .m-rows{
   display:flex;justify-content:space-between;width:100%;
-  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3);
+  font-size:1rem;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3);
 }
 .m-mapped{color:var(--accent);font-weight:600}
 .macro.dormant .m-chip{border-color:var(--line);color:var(--txt3)}
@@ -375,8 +437,8 @@ main{width:100%;max-width:1232px;margin:0 auto;padding:28px 32px 56px;flex:1}
 
 /* ---------- footer ---------- */
 footer{
-  padding:18px 32px 26px;text-align:center;
-  font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--txt3);
+  padding:1.8rem 3.2rem 2.6rem;text-align:center;
+  font-size:1rem;letter-spacing:.16em;text-transform:uppercase;color:var(--txt3);
 }
 
 @media (prefers-reduced-motion:reduce){
@@ -390,13 +452,20 @@ footer{
   <div class="brand">
     <div class="chain-glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     <span class="wordmark">polyclav</span>
-    <span class="badge">Style B — Flat Modern</span>
+    <span class="badge">Flat Modern</span>
   </div>
-  <nav class="tabs" aria-label="Screens">
-    <button class="tab active" data-tab="board">Pedalboard</button>
-    <button class="tab" data-tab="editor">Pedal editor</button>
-    <button class="tab" data-tab="macros">Macros</button>
-  </nav>
+  <div class="head-right">
+    <div class="scalectl" title="UI scale — everything resizes together">
+      <button id="scale-dn" aria-label="Smaller UI">A&minus;</button>
+      <button class="scale-val num" id="scale-val" title="Click to reset to 100%">100%</button>
+      <button id="scale-up" aria-label="Larger UI">A+</button>
+    </div>
+    <nav class="tabs" aria-label="Screens">
+      <button class="tab active" data-tab="board">Pedalboard</button>
+      <button class="tab" data-tab="editor">Pedal editor</button>
+      <button class="tab" data-tab="macros">Macros</button>
+    </nav>
+  </div>
 </header>
 
 <main>
@@ -411,11 +480,12 @@ footer{
       <div class="meta num">48 kHz · 128 smp · CPU 3.1%</div>
     </div>
 
+    <div class="railwrap">
     <div class="rail">
 
       <article class="srcnode">
         <div class="src-top"><span class="led"></span><h3>Synth</h3></div>
-        <svg class="src-glyph" width="56" height="22" viewBox="0 0 56 22" aria-hidden="true">
+        <svg class="src-glyph" viewBox="0 0 56 22" aria-hidden="true">
           <path d="M2 17 L11 5 V17 L20 5 V17 L29 5 V17 L38 5 V17 L47 5 V17 L54 8"
                 fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
         </svg>
@@ -427,16 +497,18 @@ footer{
       <article class="strip" data-pedal="drive" data-nav tabindex="0" role="button"
                aria-label="Open Drive in editor" style="--accent:var(--amber)">
         <div class="strip-top"><span class="led"></span><h3>Drive</h3><span class="slot-ix num">01</span></div>
-        <div class="params">
-          <div class="param">
-            <div class="mini" data-min="0" data-max="100" data-value="15"></div>
-            <div class="p-name">Drive</div>
-            <div class="p-val num">15%</div>
-          </div>
+        <div class="slot-empty" style="--row:2" aria-hidden="true"></div>
+        <div class="slot-empty" style="--row:3" aria-hidden="true"></div>
+        <div class="param r-blend" data-role="blend" data-gate>
+          <div class="mini" data-min="0" data-max="100" data-value="15"></div>
+          <div class="p-name">Drive</div>
+          <div class="p-val num">15%</div>
         </div>
+        <!-- signature: transfer curve with heat fill -->
         <div class="viz">
-          <svg width="118" height="26" viewBox="0 0 118 26" aria-hidden="true">
+          <svg viewBox="0 0 118 26" aria-hidden="true">
             <line class="axis" x1="4" y1="13" x2="114" y2="13"/>
+            <path id="drive-fill" class="fillpath"/>
             <path id="drive-curve" stroke-width="1.5" stroke-linejoin="round"/>
           </svg>
         </div>
@@ -448,26 +520,26 @@ footer{
       <article class="strip" data-pedal="chorus" data-nav tabindex="0" role="button"
                aria-label="Open Chorus in editor" style="--accent:var(--cyan)">
         <div class="strip-top"><span class="led"></span><h3>Chorus</h3><span class="slot-ix num">02</span></div>
-        <div class="params">
-          <div class="param">
-            <div class="mini" data-min="0.1" data-max="8" data-value="0.9"></div>
-            <div class="p-name">Rate</div>
-            <div class="p-val num">0.9 Hz</div>
-          </div>
-          <div class="param">
-            <div class="mini" data-min="0" data-max="100" data-value="45"></div>
-            <div class="p-name">Depth</div>
-            <div class="p-val num">45%</div>
-          </div>
-          <div class="param">
-            <div class="mini" data-min="0" data-max="100" data-value="30"></div>
-            <div class="p-name">Mix</div>
-            <div class="p-val num">30%</div>
-          </div>
+        <div class="param r-time" data-role="time">
+          <div class="mini" data-min="0.1" data-max="8" data-value="0.9"></div>
+          <div class="p-name">Rate</div>
+          <div class="p-val num">0.9 Hz</div>
         </div>
+        <div class="param r-shape" data-role="shape">
+          <div class="mini" data-min="0" data-max="100" data-value="45"></div>
+          <div class="p-name">Depth</div>
+          <div class="p-val num">45%</div>
+        </div>
+        <div class="param r-blend" data-role="blend" data-gate>
+          <div class="mini" data-min="0" data-max="100" data-value="30"></div>
+          <div class="p-name">Mix</div>
+          <div class="p-val num">30%</div>
+        </div>
+        <!-- signature: stereo pair — two waves, 90° apart -->
         <div class="viz">
-          <svg width="118" height="26" viewBox="0 0 118 26" aria-hidden="true">
+          <svg viewBox="0 0 118 26" aria-hidden="true">
             <g class="wave-anim">
+              <path id="chorus-wave-b" class="wave-b" stroke-width="1.25" stroke-linejoin="round"/>
               <path id="chorus-wave" stroke-width="1.5" stroke-linejoin="round"/>
             </g>
           </svg>
@@ -477,26 +549,26 @@ footer{
 
       <div class="wire"></div>
 
-      <article class="strip" data-pedal="trem" data-nav tabindex="0" role="button"
-               aria-label="Open Tremolo in editor" style="--accent:var(--violet)">
+      <article class="strip depth-zero" data-pedal="trem" data-nav tabindex="0" role="button"
+               aria-label="Open Tremolo in editor" style="--accent:var(--violet);--trem-cycle:192ms">
         <div class="strip-top"><span class="led"></span><h3>Trem</h3><span class="slot-ix num">03</span></div>
-        <div class="params">
-          <div class="param">
-            <div class="mini" data-min="0.1" data-max="15" data-value="5.2"></div>
-            <div class="p-name">Rate</div>
-            <div class="p-val num">5.2 Hz</div>
-          </div>
-          <div class="param">
-            <div class="mini" data-min="0" data-max="100" data-value="0"></div>
-            <div class="p-name">Depth</div>
-            <div class="p-val num">0%</div>
-          </div>
+        <div class="param r-time" data-role="time">
+          <div class="mini" data-min="0.1" data-max="15" data-value="5.2"></div>
+          <div class="p-name">Rate</div>
+          <div class="p-val num">5.2 Hz</div>
         </div>
+        <div class="param r-shape" data-role="shape" data-gate>
+          <div class="mini" data-min="0" data-max="100" data-value="0"></div>
+          <div class="p-name">Depth</div>
+          <div class="p-val num">0%</div>
+        </div>
+        <div class="slot-empty" style="--row:4" aria-hidden="true"></div>
+        <!-- signature: the opto lamp — throbs at rate when live (still here: depth 0) -->
         <div class="viz">
-          <!-- deliberately still: depth is 0, wave is flat -->
-          <svg width="118" height="26" viewBox="0 0 118 26" aria-hidden="true">
+          <svg viewBox="0 0 118 26" aria-hidden="true">
+            <circle class="opto" cx="12" cy="13" r="4"/>
             <path id="trem-ghost" class="trem-ghost" stroke-width="1.25"/>
-            <line x1="4" y1="13" x2="114" y2="13" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="24" y1="13" x2="114" y2="13" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
         </div>
         <button class="stomp" data-stomp="trem"><span class="stomp-dot"></span><span class="stomp-label">Bypassed</span></button>
@@ -507,25 +579,24 @@ footer{
       <article class="strip" data-pedal="delay" data-nav tabindex="0" role="button"
                aria-label="Open Delay in editor" style="--accent:var(--mint)">
         <div class="strip-top"><span class="led"></span><h3>Delay</h3><span class="slot-ix num">04</span></div>
-        <div class="params">
-          <div class="param">
-            <div class="mini" id="mk-d-time" data-min="1" data-max="1000" data-value="380"></div>
-            <div class="p-name">Time</div>
-            <div class="p-val num" id="mv-d-time">380 ms</div>
-          </div>
-          <div class="param">
-            <div class="mini" id="mk-d-fb" data-min="0" data-max="90" data-value="35"></div>
-            <div class="p-name">Feedback</div>
-            <div class="p-val num" id="mv-d-fb">35%</div>
-          </div>
-          <div class="param">
-            <div class="mini" id="mk-d-mix" data-min="0" data-max="100" data-value="25"></div>
-            <div class="p-name">Mix</div>
-            <div class="p-val num" id="mv-d-mix">25%</div>
-          </div>
+        <div class="param r-time" data-role="time">
+          <div class="mini" id="mk-d-time" data-min="1" data-max="1000" data-value="380" data-size="44"></div>
+          <div class="p-name">Time</div>
+          <div class="p-val num" id="mv-d-time">380 ms</div>
         </div>
+        <div class="param r-shape" data-role="shape">
+          <div class="mini" id="mk-d-fb" data-min="0" data-max="90" data-value="35"></div>
+          <div class="p-name">Feedback</div>
+          <div class="p-val num" id="mv-d-fb">35%</div>
+        </div>
+        <div class="param r-blend" data-role="blend" data-gate>
+          <div class="mini" id="mk-d-mix" data-min="0" data-max="100" data-value="25"></div>
+          <div class="p-name">Mix</div>
+          <div class="p-val num" id="mv-d-mix">25%</div>
+        </div>
+        <!-- signature: echo dots on a time ruler (they ping when live) -->
         <div class="viz">
-          <svg class="strip-tail" id="delay-strip-tail" width="118" height="20" viewBox="0 0 118 20" aria-hidden="true"></svg>
+          <svg class="strip-tail" id="delay-strip-tail" viewBox="0 0 118 20" aria-hidden="true"></svg>
         </div>
         <button class="stomp" data-stomp="delay" data-off="Parked"><span class="stomp-dot"></span><span class="stomp-label">Parked</span></button>
       </article>
@@ -535,28 +606,30 @@ footer{
       <article class="bus">
         <div class="bus-top">
           <span class="led"></span><h3>Bus</h3>
-          <svg class="meters" width="14" height="26" viewBox="0 0 14 26" aria-hidden="true">
+          <svg class="meters" viewBox="0 0 14 26" aria-hidden="true">
             <rect class="mL" x="2" y="2" width="3.5" height="22" rx="1"/>
             <rect class="mR" x="8.5" y="2" width="3.5" height="22" rx="1"/>
           </svg>
         </div>
-        <div class="bus-grid">
-          <div class="param">
+        <div class="bus-pair r1">
+          <div class="param" data-role="level">
             <div class="mini" data-min="-24" data-max="24" data-value="0" data-bipolar></div>
             <div class="p-name">Gain</div>
             <div class="p-val num">0.0 dB</div>
           </div>
-          <div class="param">
+          <div class="param" data-role="shape">
             <div class="mini" data-min="0" data-max="100" data-value="35"></div>
             <div class="p-name">Comp</div>
             <div class="p-val num">35%</div>
           </div>
-          <div class="param">
+        </div>
+        <div class="bus-pair r2">
+          <div class="param" data-role="blend">
             <div class="mini" data-min="0" data-max="100" data-value="18"></div>
             <div class="p-name">Reverb</div>
             <div class="p-val num">18%</div>
           </div>
-          <div class="param">
+          <div class="param" data-role="level">
             <div class="mini" data-min="-48" data-max="0" data-value="-6"></div>
             <div class="p-name">Master</div>
             <div class="p-val num">&minus;6.0 dB</div>
@@ -566,8 +639,10 @@ footer{
       </article>
 
     </div>
+    </div>
 
     <p class="rail-hint">Click a pedal to open it in the editor · stomp switches toggle bypass · parked pedals keep their settings</p>
+    <div class="legend" id="legend" aria-label="Control legend"></div>
   </section>
 
   <!-- ================= SCREEN 2 · PEDAL EDITOR ================= -->
@@ -591,7 +666,7 @@ footer{
             <span class="stomp-dot"></span><span class="stomp-label">Parked</span>
           </button>
           <button class="ghostbtn" id="reset-delay">
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+            <svg viewBox="0 0 12 12" aria-hidden="true">
               <path d="M10.2 6a4.2 4.2 0 1 1-1.35-3.1M10.2 .8v2.6H7.6"
                     fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -602,25 +677,26 @@ footer{
         <div>
           <div class="hero-knobs">
             <div class="kgroup">
-              <div class="k-label">Time</div>
-              <div class="knob lg" id="k-time" data-min="1" data-max="1000" data-value="380"
-                   data-default="380" data-unit="ms" data-dec="0" data-size="132" data-label="Delay time"></div>
+              <div class="k-label" data-role="time">Time</div>
+              <!-- signature: the delay's own oversized Time knob -->
+              <div class="knob xl" id="k-time" data-min="1" data-max="1000" data-value="380"
+                   data-default="380" data-unit="ms" data-dec="0" data-size="164" data-label="Delay time"></div>
               <div class="k-minmax num">1 – 1000 ms</div>
             </div>
             <div class="kgroup">
-              <div class="k-label">Feedback</div>
+              <div class="k-label" data-role="shape">Feedback</div>
               <div class="knob lg" id="k-fb" data-min="0" data-max="90" data-value="35"
-                   data-default="35" data-unit="%" data-dec="0" data-size="132" data-label="Delay feedback"></div>
+                   data-default="35" data-unit="%" data-dec="0" data-size="124" data-label="Delay feedback"></div>
               <div class="k-minmax num">0 – 90%</div>
             </div>
             <div class="kgroup">
-              <div class="k-label">Mix</div>
+              <div class="k-label" data-role="blend">Mix</div>
               <div class="knob lg" id="k-mix" data-min="0" data-max="100" data-value="25"
-                   data-default="25" data-unit="%" data-dec="0" data-size="132" data-label="Delay mix"></div>
+                   data-default="25" data-unit="%" data-dec="0" data-size="124" data-label="Delay mix" data-gate></div>
               <div class="k-minmax num">0 – 100%</div>
             </div>
           </div>
-          <div class="knob-hint">Drag vertically · double-click resets</div>
+          <div class="knob-hint">Drag vertically · shift = fine · scroll steps · double-click resets</div>
         </div>
       </div>
 
@@ -726,19 +802,35 @@ footer{
 
 </main>
 
-<footer>polyclav · art-direction study · Style B — Flat Modern · all data static</footer>
+<footer>polyclav · flat modern · chosen direction — refinement v2 · all data static</footer>
 
 <script>
 'use strict';
 /* ============================================================
-   Interaction contract: tabs, draggable arc knobs, stomps,
-   parameter-driven motion. No dependencies.
+   Interaction contract: tabs, ui-scale, draggable arc knobs
+   (drag / shift-fine / wheel / double-click / arrows), stomps,
+   role glyphs, parameter-driven motion. No dependencies.
    ============================================================ */
 const $  = (s, c) => (c || document).querySelector(s);
 const $$ = (s, c) => Array.from((c || document).querySelectorAll(s));
 const byId = id => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 const A0 = -135, SWEEP = 270;   /* knob sweep: -135deg .. +135deg */
+
+/* ---------- UI scale (persisted; whole interface resizes together) ---------- */
+const SCALE_KEY = 'polyclav-ui-scale';
+const SCALES = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4];
+let scaleIx = SCALES.indexOf(+(localStorage.getItem(SCALE_KEY) || 1));
+if (scaleIx < 0) scaleIx = 2;
+function applyScale(){
+  document.documentElement.style.setProperty('--ui-scale', SCALES[scaleIx]);
+  byId('scale-val').textContent = Math.round(SCALES[scaleIx] * 100) + '%';
+  localStorage.setItem(SCALE_KEY, SCALES[scaleIx]);
+}
+byId('scale-dn').addEventListener('click', () => { scaleIx = Math.max(0, scaleIx - 1); applyScale(); });
+byId('scale-up').addEventListener('click', () => { scaleIx = Math.min(SCALES.length - 1, scaleIx + 1); applyScale(); });
+byId('scale-val').addEventListener('click', () => { scaleIx = 2; applyScale(); });
+applyScale();
 
 /* ---------- tabs ---------- */
 function showTab(name){
@@ -748,9 +840,30 @@ function showTab(name){
 $$('.tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
 $$('[data-goto]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); showTab(b.dataset.goto); }));
 
+/* ---------- role glyphs ----------
+   One shape per job, injected wherever a control declares its role:
+   time = clock hand · shape = intensity ramp · blend = half-fill · level = fader bars */
+const GLYPHS = {
+  time:  '<svg class="glyph" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="none" stroke="currentColor"/><path d="M5 5 V2.4 M5 5 L6.8 6.4" stroke="currentColor" fill="none" stroke-linecap="round"/></svg>',
+  shape: '<svg class="glyph" viewBox="0 0 10 10"><path d="M1.5 8.5 L8.5 8.5 L8.5 1.5 Z" fill="currentColor" opacity=".8"/></svg>',
+  blend: '<svg class="glyph" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="none" stroke="currentColor"/><path d="M5 1 A4 4 0 0 1 5 9 Z" fill="currentColor"/></svg>',
+  level: '<svg class="glyph" viewBox="0 0 10 10"><path d="M2 8.5 V4.5 M5 8.5 V1.5 M8 8.5 V6" stroke="currentColor" fill="none" stroke-linecap="round" stroke-width="1.4"/></svg>',
+};
+const ROLE_NAMES = { time: 'Time / rate', shape: 'Intensity', blend: 'Wet / dry blend', level: 'Level' };
+$$('[data-role]').forEach(el => {
+  const role = el.dataset.role;
+  const label = $('.p-name', el) || el;             /* .param → its label; .k-label → itself */
+  label.insertAdjacentHTML('afterbegin', GLYPHS[role] || '');
+  label.title = ROLE_NAMES[role] || '';
+  if (el.dataset.gate !== undefined){
+    label.insertAdjacentHTML('beforeend', '<span class="gate-dot" title="Gate — 0 is a true bypass"></span>');
+  }
+});
+byId('legend').innerHTML =
+  Object.keys(GLYPHS).map(r => '<span class="lg-item">' + GLYPHS[r] + ROLE_NAMES[r] + '</span>').join('') +
+  '<span class="lg-item"><span class="gate-dot"></span>gate — knob at 0 is a true bypass</span>';
+
 /* ---------- SVG builders ---------- */
-/* Track/arc trick: circle with pathLength=360, rotated +135deg so the
-   dash (270 units) spans exactly the -135..+135 sweep with a bottom gap. */
 function arcPair(c, r){
   const rot = 'transform="rotate(135 ' + c + ' ' + c + ')"';
   return '<circle class="k-track" cx="' + c + '" cy="' + c + '" r="' + r + '" ' + rot +
@@ -762,12 +875,18 @@ function pointerLine(c, r){
   return '<line class="k-ptr" x1="' + c + '" y1="' + (c - r + 6).toFixed(1) +
          '" x2="' + c + '" y2="' + (c - r * 0.5).toFixed(1) + '"/>';
 }
-function svgOpen(size){
-  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">';
+/* gate marker: a small hollow notch at the very start of the sweep (value 0) */
+function gateNotch(c, r){
+  return '<circle class="k-gate" cx="' + c + '" cy="' + (c + r) + '" r="1.8"' +
+         ' transform="rotate(45 ' + c + ' ' + c + ')"/>';
 }
-function bigKnobSvg(size){
+function svgOpen(size){
+  return '<svg viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">';
+}
+function sizeEl(el, size){ el.style.width = el.style.height = (size / 10) + 'rem'; }
+function bigKnobSvg(size, gate){
   const c = size / 2, r = c - 6;
-  return svgOpen(size) + arcPair(c, r) + pointerLine(c, r) + '</svg>';
+  return svgOpen(size) + arcPair(c, r) + (gate ? gateNotch(c, r) : '') + pointerLine(c, r) + '</svg>';
 }
 function miniSvg(size){
   const c = size / 2, r = c - 3.5;
@@ -799,6 +918,7 @@ $$('.mini').forEach(el => {
   const bipolar = el.dataset.bipolar !== undefined;
   const size = +(el.dataset.size || 36);
   el.innerHTML = miniSvg(size);
+  sizeEl(el, size);
   const c = size / 2;
   const arc = $('.k-arc', el), ptr = $('.k-ptr', el);
   el._set = v => {
@@ -813,16 +933,21 @@ $$('.mini').forEach(el => {
   el._set(+el.dataset.value);
 });
 
-/* ---------- large interactive knobs (editor + macros) ---------- */
+/* ---------- large interactive knobs (editor + macros) ----------
+   Canon: vertical drag (≈20rem travel = full sweep) · Shift = fine (5×)
+   · wheel steps 1% (Shift 0.2%) · double-click = default · arrows step. */
+function uiScale(){ return parseFloat(getComputedStyle(document.documentElement).fontSize) / 10; }
 function initKnob(el){
   const min = +el.dataset.min, max = +el.dataset.max, def = +el.dataset.default;
   const unit = el.dataset.unit || '', dec = +(el.dataset.dec || 0);
   const size = +(el.dataset.size || 120);
   const isMacro = el.dataset.rangeA !== undefined;
+  const hasGate = el.dataset.gate !== undefined;
   let value = +el.dataset.value;
 
-  el.innerHTML = (isMacro ? macroSvg(size) : bigKnobSvg(size)) +
+  el.innerHTML = (isMacro ? macroSvg(size) : bigKnobSvg(size, hasGate)) +
     '<div class="k-read"><span class="k-num num"></span><span class="k-unit">' + unit + '</span></div>';
+  sizeEl(el, size);
   el.setAttribute('role', 'slider');
   el.setAttribute('tabindex', '0');
   el.setAttribute('aria-label', el.dataset.label || 'knob');
@@ -849,6 +974,7 @@ function initKnob(el){
     ptr.setAttribute('transform', 'rotate(' + (A0 + SWEEP * f) + ' ' + c + ' ' + c + ')');
     num.textContent = value.toFixed(dec);
     el.setAttribute('aria-valuenow', value.toFixed(dec));
+    el.setAttribute('aria-valuetext', value.toFixed(dec) + (unit ? ' ' + unit : ''));
     if (isMacro){
       const mapped = ra + (value / 100) * (rb - ra);
       oTick.setAttribute('transform', 'rotate(' + (A0 + SWEEP * mapped / 100) + ' ' + c + ' ' + c + ')');
@@ -857,7 +983,6 @@ function initKnob(el){
     if (el._onchange) el._onchange(value);
   }
 
-  /* vertical pointer-drag: ~200px of travel = full sweep, clamped */
   let dragging = false, startY = 0, startVal = 0;
   el.addEventListener('pointerdown', e => {
     dragging = true; startY = e.clientY; startVal = value;
@@ -867,15 +992,22 @@ function initKnob(el){
   });
   el.addEventListener('pointermove', e => {
     if (!dragging) return;
-    value = clamp(startVal + (startY - e.clientY) / 200 * (max - min), min, max);
+    const travel = 200 * uiScale() * (e.shiftKey ? 5 : 1);   /* scale-aware; shift = fine */
+    value = clamp(startVal + (startY - e.clientY) / travel * (max - min), min, max);
     render();
   });
   const endDrag = () => { dragging = false; el.classList.remove('dragging'); };
   el.addEventListener('pointerup', endDrag);
   el.addEventListener('pointercancel', endDrag);
   el.addEventListener('dblclick', () => { value = def; render(); });
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    const step = (max - min) * (e.shiftKey ? 0.002 : 0.01) * (e.deltaY < 0 ? 1 : -1);
+    value = clamp(value + step, min, max);
+    render();
+  }, { passive: false });
   el.addEventListener('keydown', e => {
-    const step = (max - min) / 100;
+    const step = (max - min) / (e.shiftKey ? 500 : 100);
     if (e.key === 'ArrowUp' || e.key === 'ArrowRight'){ value = clamp(value + step, min, max); render(); e.preventDefault(); }
     if (e.key === 'ArrowDown' || e.key === 'ArrowLeft'){ value = clamp(value - step, min, max); render(); e.preventDefault(); }
   });
@@ -890,9 +1022,10 @@ $$('.knob').forEach(initKnob);
 $$('.knob-ghost').forEach(el => {
   const size = +(el.dataset.size || 112);
   el.innerHTML = ghostSvg(size) + '<div class="k-read"><span class="k-num">—</span></div>';
+  sizeEl(el, size);
 });
 
-/* ---------- strip visualizers driven by the real values ---------- */
+/* ---------- signature modules driven by the real values ---------- */
 function polyPath(w, h, fn){
   let d = '';
   for (let x = 0; x <= w; x += 2){
@@ -900,41 +1033,46 @@ function polyPath(w, h, fn){
   }
   return d;
 }
-/* chorus: true 0.9 Hz scroll (CSS anim = 1.1111s per 26px wavelength);
-   amplitude = 45% depth of the viz height */
+/* chorus: stereo pair — main wave + 90°-offset partner (26px wavelength → 6.5px shift);
+   scroll speed is the true 0.9 Hz (1.1111s per wavelength) via --wave-cycle */
 byId('chorus-wave').setAttribute('d',
   polyPath(118 + 26, 26, x => 13 - 5.4 * Math.sin(2 * Math.PI * x / 26)));
+byId('chorus-wave-b').setAttribute('d',
+  polyPath(118 + 26, 26, x => 13 - 5.4 * Math.sin(2 * Math.PI * (x - 6.5) / 26)));
 /* trem ghost: what the wave would be — depth is 0, so the live line is flat */
 byId('trem-ghost').setAttribute('d',
-  polyPath(118, 26, x => 13 - 6.5 * Math.sin(2 * Math.PI * x / 30)));
-/* drive: gentle tanh shaper at 15% drive */
+  polyPath(88, 26, x => 13 - 6.5 * Math.sin(2 * Math.PI * x / 30)).replace(/M0/, 'M24').replace(/L(\d+(\.\d+)?)/g, (m, n) => 'L' + (+n * (90 / 88) + 24).toFixed(1)));
+/* drive: tanh shaper at 15% drive, plus a heat fill that grows with the amount */
 (function(){
-  const k = 1.9;
-  byId('drive-curve').setAttribute('d',
-    polyPath(118, 26, x => {
-      const u = (x / 118) * 2 - 1;
-      return 13 - (Math.tanh(k * u) / Math.tanh(k)) * 9;
-    }));
+  const k = 1.9, amt = 0.15;
+  const curve = polyPath(118, 26, x => {
+    const u = (x / 118) * 2 - 1;
+    return 13 - (Math.tanh(k * u) / Math.tanh(k)) * 9;
+  });
+  byId('drive-curve').setAttribute('d', curve);
+  byId('drive-fill').setAttribute('d', curve + ' L118 13 L0 13 Z');
+  byId('drive-fill').style.opacity = (0.06 + amt * 0.5).toFixed(3);
 })();
 
-/* delay strip miniature tail (static — the pedal is parked) */
+/* delay strip miniature tail — dots ping in time when the pedal is live */
 function renderStripTail(t, fb){
   const svg = byId('delay-strip-tail');
-  const x0 = 8, sp = 8 + t * 0.048, mid = 10;
-  let s = '<line x1="' + x0 + '" y1="4" x2="' + x0 + '" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.85"/>';
+  const x0 = 8, sp = 8 + t * 0.048, mid = 10, cyc = Math.max(t * 5, 220);
+  let s = '<line x1="' + x0 + '" y1="4" x2="' + x0 + '" y2="16" stroke-width="2" stroke-linecap="round" opacity="0.85"/>';
   for (let n = 1; n <= 4; n++){
     const op = Math.pow(fb, n) * 0.9;
     if (op < 0.03) continue;
     const r = 4.2 * Math.pow(Math.max(fb, 0.15), n * 0.28);
-    s += '<circle cx="' + (x0 + sp * n).toFixed(1) + '" cy="' + mid + '" r="' + r.toFixed(2) + '" opacity="' + op.toFixed(3) + '"/>';
+    s += '<circle cx="' + (x0 + sp * n).toFixed(1) + '" cy="' + mid + '" r="' + r.toFixed(2) +
+         '" opacity="' + op.toFixed(3) +
+         '" style="animation-duration:' + cyc + 'ms;animation-delay:' + (n * t) + 'ms"/>';
   }
   svg.innerHTML = s;
 }
 
-/* ---------- editor: echo tail animation, spaced by Time, faded by Feedback ---------- */
+/* ---------- editor: echo tail, spaced by Time, faded by Feedback ---------- */
 const tailSvg = byId('echo-tail');
 function renderTail(t, fb, mix){
-  /* fixed time axis: 0.26 px per ms, so repeat spacing IS the delay time */
   const PX = 0.26, x0 = 18, mid = 26, cyc = Math.max(t * 5, 220);
   let s = '<line class="t-base" x1="6" y1="' + mid + '" x2="1094" y2="' + mid + '"/>';
   for (let ms = 250; ms <= 4000; ms += 250){
