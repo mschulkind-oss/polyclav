@@ -1,0 +1,19 @@
+/* ============================================================
+   composer.extra.css — page-composer additions.
+   Everything scoped under .pb-root, pb- prefixed, sized in --u.
+   Import AFTER pedalboard.css.
+   ============================================================ */
+
+/* Global patch band between the header and the screens: hosts the PatchBar
+   on every tab, in the header's material (same gutters, hairline rule). */
+.pb-root .pb-patchrow {
+  padding: calc(var(--u) * 12) calc(var(--u) * 32);
+  border-bottom: 1px solid var(--pb-line-soft);
+}
+
+/* While the playground is mounted, hide the app's light top nav — the
+   design study is full-bleed dark like its reference; the nav returns on
+   every normal route (this stylesheet only ships with /mockup). */
+body:has(.pb-root) > .topnav {
+  display: none;
+}

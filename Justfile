@@ -104,6 +104,10 @@ web-build:
 web-check:
     cd web && pnpm exec biome ci . && pnpm exec tsc --noEmit
 
+# Web unit/component tests (vitest) — run whenever you touch web/.
+web-test:
+    cd web && pnpm test
+
 fetch-soundfont:
     mkdir -p soundfonts
     @if [ -f soundfonts/{{SOUNDFONT_FILE}} ]; then \

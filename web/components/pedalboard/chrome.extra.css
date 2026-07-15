@@ -1,0 +1,68 @@
+/* ============================================================
+   chrome.extra.css — chrome-builder additions.
+   Everything scoped under .pb-root, pb- prefixed, sized in --u.
+   Import AFTER pedalboard.css.
+   ============================================================ */
+
+/* Led with on={false} outside a .pb-bypassed card. The class is doubled on
+   purpose: its specificity must beat the foundation's
+   `.pb-strip:not(.pb-bypassed) .pb-led` breathe rule regardless of import
+   order. Colors match `.pb-bypassed .pb-led`. */
+.pb-root .pb-led.pb-led-off.pb-led-off {
+  background: #33363e;
+  animation: none;
+}
+.pb-root .pb-led.pb-led-off.pb-led-off::after {
+  display: none;
+}
+
+/* ---------- global patch row (PatchBar) ----------
+   Launchkey-style pads in the flat-modern material: occupied pads carry a
+   dim wash of their patch color (--pb-pad-color, set inline), the active
+   pad fills solid with a soft glow, empty slots are faint dashed rings —
+   the same "deliberately empty" language as the rail's role slots. */
+.pb-root .pb-patchbar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 16);
+  flex-wrap: wrap;
+}
+.pb-root .pb-pads {
+  display: flex;
+  gap: calc(var(--u) * 6);
+}
+.pb-root .pb-pad {
+  width: calc(var(--u) * 30);
+  height: calc(var(--u) * 19);
+  border-radius: calc(var(--u) * 4);
+  border: 1px solid var(--pb-line);
+  background: color-mix(in srgb, var(--pb-pad-color) 20%, var(--pb-card-hi));
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.pb-root button.pb-pad:hover {
+  border-color: #33363e;
+}
+.pb-root .pb-pad.pb-pad-active {
+  background: var(--pb-pad-color);
+  border-color: var(--pb-pad-color);
+  box-shadow: 0 0 calc(var(--u) * 12) color-mix(in srgb, var(--pb-pad-color) 55%, transparent);
+}
+.pb-root .pb-pad.pb-pad-empty {
+  border: 1px dashed var(--pb-line-soft);
+  background: transparent;
+  cursor: default;
+}
+.pb-root .pb-patch-now {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  min-width: 0;
+}
+.pb-root .pb-patch-name {
+  font-size: calc(var(--u) * 13);
+  font-weight: 650;
+  white-space: nowrap;
+}

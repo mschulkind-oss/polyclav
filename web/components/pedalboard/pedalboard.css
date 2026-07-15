@@ -1,0 +1,1288 @@
+/* ============================================================
+   STYLE B — FLAT MODERN · pedalboard design system
+   Mechanical port of docs/mockups/pedalboard-style-b-flat-modern.html:
+   · every selector scoped under .pb-root, every class prefixed pb-
+   · the reference's rem sizing (10px root) becomes calc(var(--u) * N)
+     where --u = calc(1px * var(--pb-scale)) — the A−/A+ control sets
+     --pb-scale and the whole system resizes together
+   · 1px hairline borders stay literal px (crisp at any scale)
+   · no fixed card heights: strips share one grid template, so
+     headers / role rows / viz band / stomps align by construction
+   · param ROLES give cross-pedal consistency: row 2 = time,
+     row 3 = intensity, row 4 = blend. Same knob, same place.
+   ============================================================ */
+
+/* ---------- tokens + scale root ---------- */
+.pb-root {
+  --pb-scale: 1; /* set by the A−/A+ control, persisted */
+  --u: calc(1px * var(--pb-scale));
+  --pb-bg: #0b0c0f;
+  --pb-card: #0e1014;
+  --pb-card-hi: #111319;
+  --pb-line: #23252b;
+  --pb-line-soft: #1a1c22;
+  --pb-ghost: #23252b;
+  --pb-ghost-dim: #1c1e24;
+  --pb-txt: #e9ebf1;
+  --pb-txt2: #9aa0ac;
+  --pb-txt3: #5c616c;
+  --pb-amber: #ffb454; /* drive  */
+  --pb-cyan: #4cc9f0; /* chorus */
+  --pb-violet: #b18cff; /* trem   */
+  --pb-mint: #2fe6a8; /* delay  */
+  --pb-neutral: #aeb6c4; /* bus / source */
+  --pb-off: #4a4e58;
+  color-scheme: dark;
+}
+
+/* reset scoped to the design system */
+.pb-root,
+.pb-root *,
+.pb-root *::before,
+.pb-root *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+/* :where keeps these scoped to .pb-root but at bare-element specificity
+   (0,0,1) — matching the reference's `button{}` / `svg{}` resets so that
+   single-class rules like .pb-tab / .pb-stomp / .pb-chip override them. */
+:where(.pb-root) button {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+:where(.pb-root) svg {
+  display: block;
+  overflow: visible;
+}
+/* Leak shield: the embedding app (web/app/globals.css) styles bare
+   header/main/section/h2/h3 elements. Re-assert the reference's neutral
+   defaults at class specificity (0,1,0) so those element rules can't
+   repaint the design system, while component rules below still override
+   (same specificity, later in the cascade). */
+.pb-root :where(header, main, section, footer) {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.pb-root h2,
+.pb-root h3 {
+  border-top: 0;
+  color: inherit;
+  text-transform: none;
+}
+
+/* the reference's body styles — the page fills the viewport with .pb-root */
+.pb-root {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      calc(var(--u) * 1100) calc(var(--u) * 520) at 50% -12%,
+      #12141b 0%,
+      rgba(18, 20, 27, 0) 60%
+    ),
+    var(--pb-bg);
+  color: var(--pb-txt);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: calc(var(--u) * 13);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+}
+.pb-num {
+  font-variant-numeric: tabular-nums;
+}
+.pb-root :focus-visible {
+  outline: 1px solid var(--pb-txt3);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.pb-kicker {
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+
+/* Interactive surfaces never select text (drag-to-turn must not highlight) */
+.pb-strip,
+.pb-bus,
+.pb-srcnode,
+.pb-hero,
+.pb-macro,
+.pb-knob,
+.pb-mini,
+.pb-stomp,
+.pb-tabs,
+.pb-scalectl {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------- header ---------- */
+.pb-header {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: calc(var(--u) * 20);
+  height: calc(var(--u) * 64);
+  padding: 0 calc(var(--u) * 32);
+  border-bottom: 1px solid var(--pb-line-soft);
+  flex-wrap: wrap;
+}
+.pb-brand {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 14);
+}
+.pb-chain-glyph {
+  display: flex;
+  gap: calc(var(--u) * 4);
+}
+.pb-chain-glyph i {
+  width: calc(var(--u) * 4);
+  height: calc(var(--u) * 4);
+  border-radius: 50%;
+  display: block;
+}
+.pb-chain-glyph i:nth-child(1) {
+  background: var(--pb-amber);
+}
+.pb-chain-glyph i:nth-child(2) {
+  background: var(--pb-cyan);
+}
+.pb-chain-glyph i:nth-child(3) {
+  background: var(--pb-violet);
+}
+.pb-chain-glyph i:nth-child(4) {
+  background: var(--pb-mint);
+}
+.pb-wordmark {
+  font-size: calc(var(--u) * 16);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.pb-badge {
+  border: 1px solid var(--pb-line);
+  border-radius: 999px;
+  padding: calc(var(--u) * 5) calc(var(--u) * 12);
+  font-size: calc(var(--u) * 10);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--pb-txt2);
+}
+.pb-head-right {
+  display: flex;
+  align-items: stretch;
+  gap: calc(var(--u) * 24);
+}
+.pb-tabs {
+  display: flex;
+  gap: calc(var(--u) * 8);
+}
+.pb-tab {
+  display: flex;
+  align-items: center;
+  padding: 0 calc(var(--u) * 16);
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+.pb-tab:hover {
+  color: var(--pb-txt2);
+}
+.pb-tab.pb-active {
+  color: var(--pb-txt);
+  border-bottom-color: var(--pb-txt);
+}
+
+/* UI-scale control — the "people can choose" knob for the whole interface */
+.pb-scalectl {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 2);
+  color: var(--pb-txt3);
+}
+.pb-scalectl button {
+  width: calc(var(--u) * 26);
+  height: calc(var(--u) * 26);
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--u) * 11);
+  font-weight: 700;
+  color: var(--pb-txt2);
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.pb-scalectl button:hover {
+  color: var(--pb-txt);
+  border-color: #33363e;
+}
+.pb-scalectl .pb-scale-val {
+  min-width: calc(var(--u) * 46);
+  text-align: center;
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.pb-scalectl .pb-scale-val:hover {
+  color: var(--pb-txt2);
+}
+
+/* ---------- screens ---------- */
+.pb-main {
+  display: block; /* leak shield: app globals make bare <main> a grid */
+  width: 100%;
+  max-width: calc(var(--u) * 1260);
+  margin: 0 auto;
+  padding: calc(var(--u) * 28) calc(var(--u) * 32) calc(var(--u) * 56);
+  flex: 1;
+}
+.pb-screen {
+  display: none;
+}
+.pb-screen.pb-active {
+  display: block;
+  animation: pb-rise 0.28s ease both;
+}
+@keyframes pb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--u) * 5));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pb-screen-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: calc(var(--u) * 26);
+  gap: calc(var(--u) * 24);
+}
+.pb-screen-head .pb-sub {
+  margin-top: calc(var(--u) * 6);
+  color: var(--pb-txt2);
+  font-size: calc(var(--u) * 13);
+}
+.pb-screen-head .pb-meta {
+  font-size: calc(var(--u) * 11);
+  letter-spacing: 0.08em;
+  color: var(--pb-txt3);
+  text-transform: uppercase;
+}
+
+/* ---------- pedalboard rail ---------- */
+.pb-railwrap {
+  overflow-x: auto;
+  padding-bottom: calc(var(--u) * 8);
+}
+.pb-rail {
+  display: flex;
+  align-items: stretch;
+  min-width: min-content;
+}
+.pb-wire {
+  position: relative;
+  flex: 1;
+  min-width: calc(var(--u) * 22);
+  height: 1px;
+  align-self: center;
+  background: repeating-linear-gradient(90deg, #3a3e47 0 3px, transparent 3px 9px);
+  animation: pb-wireflow 1.5s linear infinite;
+}
+.pb-wire::before,
+.pb-wire::after {
+  content: "";
+  position: absolute;
+  top: -1.5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #3a3e47;
+}
+.pb-wire::before {
+  left: -1px;
+}
+.pb-wire::after {
+  right: -1px;
+}
+@keyframes pb-wireflow {
+  to {
+    background-position: 9px 0;
+  }
+}
+
+/* shared card material */
+.pb-strip,
+.pb-bus,
+.pb-srcnode,
+.pb-hero,
+.pb-hwbar,
+.pb-macro {
+  background: linear-gradient(180deg, var(--pb-card-hi) 0%, var(--pb-card) 26%);
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+/* THE alignment contract: strips, source, and bus share one grid template.
+   Rows: header · time · intensity · blend · viz · stomp.
+   No fixed heights — rows size identically across every card. */
+.pb-strip,
+.pb-srcnode,
+.pb-bus {
+  display: grid;
+  grid-template-rows:
+    calc(var(--u) * 24)
+    calc(var(--u) * 80)
+    calc(var(--u) * 80)
+    calc(var(--u) * 80)
+    calc(var(--u) * 34)
+    calc(var(--u) * 30);
+  row-gap: calc(var(--u) * 12);
+  padding: calc(var(--u) * 16) calc(var(--u) * 14);
+  flex: none;
+}
+.pb-strip {
+  position: relative;
+  width: calc(var(--u) * 150);
+  cursor: pointer;
+  transition: border-color 0.18s ease;
+}
+.pb-strip::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: calc(var(--u) * 14);
+  width: calc(var(--u) * 26);
+  height: 2px;
+  background: var(--pb-accent);
+  transition:
+    width 0.22s ease,
+    opacity 0.22s ease;
+}
+.pb-strip:hover {
+  border-color: #2f323a;
+}
+.pb-strip:hover::before {
+  width: calc(var(--u) * 44);
+}
+.pb-strip.pb-bypassed::before {
+  opacity: 0.3;
+}
+.pb-strip.pb-bypassed {
+  --pb-accent: var(--pb-off);
+}
+
+.pb-srcnode {
+  width: calc(var(--u) * 106);
+  --pb-accent: var(--pb-neutral);
+}
+.pb-src-glyph {
+  grid-row: 3;
+  align-self: center;
+  justify-self: center;
+  color: var(--pb-txt3);
+  width: calc(var(--u) * 56);
+  height: calc(var(--u) * 22);
+}
+.pb-src-sub {
+  grid-row: 6;
+  align-self: center;
+  text-align: center;
+  font-size: calc(var(--u) * 9);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+
+.pb-strip-top,
+.pb-src-top,
+.pb-bus-top {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+  min-width: 0;
+}
+.pb-strip-top h3,
+.pb-src-top h3,
+.pb-bus-top h3 {
+  font-size: calc(var(--u) * 12);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.pb-bypassed .pb-strip-top h3 {
+  color: var(--pb-txt3);
+}
+.pb-slot-ix {
+  margin-left: auto;
+  font-size: calc(var(--u) * 9);
+  letter-spacing: 0.1em;
+  color: var(--pb-txt3);
+}
+
+/* LED */
+.pb-led {
+  position: relative;
+  width: calc(var(--u) * 7);
+  height: calc(var(--u) * 7);
+  border-radius: 50%;
+  background: var(--pb-accent);
+  flex: none;
+}
+.pb-led::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--u) * -5);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--pb-accent) 0%, transparent 62%);
+  opacity: 0.4;
+}
+.pb-strip:not(.pb-bypassed) .pb-led,
+.pb-hero:not(.pb-bypassed) .pb-led,
+.pb-srcnode .pb-led,
+.pb-bus .pb-led {
+  animation: pb-breathe 3.2s ease-in-out infinite;
+}
+.pb-bypassed .pb-led {
+  background: #33363e;
+  animation: none;
+}
+.pb-bypassed .pb-led::after {
+  display: none;
+}
+@keyframes pb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ---------- role slots ----------
+   Same role → same row on every pedal. Empty slots stay empty on
+   purpose (a faint ring says "this pedal has no such control"). */
+.pb-param {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 1);
+  min-width: 0;
+}
+.pb-param.pb-r-time {
+  grid-row: 2;
+}
+.pb-param.pb-r-shape {
+  grid-row: 3;
+}
+.pb-param.pb-r-blend {
+  grid-row: 4;
+}
+.pb-slot-empty {
+  grid-row: var(--pb-row);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pb-slot-empty::before {
+  content: "";
+  width: calc(var(--u) * 22);
+  height: calc(var(--u) * 22);
+  border-radius: 50%;
+  border: 1px dashed #1a1d23;
+}
+.pb-p-name {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 4);
+  font-size: calc(var(--u) * 10);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+  margin-top: calc(var(--u) * 3);
+  white-space: nowrap;
+}
+.pb-p-val {
+  font-size: calc(var(--u) * 13);
+  font-weight: 600;
+  color: var(--pb-txt);
+}
+.pb-bypassed .pb-p-val {
+  color: var(--pb-txt2);
+}
+
+/* role glyphs — one shape per job, everywhere */
+.pb-glyph {
+  width: calc(var(--u) * 10);
+  height: calc(var(--u) * 10);
+  flex: none;
+  color: var(--pb-txt3);
+  opacity: 0.9;
+}
+.pb-gate-dot {
+  width: calc(var(--u) * 6);
+  height: calc(var(--u) * 6);
+  border-radius: calc(var(--u) * 1.5);
+  flex: none;
+  border: 1px solid var(--pb-txt3);
+  opacity: 0.7;
+}
+.pb-legend {
+  margin-top: calc(var(--u) * 16);
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--u) * 6) calc(var(--u) * 20);
+  align-items: center;
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.06em;
+  color: var(--pb-txt3);
+}
+.pb-legend .pb-lg-item {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 6);
+}
+
+/* mini knobs (display-only) */
+.pb-mini {
+  position: relative;
+}
+.pb-mini svg {
+  width: 100%;
+  height: 100%;
+}
+.pb-mini .pb-k-track {
+  stroke: var(--pb-ghost);
+  stroke-width: 1.5;
+}
+.pb-mini .pb-k-arc {
+  stroke: var(--pb-accent);
+  stroke-width: 2;
+}
+.pb-mini .pb-k-ptr {
+  stroke: #e9ebf1;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+}
+.pb-bypassed .pb-mini .pb-k-ptr {
+  stroke: #7b8089;
+}
+
+/* ---------- signature band ----------
+   Each pedal's one personal module lives in this fixed row. */
+.pb-viz {
+  grid-row: 5;
+  align-self: center;
+  justify-self: center;
+  color: var(--pb-accent);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+}
+.pb-viz svg {
+  width: calc(var(--u) * 118);
+  height: calc(var(--u) * 26);
+}
+.pb-viz path,
+.pb-viz line {
+  stroke: currentColor;
+  fill: none;
+}
+.pb-viz .pb-fillpath {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.1;
+}
+.pb-wave-anim {
+  animation: pb-wavescroll var(--pb-wave-cycle, 1.1111s) linear infinite;
+}
+.pb-wave-b {
+  opacity: 0.35;
+}
+.pb-bypassed .pb-wave-anim {
+  animation-play-state: paused;
+}
+@keyframes pb-wavescroll {
+  to {
+    /* SVG user units, deliberately not --u: one 26-unit wavelength */
+    transform: translateX(-26px);
+  }
+}
+.pb-trem-ghost {
+  stroke-dasharray: 3 4;
+  opacity: 0.22;
+}
+.pb-viz .pb-axis {
+  stroke: var(--pb-line-soft);
+  stroke-width: 1;
+}
+/* trem's opto-lamp: throbs at rate when the pedal is live */
+.pb-opto {
+  fill: currentColor;
+  animation: pb-optopulse var(--pb-trem-cycle, 192ms) ease-in-out infinite;
+}
+.pb-bypassed .pb-opto,
+.pb-depth-zero .pb-opto {
+  animation-play-state: paused;
+  opacity: 0.25;
+}
+@keyframes pb-optopulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+/* delay's board dots ping in time when live */
+.pb-strip-tail {
+  width: calc(var(--u) * 118);
+  height: calc(var(--u) * 20);
+}
+.pb-strip-tail circle {
+  fill: currentColor;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.pb-strip:not(.pb-bypassed) .pb-strip-tail circle {
+  animation: pb-ping linear infinite;
+}
+.pb-strip-tail line {
+  stroke: currentColor;
+}
+
+/* stomp switch — pinned to the last grid row on every card */
+.pb-stomp {
+  grid-row: 6;
+  align-self: end;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 8);
+  width: 100%;
+  height: calc(var(--u) * 30);
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 6);
+  font-size: calc(var(--u) * 10);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pb-stomp:hover {
+  border-color: #33363e;
+}
+.pb-stomp .pb-stomp-dot {
+  width: calc(var(--u) * 7);
+  height: calc(var(--u) * 7);
+  border-radius: calc(var(--u) * 2);
+  flex: none;
+  border: 1px solid #4a4e58;
+  background: transparent;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.pb-stomp.pb-on {
+  color: var(--pb-txt);
+  border-color: #2e3138;
+}
+.pb-stomp.pb-on .pb-stomp-dot {
+  background: var(--pb-accent);
+  border-color: var(--pb-accent);
+}
+.pb-stomp.pb-big {
+  height: calc(var(--u) * 40);
+  font-size: calc(var(--u) * 11);
+}
+
+/* ---------- bus ---------- */
+.pb-bus {
+  width: calc(var(--u) * 240);
+  --pb-accent: var(--pb-neutral);
+}
+.pb-bus-top .pb-meters {
+  margin-left: auto;
+  width: calc(var(--u) * 14);
+  height: calc(var(--u) * 24);
+}
+.pb-meters rect {
+  fill: #4c5560;
+  transform-box: fill-box;
+  transform-origin: bottom;
+}
+.pb-meters .pb-mL {
+  animation: pb-meterA 2.3s ease-in-out infinite;
+}
+.pb-meters .pb-mR {
+  animation: pb-meterB 3.1s ease-in-out infinite;
+}
+@keyframes pb-meterA {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  42% {
+    transform: scaleY(0.8);
+  }
+  70% {
+    transform: scaleY(0.58);
+  }
+}
+@keyframes pb-meterB {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+  }
+  30% {
+    transform: scaleY(0.72);
+  }
+  65% {
+    transform: scaleY(0.42);
+  }
+}
+.pb-bus-pair {
+  display: flex;
+  justify-content: space-evenly;
+  align-items: center;
+}
+.pb-bus-pair.pb-r1 {
+  grid-row: 2;
+}
+.pb-bus-pair.pb-r2 {
+  grid-row: 3;
+}
+.pb-bus-pair.pb-r3 {
+  grid-row: 4;
+}
+.pb-bus-sub {
+  grid-row: 6;
+  align-self: center;
+  text-align: center;
+  font-size: calc(var(--u) * 9);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+
+.pb-rail-hint {
+  margin-top: calc(var(--u) * 12);
+  font-size: calc(var(--u) * 11);
+  color: var(--pb-txt3);
+  letter-spacing: 0.04em;
+}
+
+/* ---------- editor ---------- */
+.pb-crumb {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.pb-crumb-link {
+  color: var(--pb-txt3);
+  transition: color 0.15s ease;
+}
+.pb-crumb-link:hover {
+  color: var(--pb-txt2);
+}
+.pb-crumb .pb-sep {
+  color: var(--pb-txt3);
+}
+.pb-crumb-cur {
+  color: var(--pb-txt);
+}
+.pb-chip {
+  border: 1px solid var(--pb-line);
+  border-radius: 999px;
+  padding: calc(var(--u) * 6) calc(var(--u) * 14);
+  font-size: calc(var(--u) * 10);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pb-txt2);
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease;
+  white-space: nowrap;
+}
+.pb-chip.pb-live {
+  color: var(--pb-mint);
+  border-color: rgba(47, 230, 168, 0.45);
+}
+
+.pb-hero {
+  --pb-accent: var(--pb-mint);
+  padding: 0;
+  overflow: hidden;
+}
+.pb-hero-main {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--u) * 200), calc(var(--u) * 236)) 1fr;
+  min-height: calc(var(--u) * 300);
+}
+.pb-hero-id {
+  padding: calc(var(--u) * 28) calc(var(--u) * 26);
+  border-right: 1px solid var(--pb-line-soft);
+  display: flex;
+  flex-direction: column;
+}
+.pb-hero-title {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 12);
+}
+.pb-hero-title h2 {
+  font-size: calc(var(--u) * 24);
+  font-weight: 750;
+  letter-spacing: 0.06em;
+}
+.pb-hero-rule {
+  width: calc(var(--u) * 28);
+  height: 2px;
+  background: var(--pb-accent);
+  margin-top: calc(var(--u) * 12);
+}
+.pb-hero-sub {
+  margin-top: calc(var(--u) * 12);
+  font-size: calc(var(--u) * 11);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+.pb-hero-id .pb-stomp {
+  margin-top: auto;
+  grid-row: auto;
+}
+.pb-ghostbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 7);
+  width: 100%;
+  height: calc(var(--u) * 32);
+  margin-top: calc(var(--u) * 10);
+  border: 1px solid transparent;
+  border-radius: calc(var(--u) * 6);
+  font-size: calc(var(--u) * 10);
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.pb-ghostbtn:hover {
+  color: var(--pb-txt2);
+  border-color: var(--pb-line);
+}
+.pb-ghostbtn svg {
+  flex: none;
+  width: calc(var(--u) * 12);
+  height: calc(var(--u) * 12);
+}
+
+.pb-hero-knobs {
+  display: flex;
+  align-items: end;
+  justify-content: space-evenly;
+  flex-wrap: wrap;
+  gap: calc(var(--u) * 20);
+  padding: calc(var(--u) * 30) calc(var(--u) * 24) calc(var(--u) * 22);
+}
+.pb-kgroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 12);
+}
+.pb-k-label {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 6);
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pb-txt2);
+}
+.pb-k-minmax {
+  font-size: calc(var(--u) * 10);
+  color: var(--pb-txt3);
+  letter-spacing: 0.06em;
+}
+.pb-knob-hint {
+  padding: 0 calc(var(--u) * 24) calc(var(--u) * 18);
+  text-align: right;
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+
+/* big / macro knobs */
+.pb-knob,
+.pb-knob-ghost {
+  position: relative;
+  display: inline-block;
+}
+.pb-knob svg,
+.pb-knob-ghost svg {
+  width: 100%;
+  height: 100%;
+}
+.pb-knob {
+  cursor: ns-resize;
+  touch-action: none;
+}
+.pb-knob .pb-k-track {
+  stroke: #282b32;
+  stroke-width: 2;
+  transition: stroke 0.15s ease;
+}
+.pb-knob:hover .pb-k-track {
+  stroke: #33363e;
+}
+.pb-knob .pb-k-arc {
+  stroke: var(--pb-accent);
+  stroke-width: 2.5;
+}
+.pb-knob .pb-k-ptr {
+  stroke: #e9ebf1;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.pb-knob .pb-k-otrack {
+  stroke: var(--pb-ghost-dim);
+  stroke-width: 2;
+}
+.pb-knob .pb-k-orange {
+  stroke: var(--pb-accent);
+  stroke-width: 3;
+  opacity: 0.45;
+}
+.pb-knob .pb-k-otick {
+  stroke: var(--pb-accent);
+  stroke-width: 1.5;
+}
+.pb-knob .pb-k-gate {
+  fill: none;
+  stroke: var(--pb-txt3);
+  stroke-width: 1;
+}
+.pb-knob-ghost .pb-k-track {
+  stroke: var(--pb-ghost-dim);
+  stroke-width: 2;
+}
+.pb-k-read {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 1);
+  pointer-events: none;
+}
+.pb-k-num {
+  font-size: calc(var(--u) * 22);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  transition: color 0.12s ease;
+}
+.pb-knob.pb-xl .pb-k-num {
+  font-size: calc(var(--u) * 29);
+}
+.pb-k-unit {
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+.pb-knob.pb-dragging .pb-k-num {
+  color: var(--pb-accent);
+}
+.pb-knob.pb-md .pb-k-num {
+  font-size: calc(var(--u) * 19);
+}
+.pb-knob-ghost .pb-k-num {
+  font-size: calc(var(--u) * 19);
+  color: var(--pb-txt3);
+}
+
+/* echo tail */
+.pb-hero-tail {
+  border-top: 1px solid var(--pb-line-soft);
+  padding: calc(var(--u) * 18) calc(var(--u) * 26) calc(var(--u) * 20);
+}
+.pb-tail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: calc(var(--u) * 8);
+}
+.pb-tail-caption {
+  font-size: calc(var(--u) * 11);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+.pb-tail-wrap {
+  color: #6a7280;
+}
+.pb-t-tick {
+  stroke: var(--pb-line);
+  stroke-width: 1;
+}
+.pb-t-lab {
+  fill: var(--pb-txt3);
+  font-size: 9px; /* SVG user units */
+  letter-spacing: 0.08em;
+}
+.pb-hero:not(.pb-bypassed) .pb-tail-wrap {
+  color: var(--pb-mint);
+}
+.pb-t-base {
+  stroke: var(--pb-line-soft);
+  stroke-width: 1;
+}
+.pb-t-dry {
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pb-dryping linear infinite;
+}
+.pb-e-dot {
+  fill: currentColor;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pb-ping linear infinite;
+}
+.pb-t-ms {
+  fill: var(--pb-txt3);
+  font-size: 9px; /* SVG user units */
+  letter-spacing: 0.08em;
+}
+@keyframes pb-ping {
+  0% {
+    transform: scale(2);
+  }
+  9% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes pb-dryping {
+  0% {
+    transform: scaleY(1.35);
+  }
+  8% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+/* hardware bar */
+.pb-hwbar {
+  margin-top: calc(var(--u) * 16);
+  padding: calc(var(--u) * 16) calc(var(--u) * 24);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--u) * 24);
+  flex-wrap: wrap;
+}
+.pb-hw-left {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 14);
+  flex-wrap: wrap;
+}
+.pb-hw-path {
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pb-txt2);
+}
+.pb-hw-map {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+  font-size: calc(var(--u) * 11);
+  color: var(--pb-txt2);
+}
+.pb-kchip {
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 4);
+  padding: calc(var(--u) * 2) calc(var(--u) * 7);
+  font-size: calc(var(--u) * 10);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--pb-mint);
+}
+.pb-hw-btn {
+  border: 1px solid rgba(47, 230, 168, 0.5);
+  border-radius: calc(var(--u) * 6);
+  padding: calc(var(--u) * 9) calc(var(--u) * 18);
+  flex: none;
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--pb-mint);
+  transition: background 0.15s ease;
+}
+.pb-hw-btn:hover {
+  background: rgba(47, 230, 168, 0.08);
+}
+.pb-hw-btn.pb-sent {
+  color: var(--pb-txt);
+  border-color: var(--pb-line);
+}
+
+/* ---------- macros ---------- */
+.pb-macro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--u) * 230), 1fr));
+  gap: calc(var(--u) * 16);
+}
+.pb-macro {
+  padding: calc(var(--u) * 18) calc(var(--u) * 18) calc(var(--u) * 16);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 12);
+}
+.pb-m-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  width: 100%;
+}
+.pb-m-chip {
+  border: 1px solid var(--pb-accent);
+  border-radius: calc(var(--u) * 4);
+  padding: calc(var(--u) * 2) calc(var(--u) * 7);
+  font-size: calc(var(--u) * 10);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--pb-accent);
+}
+.pb-m-name {
+  font-size: calc(var(--u) * 13);
+  font-weight: 650;
+}
+.pb-m-target {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 7);
+  font-size: calc(var(--u) * 11);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pb-txt2);
+}
+.pb-t-dot {
+  width: calc(var(--u) * 5);
+  height: calc(var(--u) * 5);
+  border-radius: 50%;
+  background: var(--pb-accent);
+  flex: none;
+}
+.pb-m-rows {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+.pb-m-mapped {
+  color: var(--pb-accent);
+  font-weight: 600;
+}
+.pb-macro.pb-dormant .pb-m-chip {
+  border-color: var(--pb-line);
+  color: var(--pb-txt3);
+}
+.pb-macro.pb-dormant .pb-m-name {
+  color: var(--pb-txt3);
+  font-weight: 500;
+}
+.pb-macro.pb-dormant .pb-m-target {
+  color: var(--pb-txt3);
+}
+.pb-macro.pb-dormant .pb-m-target .pb-t-dot {
+  background: #33363e;
+}
+
+/* ---------- footer ---------- */
+.pb-footer {
+  padding: calc(var(--u) * 18) calc(var(--u) * 32) calc(var(--u) * 26);
+  text-align: center;
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--pb-txt3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pb-root,
+  .pb-root *,
+  .pb-root *::before,
+  .pb-root *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion kill-switch must beat every animation rule (per the reference spec) */
+    animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion kill-switch must beat every transition rule (per the reference spec) */
+    transition: none !important;
+  }
+}

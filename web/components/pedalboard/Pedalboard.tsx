@@ -1,0 +1,123 @@
+"use client";
+
+import { Fragment, type ReactNode, useState } from "react";
+import { BusCard } from "@/components/pedalboard/BusCard";
+import { ChorusWaveViz } from "@/components/pedalboard/ChorusWaveViz";
+import { DelayTailViz } from "@/components/pedalboard/DelayTailViz";
+import { DriveCurveViz } from "@/components/pedalboard/DriveCurveViz";
+import { PedalStrip } from "@/components/pedalboard/PedalStrip";
+import { RoleLegend } from "@/components/pedalboard/RoleLegend";
+import { SrcNode } from "@/components/pedalboard/SrcNode";
+import { TremOptoViz } from "@/components/pedalboard/TremOptoViz";
+import { Wire } from "@/components/pedalboard/Wire";
+import { CHAIN, type PedalSpec } from "@/lib/pedalboard/model";
+
+export interface PedalboardProps {
+  /** A strip asked to open in the editor (click / Enter / Space). */
+  onOpenPedal?: (pedalId: string) => void;
+  /**
+   * Controlled param values keyed by param id ("delay.time_ms" …); ids not in
+   * the map fall back to the spec defaults. Omit for the static mock values.
+   */
+  values?: Record<string, number>;
+  /** Controlled bypass map keyed by pedal id — pair with onToggle. */
+  enabled?: Record<string, boolean>;
+  /** Fired with the pedal id on stomp instead of flipping internal state. */
+  onToggle?: (pedalId: string) => void;
+}
+
+/**
+ * The reference's opening state: trem and delay start bypassed/parked.
+ * Exported so the playground page can seed its shared controlled state.
+ */
+export const INITIAL_ENABLED: Record<string, boolean> = {
+  drive: true,
+  chorus: true,
+  trem: false,
+  delay: false,
+};
+
+function pedalValues(pedal: PedalSpec, overrides?: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(pedal.params.map((p) => [p.id, overrides?.[p.id] ?? p.defaultValue]));
+}
+
+/** Each pedal's one personal module, driven by its true param values. */
+function signatureViz(pedal: PedalSpec, values: Record<string, number>, on: boolean): ReactNode {
+  switch (pedal.id) {
+    case "drive":
+      return <DriveCurveViz amount={values["drive.amount"]} />;
+    case "chorus":
+      return <ChorusWaveViz rateHz={values["chorus.rate"]} />;
+    case "trem":
+      return <TremOptoViz rateHz={values["trem.rate"]} active={on && values["trem.depth"] > 0} />;
+    case "delay":
+      return (
+        <DelayTailViz
+          timeMs={values["delay.time_ms"]}
+          feedback={values["delay.feedback"] / 100}
+          live={on}
+        />
+      );
+    default:
+      return null;
+  }
+}
+
+/**
+ * The pedalboard screen (reference screen 1): source node → wires → the four
+ * pedal strips with their signature modules → stereo bus, all on one shared
+ * grid so every role row lines up, plus the rail hint and the role legend.
+ * Standalone it owns its stomp state and shows the static mock values; the
+ * playground page passes values/enabled/onToggle so the editor screen and the
+ * board share one source of truth.
+ */
+export function Pedalboard({ onOpenPedal, values, enabled, onToggle }: PedalboardProps) {
+  const [localEnabled, setLocalEnabled] = useState(INITIAL_ENABLED);
+  const enabledMap = enabled ?? localEnabled;
+  const toggle = (pedalId: string) => {
+    if (onToggle) onToggle(pedalId);
+    else setLocalEnabled((prev) => ({ ...prev, [pedalId]: !(prev[pedalId] ?? true) }));
+  };
+  return (
+    <>
+      <div className="pb-screen-head">
+        <div>
+          <div className="pb-kicker">Signal chain</div>
+          <div className="pb-sub">Post-synth chain · 4 pedals · stereo bus</div>
+        </div>
+        <div className="pb-meta pb-num">48 kHz · 128 smp · CPU 3.1%</div>
+      </div>
+      <div className="pb-railwrap">
+        <div className="pb-rail">
+          <SrcNode />
+          <Wire />
+          {CHAIN.map((pedal) => {
+            const vals = pedalValues(pedal, values);
+            const on = enabledMap[pedal.id] ?? true;
+            return (
+              <Fragment key={pedal.id}>
+                <PedalStrip
+                  pedal={pedal}
+                  values={vals}
+                  enabled={on}
+                  onStomp={() => toggle(pedal.id)}
+                  onOpen={() => onOpenPedal?.(pedal.id)}
+                  extra={signatureViz(pedal, vals, on)}
+                  labelOff={pedal.id === "delay" ? "Parked" : undefined}
+                  miniSizes={pedal.id === "delay" ? { "delay.time_ms": 44 } : undefined}
+                />
+                <Wire />
+              </Fragment>
+            );
+          })}
+          <BusCard />
+        </div>
+      </div>
+      <p className="pb-rail-hint">
+        Click a pedal to open it in the editor · stomp switches toggle bypass · parked pedals keep
+        their settings
+      </p>
+      <RoleLegend />
+    </>
+  );
+}
