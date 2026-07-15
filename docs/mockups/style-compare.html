@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>polyclav — pedalboard UI style studies</title>
+<style>
+  :root { --bg:#101114; --card:#1a1c20; --fg:#e7e8ea; --muted:#9a9aa2; --border:#32353c; --accent:#6b8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 40px 24px 64px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.sub { color: var(--muted); margin: 0 0 28px; font-size: 13.5px; }
+  a.card { display:block; text-decoration:none; color:inherit; background:var(--card); border:1px solid var(--border);
+           border-radius:12px; padding:18px 22px; margin-bottom:14px; transition:border-color .15s; }
+  a.card:hover { border-color: var(--accent); }
+  .card h2 { margin:0 0 4px; font-size:16px; display:flex; align-items:baseline; gap:10px; }
+  .card h2 .tag { font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  .card p { margin:0; color:var(--muted); font-size:13.5px; }
+  .swatches { display:inline-flex; gap:5px; margin-left:auto; }
+  .sw { width:14px; height:14px; border-radius:4px; border:1px solid rgba(255,255,255,.15); }
+  .note { margin-top:26px; font-size:12.5px; color:var(--muted); border-top:1px solid var(--border); padding-top:14px; }
+  .note code { background:var(--card); border:1px solid var(--border); border-radius:4px; padding:1px 5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pedalboard UI — art-direction studies</h1>
+  <p class="sub">Three competing styles of the same three screens (Pedalboard · Pedal editor · Macros), same data, same interactions — pick a direction. Research behind them: <code>docs/PLUGIN_UI_RESEARCH.md</code>.</p>
+
+  <a class="card" href="pedalboard-style-a-refined-hybrid.html">
+    <h2>Style A — Refined Hybrid <span class="tag">research lean</span>
+      <span class="swatches"><span class="sw" style="background:#3a7d44"></span><span class="sw" style="background:#2f6fd8"></span><span class="sw" style="background:#e8e0c8"></span><span class="sw" style="background:#1f4d3a"></span></span>
+    </h2>
+    <p>Believable pedal enclosures in their hardware-archetype colors (TS green, CE-2 blue, blackface cream, Carbon-Copy green) on quiet flat-dark chrome. Soundtoys/UAD school — depth without screws or wood.</p>
+  </a>
+
+  <a class="card" href="pedalboard-style-b-flat-modern.html">
+    <h2>Style B — Flat Modern
+      <span class="swatches"><span class="sw" style="background:#ffb454"></span><span class="sw" style="background:#4cc9f0"></span><span class="sw" style="background:#b18cff"></span><span class="sw" style="background:#2fe6a8"></span></span>
+    </h2>
+    <p>Near-black canvas, thin-line arc knobs, one vivid accent hue per pedal, live motion driven by the real parameter values. Vital/Strymon-plugin/FabFilter school.</p>
+  </a>
+
+  <a class="card" href="pedalboard-style-c-hardware.html">
+    <h2>Style C — Hardware Authentic
+      <span class="swatches"><span class="sw" style="background:#4a5c3a"></span><span class="sw" style="background:#31517e"></span><span class="sw" style="background:#d9cfb4"></span><span class="sw" style="background:#22362c"></span></span>
+    </h2>
+    <p>Full skeuomorphism: pedals with screws, knurled knobs, and silk-screen type sitting on a textured board joined by sagging patch cables; macros as a brushed-aluminum rack unit. Cherry Audio/AmpliTube school.</p>
+  </a>
+
+  <a class="card" href="pedalboard-ui.html">
+    <h2>Baseline — v1 dashboard style <span class="tag">for contrast</span></h2>
+    <p>The original plain mockup in the current app's design language (docs/PEDALBOARD_UI.md). Kept as the control sample.</p>
+  </a>
+
+  <p class="note">All files are self-contained — open them straight from disk. Knobs in the editor/macros screens respond to vertical drag and double-click-to-reset in every style, so the comparison covers feel, not just looks.</p>
+</main>
+</body>
+</html>
