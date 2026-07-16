@@ -1,271 +1,172 @@
 "use client";
 
-import { useEffect, useReducer, useRef, useState } from "react";
-import { ConfigCard } from "@/components/ConfigCard";
-import { MasteringCard } from "@/components/MasteringCard";
-import { MIDIDevicesCard } from "@/components/MIDIDevicesCard";
-import { ParamsCard } from "@/components/ParamsCard";
-import { PatchGrid } from "@/components/PatchGrid";
-import { Section } from "@/components/Section";
-import { SynthCard } from "@/components/SynthCard";
-import { TransportCard } from "@/components/TransportCard";
-import { VelocityCard } from "@/components/VelocityCard";
-import { api } from "@/lib/api";
-import { applySynthEvent } from "@/lib/synthMerge";
-import type {
-  Clip,
-  DeviceEvent,
-  Devices,
-  MasteringEvent,
-  NoteEvent,
-  ParamsEvent,
-  Patch,
-  PatchEvent,
-  PlayerState,
-  Status,
-  Synth,
-  SynthEvent,
-  VelocityEvent,
-} from "@/lib/types";
-import { useSSE } from "@/lib/useSSE";
+// The pedalboard design system's stylesheets (scoped under .pb-root). Order
+// matters: the foundation first, then each builder's .extra.css.
+import "@/components/pedalboard/pedalboard.css";
+import "@/components/pedalboard/chrome.extra.css";
+import "@/components/pedalboard/composer.extra.css";
+import "@/components/pedalboard/synth.extra.css";
 
-// ---- dashboard state ----------------------------------------------------
-//
-// One reducer over the SSE stream: the snapshot event seeds everything,
-// deltas patch individual slices. Slider components keep their own
-// short-lived local state for the drag guard, so the reducer can apply
-// every server echo unconditionally.
+import { useEffect, useRef, useState } from "react";
+import { PatchBar } from "@/components/pedalboard/PatchBar";
+import { Pedalboard } from "@/components/pedalboard/Pedalboard";
+import { PedalEditor } from "@/components/pedalboard/PedalEditor";
+import { ScaleControl, useUiScale } from "@/components/pedalboard/ScaleControl";
+import { SynthScreen } from "@/components/SynthScreen";
+import { SystemScreen } from "@/components/SystemScreen";
+import { padColor } from "@/lib/padColors";
+import { CHAIN, type PatchSpec, type PatchType } from "@/lib/pedalboard/model";
+import { usePolyclav } from "./usePolyclav";
 
-interface Dash {
-  version: string;
-  devices: Devices;
-  patches: Patch[];
-  current: string;
-  volume?: number;
-  reverb?: number;
-  compressor?: number;
-  cutoffPos?: number;
-  cutoffHz?: number;
-  masteringComp?: number;
-  limiterCeilingDb?: number;
-  synth: Synth | null;
-  velocityLabel: string;
-  player: PlayerState | null;
-  hasPlayer: boolean;
-}
-
-const initialDash: Dash = {
-  version: "",
-  devices: { launchkey: "unknown", xr18: "unknown" },
-  patches: [],
-  current: "",
-  synth: null,
-  velocityLabel: "",
-  player: null,
-  hasPlayer: false,
-};
-
-type Action =
-  | { t: "snapshot"; s: Status }
-  | { t: "params"; d: ParamsEvent }
-  | { t: "patch"; d: PatchEvent }
-  | { t: "synth"; d: SynthEvent }
-  | { t: "mastering"; d: MasteringEvent }
-  | { t: "player"; d: PlayerState }
-  | { t: "velocity"; label: string }
-  | { t: "device"; d: DeviceEvent };
-
-function reducer(dash: Dash, a: Action): Dash {
-  switch (a.t) {
-    case "snapshot": {
-      const p = a.s.params;
-      return {
-        version: a.s.version,
-        devices: a.s.devices,
-        patches: a.s.patches ?? [],
-        current: p.patch,
-        volume: p.volume,
-        reverb: p.reverb,
-        compressor: p.compressor,
-        cutoffPos: p.cutoff_pos,
-        cutoffHz: p.cutoff_hz,
-        masteringComp: p.mastering_comp,
-        limiterCeilingDb: p.limiter_ceiling_db,
-        synth: p.synth ?? null,
-        velocityLabel: p.velocity_curve || dash.velocityLabel,
-        player: a.s.player,
-        hasPlayer: a.s.player !== null && a.s.player !== undefined,
-      };
-    }
-    case "params": {
-      if (a.d.field === "cutoff") {
-        return {
-          ...dash,
-          cutoffPos: typeof a.d.pos === "number" ? a.d.pos : dash.cutoffPos,
-          cutoffHz: typeof a.d.hz === "number" ? a.d.hz : dash.cutoffHz,
-        };
-      }
-      if (typeof a.d.value !== "number") return dash;
-      switch (a.d.field) {
-        case "volume":
-          return { ...dash, volume: a.d.value };
-        case "reverb":
-          return { ...dash, reverb: a.d.value };
-        case "compressor":
-          return { ...dash, compressor: a.d.value };
-        default:
-          return dash;
-      }
-    }
-    case "patch": {
-      const next: Dash = { ...dash, current: a.d.name };
-      if (typeof a.d.volume === "number") next.volume = a.d.volume;
-      if (typeof a.d.reverb === "number") next.reverb = a.d.reverb;
-      if (typeof a.d.compressor === "number") next.compressor = a.d.compressor;
-      if (typeof a.d.cutoff_pos === "number") next.cutoffPos = a.d.cutoff_pos;
-      if (typeof a.d.cutoff_hz === "number") next.cutoffHz = a.d.cutoff_hz;
-      if (a.d.synth) next.synth = a.d.synth;
-      return next;
-    }
-    case "synth":
-      return dash.synth ? { ...dash, synth: applySynthEvent(dash.synth, a.d) } : dash;
-    case "mastering":
-      return {
-        ...dash,
-        masteringComp: typeof a.d.comp_amount === "number" ? a.d.comp_amount : dash.masteringComp,
-        limiterCeilingDb:
-          typeof a.d.limiter_ceiling_db === "number"
-            ? a.d.limiter_ceiling_db
-            : dash.limiterCeilingDb,
-      };
-    case "player":
-      return { ...dash, player: a.d, hasPlayer: true };
-    case "velocity":
-      return { ...dash, velocityLabel: a.label };
-    case "device": {
-      if (a.d.device === "launchkey" || a.d.device === "xr18") {
-        return {
-          ...dash,
-          devices: { ...dash.devices, [a.d.device]: a.d.state ?? "unknown" },
-        };
-      }
-      return {
-        ...dash,
-        devices: {
-          launchkey: a.d.launchkey ?? dash.devices.launchkey,
-          xr18: a.d.xr18 ?? dash.devices.xr18,
-        },
-      };
-    }
-  }
-}
-
-// ---- the page --------------------------------------------------------------
+type Tab = "board" | "synth" | "system";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "board", label: "Pedalboard" },
+  { id: "synth", label: "Synth" },
+  { id: "system", label: "System" },
+];
 
 export default function Page() {
-  const [dash, dispatch] = useReducer(reducer, initialDash);
-  const [clips, setClips] = useState<Clip[] | null>(null);
-  const clipsRequested = useRef(false);
-  // The velocity canvas registers its dot-plotter here; SSE "note"
-  // events bypass the reducer (they're a visualization, not state).
-  const noteSink = useRef<((n: NoteEvent) => void) | null>(null);
+  const pc = usePolyclav();
+  const { state } = pc;
+  const ui = useUiScale();
+  const [tab, setTab] = useState<Tab>("board");
+  const [editId, setEditId] = useState<string | null>(null);
 
-  const connected = useSSE("/api/events", {
-    snapshot: (d) => dispatch({ t: "snapshot", s: d as Status }),
-    params: (d) => dispatch({ t: "params", d: d as ParamsEvent }),
-    patch: (d) => dispatch({ t: "patch", d: d as PatchEvent }),
-    synth: (d) => dispatch({ t: "synth", d: d as SynthEvent }),
-    mastering: (d) => dispatch({ t: "mastering", d: d as MasteringEvent }),
-    player: (d) => dispatch({ t: "player", d: d as PlayerState }),
-    velocity: (d) => {
-      const c = (d as VelocityEvent).curve;
-      if (typeof c === "string") dispatch({ t: "velocity", label: c });
-    },
-    note: (d) => {
-      const n = d as NoteEvent;
-      if (typeof n.in === "number" && typeof n.out === "number") noteSink.current?.(n);
-    },
-    device: (d) => dispatch({ t: "device", d: d as DeviceEvent }),
-  });
-
-  // Clip list, fetched once the snapshot says a player is wired. A
-  // failed fetch leaves clips null and the transport hidden (the daemon
-  // degrades the same way).
+  // The A−/A+ control resizes the whole system via --pb-scale on .pb-root.
+  const rootRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (dash.hasPlayer && !clipsRequested.current) {
-      clipsRequested.current = true;
-      api.clips().then(setClips);
-    }
-  }, [dash.hasPlayer]);
+    rootRef.current?.style.setProperty("--pb-scale", String(ui.scale));
+  }, [ui.scale]);
 
-  const currentPatch = dash.patches.find((p) => p.name === dash.current);
+  const currentPatch = state.patches.find((p) => p.name === state.current);
   const isNative = currentPatch?.type === "native";
-  const currentDisplay = currentPatch
-    ? currentPatch.display || currentPatch.name
-    : dash.current || "—";
+  const patchName = currentPatch?.display || currentPatch?.name || state.current || "—";
+  const patchSpecs: PatchSpec[] = state.patches.map((p) => ({
+    name: p.display || p.name,
+    type: p.type as PatchType,
+    color: padColor(p.pad_color),
+  }));
+  const activeIx = state.patches.findIndex((p) => p.name === state.current);
+  const editPedal = editId ? CHAIN.find((p) => p.id === editId) : undefined;
+
+  const goBoard = () => {
+    setTab("board");
+    setEditId(null);
+  };
+  const resetPedal = (pedalId: string) => {
+    const pedal = CHAIN.find((p) => p.id === pedalId);
+    for (const param of pedal?.params ?? []) pc.setParam(param.id, param.defaultValue);
+  };
+  const screenClass = (active: boolean) => (active ? "pb-screen pb-active" : "pb-screen");
 
   return (
-    <>
-      <header>
-        <span className={`dot${connected ? " ok" : ""}`} title="SSE connection" />
-        <h1>polyclav</h1>
-        <span className="chip">
-          launchkey <b>{dash.devices.launchkey}</b>
-        </span>
-        <span className="chip">
-          xr18 <b>{dash.devices.xr18}</b>
-        </span>
-        <span className="chip">
-          patch <b>{currentDisplay}</b>
-        </span>
-        <span className="spacer" />
-        <span className="version">{dash.version}</span>
+    <div className="pb-root" ref={rootRef}>
+      <header className="pb-header">
+        <div className="pb-brand">
+          <div className="pb-chain-glyph" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+          <span className="pb-wordmark">polyclav</span>
+          <span
+            className={`pb-chip${pc.connected ? " pb-live" : ""}`}
+            title="Live daemon connection"
+          >
+            {pc.connected ? "live" : "offline"}
+          </span>
+        </div>
+        <div className="pb-head-right">
+          <div className="pb-head-chips">
+            <span className="pb-chip">launchkey {state.devices.launchkey}</span>
+            <span className="pb-chip">xr18 {state.devices.xr18}</span>
+          </div>
+          <nav className="pb-tabs" aria-label="Screens">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={tab === t.id ? "pb-tab pb-active" : "pb-tab"}
+                aria-pressed={tab === t.id}
+                onClick={() => {
+                  setTab(t.id);
+                  if (t.id === "board") setEditId(null);
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+            <a className="pb-tab" href="/app/midi-probe/">
+              MIDI Probe
+            </a>
+          </nav>
+        </div>
       </header>
-      <main>
-        <Section title="Patches" demoClip="arp" player={dash.player}>
-          <PatchGrid patches={dash.patches} current={dash.current || null} />
-        </Section>
-        <Section title="Patch params" demoClip="arp" player={dash.player}>
-          <ParamsCard
-            volume={dash.volume}
-            reverb={dash.reverb}
-            compressor={dash.compressor}
-            cutoffPos={dash.cutoffPos}
-            cutoffHz={dash.cutoffHz}
-            isNative={isNative}
-          />
-        </Section>
-        {isNative && dash.synth ? (
-          <Section title="Native synth" demoClip="bass-riff" player={dash.player}>
-            <SynthCard synth={dash.synth} />
-          </Section>
-        ) : null}
-        <Section title="Mastering" demoClip="sustain-chord" player={dash.player}>
-          <MasteringCard compAmount={dash.masteringComp} limiterCeilingDb={dash.limiterCeilingDb} />
-        </Section>
-        <Section title="Velocity" demoClip="vel-ramp" player={dash.player}>
-          <VelocityCard
-            active={dash.velocityLabel}
-            onActive={(label) => dispatch({ t: "velocity", label })}
-            noteSink={noteSink}
-          />
-        </Section>
-        <Section title="MIDI devices">
-          <MIDIDevicesCard />
-        </Section>
-        {dash.player && clips && clips.length > 0 ? (
-          <Section title="Audition">
-            <TransportCard
-              clips={clips}
-              player={dash.player}
-              onPlayer={(p) => dispatch({ t: "player", d: p })}
+
+      <div className="pb-patchrow">
+        <PatchBar
+          patches={patchSpecs}
+          activeIx={activeIx < 0 ? -1 : activeIx}
+          onSelect={(ix) => pc.selectPatch(state.patches[ix].name)}
+        />
+      </div>
+
+      <main className="pb-main">
+        <section className={screenClass(tab === "board")}>
+          {editPedal ? (
+            <PedalEditor
+              pedal={editPedal}
+              values={state.chainValues}
+              enabled={state.enabled[editPedal.id] ?? true}
+              onChange={pc.setParam}
+              onStomp={() => pc.togglePedal(editPedal.id)}
+              onReset={() => resetPedal(editPedal.id)}
+              onBack={goBoard}
             />
-          </Section>
-        ) : null}
-        <Section title="Config" wide>
-          <ConfigCard />
-        </Section>
+          ) : (
+            <Pedalboard
+              values={state.chainValues}
+              enabled={state.enabled}
+              order={state.order}
+              onToggle={pc.togglePedal}
+              onParamChange={pc.setParam}
+              onReorder={pc.reorder}
+              onOpenPedal={(id) => {
+                setEditId(id);
+                setTab("board");
+              }}
+              meta={pc.connected ? `${patchName} · live` : "offline · local"}
+            />
+          )}
+        </section>
+
+        <section className={screenClass(tab === "synth")}>
+          <SynthScreen
+            synth={state.synth}
+            isNative={isNative}
+            cutoffPos={state.cutoffPos}
+            cutoffHz={state.cutoffHz}
+            onCutoff={pc.setCutoff}
+            patchName={patchName}
+          />
+        </section>
+
+        <section className={screenClass(tab === "system")}>
+          <SystemScreen
+            velocityLabel={state.velocityLabel}
+            onVelocity={pc.setVelocityLabel}
+            noteSink={pc.noteSink}
+            clips={pc.clips}
+            player={state.player}
+            onPlayer={pc.setPlayer}
+          />
+        </section>
       </main>
-    </>
+
+      <ScaleControl scale={ui.scale} onScale={ui.set} />
+
+      <footer className="pb-footer">polyclav · flat modern · {state.version || "—"}</footer>
+    </div>
   );
 }

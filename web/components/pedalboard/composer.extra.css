@@ -94,6 +94,19 @@ body:has(.pb-root) > .topnav {
   height: auto;
   max-height: calc(var(--u) * 120);
 }
+/* Same paint contract as the board's .pb-viz: stroked curves, accent fills. */
+.pb-root .pb-editor-viz path,
+.pb-root .pb-editor-viz line {
+  stroke: currentColor;
+  fill: none;
+}
+.pb-root .pb-editor-viz .pb-fillpath {
+  fill: currentColor;
+  stroke: none;
+}
+.pb-root .pb-editor-viz .pb-axis {
+  stroke: var(--pb-line-soft);
+}
 .pb-root .pb-hero.pb-bypassed .pb-editor-viz {
   color: var(--pb-off);
 }
@@ -135,4 +148,54 @@ body:has(.pb-root) > .topnav {
   font-size: calc(var(--u) * 11);
   color: var(--pb-txt3);
   letter-spacing: 0.06em;
+}
+
+/* ---------- legacy-card bridge ----------
+   The Synth + System screens reuse the shipped dashboard cards (SynthCard,
+   VelocityCard, MIDIDevicesCard, TransportCard, ConfigCard), which are styled
+   by app/globals.css tokens. Pin those tokens to the dark pedalboard palette
+   inside .pb-root so the cards read on-theme regardless of the browser's
+   light/dark preference. */
+.pb-root {
+  --bg: var(--pb-bg);
+  --card: var(--pb-card-hi);
+  --fg: var(--pb-txt);
+  --muted: var(--pb-txt2);
+  --border: var(--pb-line);
+  --accent: var(--pb-cyan);
+  --ok: var(--pb-mint);
+  --bad: #e05a56;
+}
+/* The pb-root leak-shield neutralises bare <h3>; restore the card sub-header
+   look for the reused cards living inside a .pb-panel. */
+.pb-root .pb-panel h3 {
+  font-size: calc(var(--u) * 11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pb-txt3);
+  border-top: 1px solid var(--pb-line);
+  padding-top: calc(var(--u) * 10);
+  margin-top: calc(var(--u) * 12);
+  font-weight: 650;
+}
+.pb-root .pb-panel h3:first-child {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+/* The reused cards' own <section> chrome is shielded away by pb-root; the
+   .pb-panel wrapper supplies the card surface, so let their inner content flow. */
+.pb-root .pb-panel .row,
+.pb-root .pb-panel .oscrow,
+.pb-root .pb-panel .btnrow,
+.pb-root .pb-panel .transport-controls {
+  font-size: calc(var(--u) * 13);
+}
+
+/* Header device/status chips cluster. */
+.pb-root .pb-head-chips {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+  flex-wrap: wrap;
 }

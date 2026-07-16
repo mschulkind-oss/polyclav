@@ -29,8 +29,9 @@ const unpct = (v: number) => v * 100; // 0..1 -> display %
  * comp.attack, reverb.decay, reverb.tone.
  */
 export const PARAM_WIRING: Record<string, ParamWire> = {
-  // Drive pedal — the post-synth DRIVE stage, live today via /api/params.
-  "drive.amount": { endpoint: "params", field: "drive_pedal", toEngine: pct, fromEngine: unpct },
+  // Drive pedal — via /api/chain so its stomp parks the value (drive.amount
+  // aliases the drive_pedal atomic + state key in the engine registry).
+  "drive.amount": { endpoint: "chain", field: "drive.amount", toEngine: pct, fromEngine: unpct },
   // Chorus / tremolo / delay -> /api/chain (engine ids differ from the UI ids).
   "chorus.rate": { endpoint: "chain", field: "chorus.rate_hz", toEngine: same, fromEngine: same },
   "chorus.depth": { endpoint: "chain", field: "chorus.depth", toEngine: pct, fromEngine: unpct },
