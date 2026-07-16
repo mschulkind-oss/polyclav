@@ -16,8 +16,15 @@
 > pedals in the chosen order (the master tail stays fixed). Order is
 > daemon-persisted (`state.toml` `pedal_order`), not client-side.
 > (`docs/mockups/pedalboard-style-b-flat-modern.html` is the
-> art-direction reference.) Still open: Phase 2 (Launchkey Categories ×
-> Pages, `nav`/`hwmap` sync) and Phase 3 (macros). Original motivation:
+> art-direction reference.) The **web halves of Phase 2 and 3 also
+> shipped**: a **Macros** screen (8 daemon-persisted slots — assign any
+> board control, name it, set a percent-of-range, sweep it live;
+> `GET`/`PUT /api/macros` + SSE `macros`), and a read-only **Hardware
+> map** screen (`GET /api/hwmap` from the live pages registry — the
+> self-updating manual). Still open: the DEVICE half of Phase 2 — the
+> Launchkey Categories × Pages navigation itself (`docs/LAUNCHKEY_NAVIGATION.md`,
+> still a proposal), and with it live `nav` follow + `POST /api/nav` +
+> the MACROS/FX device categories. Original motivation:
 > three of the four pedals (`docs/VISION.md` §1b/1c/1d) had shipped with
 > **zero interface** — chorus, tremolo, and the analog delay existed in
 > the Rust DSP chain with working FFI and Go wrappers, and nothing
