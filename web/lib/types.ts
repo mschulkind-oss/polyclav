@@ -104,6 +104,40 @@ export interface ChainEvent {
   order?: string[];
 }
 
+// ---- /api/macros (8 macro-slot assignments; SSE "macros") ---------------
+
+/** One macro slot assignment — the daemon stores these; the web drives the
+ * target board param live. min/max are in the target's display units. */
+export interface Macro {
+  slot: number; // 1..8
+  target: string; // board param id (e.g. "delay.mix"); "" = unassigned
+  name: string;
+  min: number;
+  max: number;
+}
+
+/** "macros": full assignment list on any change. */
+export interface MacrosEvent {
+  macros?: Macro[];
+}
+
+// ---- /api/hwmap (Launchkey knob-page reference; read-only) --------------
+
+/** One knob page: its name + 8 slot labels ("" = an unbound knob). */
+export interface HwPage {
+  name: string;
+  knobs: string[];
+}
+
+export interface HwMap {
+  pages: HwPage[];
+  /** Human descriptions of the non-knob surface (pad row, transport). */
+  pads: string;
+  transport: string;
+  /** Note about surfaces not yet wired (Categories × Pages nav). */
+  note: string;
+}
+
 // ---- SSE event payloads (controls hub Change.Data) ----------------------
 
 /** "params": {field:"volume"|"reverb"|"compressor", value} or {field:"cutoff", pos, hz}. */

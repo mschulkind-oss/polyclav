@@ -222,3 +222,102 @@ body:has(.pb-root) > .topnav {
   gap: calc(var(--u) * 8);
   flex-wrap: wrap;
 }
+
+/* ---------- macros screen (editable assignments) ---------- */
+.pb-root .pb-m-nameinput {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--pb-line);
+  color: var(--pb-txt);
+  font: inherit;
+  font-size: calc(var(--u) * 13);
+  font-weight: 650;
+  padding: calc(var(--u) * 2) 0;
+}
+.pb-root .pb-m-nameinput:focus {
+  outline: none;
+  border-bottom-color: var(--pb-accent);
+}
+.pb-root .pb-m-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--pb-card);
+  color: var(--pb-txt2);
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 5);
+  padding: calc(var(--u) * 4) calc(var(--u) * 6);
+  font: inherit;
+  font-size: calc(var(--u) * 11);
+  cursor: pointer;
+}
+.pb-root .pb-m-range {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 4);
+  color: var(--pb-txt3);
+}
+.pb-root .pb-m-num {
+  width: calc(var(--u) * 42);
+  background: var(--pb-card);
+  color: var(--pb-txt);
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 4);
+  padding: calc(var(--u) * 2) calc(var(--u) * 4);
+  font: inherit;
+  font-size: calc(var(--u) * 11);
+  text-align: right;
+}
+
+/* ---------- hardware map screen ---------- */
+.pb-root .pb-hwgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--u) * 220), 1fr));
+  gap: calc(var(--u) * 16);
+  margin-bottom: calc(var(--u) * 16);
+}
+.pb-root .pb-hwknobs {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+.pb-root .pb-hwknob {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  padding: calc(var(--u) * 5) 0;
+  border-bottom: 1px solid var(--pb-line-soft);
+  font-size: calc(var(--u) * 12);
+}
+.pb-root .pb-hwknob:last-child {
+  border-bottom: 0;
+}
+.pb-root .pb-hwk-n {
+  width: calc(var(--u) * 26);
+  color: var(--pb-txt3);
+  font-size: calc(var(--u) * 10);
+  letter-spacing: 0.08em;
+  flex: none;
+}
+.pb-root .pb-hwk-l {
+  color: var(--pb-txt);
+}
+.pb-root .pb-hwknob-empty .pb-hwk-l {
+  color: var(--pb-txt3);
+}
+.pb-root .pb-hw-line {
+  display: flex;
+  gap: calc(var(--u) * 10);
+  margin: calc(var(--u) * 6) 0;
+  font-size: calc(var(--u) * 12);
+  color: var(--pb-txt2);
+}
+.pb-root .pb-hw-k {
+  width: calc(var(--u) * 76);
+  color: var(--pb-txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: calc(var(--u) * 10);
+  flex: none;
+}

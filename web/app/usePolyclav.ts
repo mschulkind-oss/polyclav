@@ -21,6 +21,8 @@ import type {
   Clip,
   DeviceEvent,
   Devices,
+  Macro,
+  MacrosEvent,
   MasteringEvent,
   NoteEvent,
   ParamsEvent,
@@ -67,6 +69,8 @@ export interface PolyclavState {
   enabled: Record<string, boolean>;
   /** Pedal display order (ids). */
   order: string[];
+  /** Macro-slot assignments (daemon-persisted). */
+  macros: Macro[];
 }
 
 const initialState: PolyclavState = {
@@ -81,6 +85,7 @@ const initialState: PolyclavState = {
   chainValues: defaultChainValues(),
   enabled: INITIAL_ENABLED,
   order: DEFAULT_PEDAL_ORDER,
+  macros: [],
 };
 
 type Action =
@@ -95,6 +100,7 @@ type Action =
   | { t: "synth"; d: SynthEvent }
   | { t: "player"; d: PlayerState }
   | { t: "velocity"; label: string }
+  | { t: "macros"; macros: Macro[] }
   | { t: "device"; d: DeviceEvent };
 
 /**
@@ -190,6 +196,8 @@ function reducer(state: PolyclavState, a: Action): PolyclavState {
       return { ...state, player: a.d, hasPlayer: true };
     case "velocity":
       return { ...state, velocityLabel: a.label };
+    case "macros":
+      return { ...state, macros: a.macros };
     case "device": {
       if (a.d.device === "launchkey" || a.d.device === "xr18") {
         return { ...state, devices: { ...state.devices, [a.d.device]: a.d.state ?? "unknown" } };
@@ -224,6 +232,8 @@ export interface Polyclav {
   setVelocityLabel: (label: string) => void;
   /** Reflect a player-state change (from TransportCard). */
   setPlayer: (p: PlayerState) => void;
+  /** Replace the macro-slot assignments (persisted to the daemon). */
+  setMacros: (macros: Macro[]) => void;
 }
 
 /**
@@ -407,6 +417,10 @@ export function usePolyclav(): Polyclav {
       const c = (d as VelocityEvent).curve;
       if (typeof c === "string") dispatch({ t: "velocity", label: c });
     },
+    macros: (d) => {
+      const m = (d as MacrosEvent).macros;
+      if (Array.isArray(m)) dispatch({ t: "macros", macros: m });
+    },
     note: (d) => {
       const n = d as NoteEvent;
       if (typeof n.in === "number" && typeof n.out === "number") noteSink.current?.(n);
@@ -427,6 +441,18 @@ export function usePolyclav(): Polyclav {
       alive = false;
     };
   }, [connected, guardedIds]);
+
+  // Macro-slot assignments, fetched on connect; SSE "macros" keeps them fresh.
+  useEffect(() => {
+    if (!connected) return;
+    let alive = true;
+    api.macros().then((m) => {
+      if (alive && m) dispatch({ t: "macros", macros: m });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [connected]);
 
   // Clip list, fetched once the snapshot reports a player.
   useEffect(() => {
@@ -496,6 +522,11 @@ export function usePolyclav(): Polyclav {
   const setVelocityLabel = useCallback((label: string) => dispatch({ t: "velocity", label }), []);
   const setPlayer = useCallback((p: PlayerState) => dispatch({ t: "player", d: p }), []);
 
+  const setMacros = useCallback((macros: Macro[]) => {
+    dispatch({ t: "macros", macros }); // optimistic; the daemon echoes it back
+    api.putMacros(macros);
+  }, []);
+
   return {
     connected,
     state,
@@ -508,5 +539,6 @@ export function usePolyclav(): Polyclav {
     setCutoff,
     setVelocityLabel,
     setPlayer,
+    setMacros,
   };
 }

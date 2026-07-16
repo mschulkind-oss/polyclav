@@ -6,7 +6,9 @@
 import type {
   ChainState,
   Clip,
+  HwMap,
   IdentityResult,
+  Macro,
   MIDIDevicesResponse,
   PlayerState,
   ProbePorts,
@@ -73,6 +75,15 @@ export const api = {
    * {"order":["delay","chorus",...]}. Engine units; see lib/pedalboard/wiring.ts. */
   patchChain: (body: Record<string, number | boolean | string[]>): Promise<Response | null> =>
     request("PATCH", "/api/chain", body),
+
+  /** GET /api/macros — the stored (assigned) macro slots; null if unavailable. */
+  macros: async (): Promise<Macro[] | null> => json<Macro[]>(await request("GET", "/api/macros")),
+
+  /** PUT /api/macros — the full set of assigned macro slots; returns the raw Response. */
+  putMacros: (macros: Macro[]): Promise<Response | null> => request("PUT", "/api/macros", macros),
+
+  /** GET /api/hwmap — the Launchkey knob-page map (read-only reference). */
+  hwmap: async (): Promise<HwMap | null> => json<HwMap>(await request("GET", "/api/hwmap")),
 
   clips: async (): Promise<Clip[] | null> => json<Clip[]>(await request("GET", "/api/clips")),
 

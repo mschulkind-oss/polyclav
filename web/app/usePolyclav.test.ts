@@ -15,6 +15,8 @@ vi.mock("@/lib/api", () => ({
   api: {
     chain: vi.fn(async () => null),
     clips: vi.fn(async () => null),
+    macros: vi.fn(async () => null),
+    putMacros: vi.fn(),
     selectPatch: vi.fn(),
     patchParams: vi.fn(),
     patchMastering: vi.fn(),

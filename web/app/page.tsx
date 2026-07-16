@@ -8,6 +8,8 @@ import "@/components/pedalboard/composer.extra.css";
 import "@/components/pedalboard/synth.extra.css";
 
 import { useEffect, useRef, useState } from "react";
+import { HardwareScreen } from "@/components/HardwareScreen";
+import { MacrosScreen } from "@/components/MacrosScreen";
 import { PatchBar } from "@/components/pedalboard/PatchBar";
 import { Pedalboard } from "@/components/pedalboard/Pedalboard";
 import { PedalEditor } from "@/components/pedalboard/PedalEditor";
@@ -18,11 +20,13 @@ import { padColor } from "@/lib/padColors";
 import { CHAIN, type PatchSpec, type PatchType } from "@/lib/pedalboard/model";
 import { usePolyclav } from "./usePolyclav";
 
-type Tab = "board" | "synth" | "system";
+type Tab = "board" | "synth" | "macros" | "system" | "hardware";
 const TABS: { id: Tab; label: string }[] = [
   { id: "board", label: "Pedalboard" },
   { id: "synth", label: "Synth" },
+  { id: "macros", label: "Macros" },
   { id: "system", label: "System" },
+  { id: "hardware", label: "Hardware" },
 ];
 
 export default function Page() {
@@ -152,6 +156,15 @@ export default function Page() {
           />
         </section>
 
+        <section className={screenClass(tab === "macros")}>
+          <MacrosScreen
+            macros={state.macros}
+            onSetMacros={pc.setMacros}
+            values={state.chainValues}
+            setParam={pc.setParam}
+          />
+        </section>
+
         <section className={screenClass(tab === "system")}>
           <SystemScreen
             velocityLabel={state.velocityLabel}
@@ -161,6 +174,10 @@ export default function Page() {
             player={state.player}
             onPlayer={pc.setPlayer}
           />
+        </section>
+
+        <section className={screenClass(tab === "hardware")}>
+          <HardwareScreen active={tab === "hardware"} />
         </section>
       </main>
 
