@@ -33,6 +33,10 @@ type Audio interface {
 	SetAnalogDelayTimeMs(float32)
 	SetAnalogDelayFeedback(float32)
 	SetAnalogDelayMix(float32)
+	// SetFxOrder reorders the post-synth FX signal path — a permutation of the
+	// six pedals packed as six 4-bit nibbles (see internal/audio.SetFxOrder and
+	// internal/controls/chain.go packFxOrder).
+	SetFxOrder(uint32)
 	SetNativeCutoffHz(float32)
 	SetMasteringCompressor(float32)
 	SetLimiterCeilingDB(float32)
@@ -483,7 +487,7 @@ func New(logger *slog.Logger, audio Audio, reg Registry, st StateStore, hub *Hub
 	if hub == nil {
 		hub = NewHub()
 	}
-	return &Controls{
+	c := &Controls{
 		logger:    logger,
 		audio:     audio,
 		reg:       reg,
@@ -492,6 +496,13 @@ func New(logger *slog.Logger, audio Audio, reg Registry, st StateStore, hub *Hub
 		cutoffPos: defaultCutoffPos,
 		synth:     defaultSynth(),
 	}
+	// Restore the persisted global FX chain order into the engine (identity
+	// when never reordered) so the DSP applies pedals in the saved order.
+	// Guarded so New tolerates the nil deps some wiring-only tests pass.
+	if audio != nil && st != nil {
+		c.audio.SetFxOrder(packFxOrder(c.pedalOrder()))
+	}
+	return c
 }
 
 // SetVolume sets the current patch's master volume to v (clamped to

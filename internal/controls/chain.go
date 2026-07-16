@@ -254,21 +254,62 @@ func (c *Controls) SetChainEnable(stage string, on bool) (bool, error) {
 	return on, nil
 }
 
-// SetPedalOrder replaces the GLOBAL chain display order (display/edit
-// only — not audible, see state.Snapshot.PedalOrder). Validates the ids
-// against the registry, persists, and publishes a "chain" change keyed
-// "order". Allowed with no patch selected (it is global).
+// fxOrderStages is the reorderable post-synth FX set, in engine slot order
+// (the index IS the fx-order slot polyclav_dsp_set_fx_order expects). It
+// includes comp and reverb — the pedalboard treats them as reorderable
+// pedals even though their params live on the bus (compressor / reverb send).
+var fxOrderStages = []string{"drive", "chorus", "tremolo", "delay", "comp", "reverb"}
+
+// fxSlot maps an fx stage id to its engine slot index (0..5).
+var fxSlot = func() map[string]int {
+	m := make(map[string]int, len(fxOrderStages))
+	for i, id := range fxOrderStages {
+		m[id] = i
+	}
+	return m
+}()
+
+// packFxOrder encodes a full permutation of fxOrderStages as the six-nibble
+// word polyclav_dsp_set_fx_order expects: the slot to apply at chain position
+// p sits in bits [4p, 4p+4).
+func packFxOrder(order []string) uint32 {
+	var packed uint32
+	for pos, id := range order {
+		packed |= uint32(fxSlot[id]) << (4 * uint(pos))
+	}
+	return packed
+}
+
+// validFxOrder reports whether order is a full permutation of fxOrderStages.
+func validFxOrder(order []string) bool {
+	if len(order) != len(fxOrderStages) {
+		return false
+	}
+	seen := make(map[string]bool, len(order))
+	for _, id := range order {
+		if _, ok := fxSlot[id]; !ok || seen[id] {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
+}
+
+// SetPedalOrder replaces the GLOBAL FX chain order and pushes it to the engine,
+// actually reordering the six pedals in the signal path (the master tail stays
+// fixed). Requires a full permutation of the six FX stage ids; persists it,
+// packs it to the engine, and publishes a "chain" change keyed "order". Allowed
+// with no patch selected (the order is global).
 func (c *Controls) SetPedalOrder(order []string) error {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
-	for _, id := range order {
-		if _, ok := chainStageByID[id]; !ok {
-			return ErrUnknownChainStage
-		}
+	if !validFxOrder(order) {
+		return ErrUnknownChainStage
 	}
 	if err := c.st.SetPedalOrder(order); err != nil {
 		return err
 	}
+	c.audio.SetFxOrder(packFxOrder(order))
 	c.hub.Publish(Change{Type: "chain", Data: map[string]any{
 		"field": "order",
 		"order": append([]string(nil), order...),
@@ -397,15 +438,11 @@ func (c *Controls) ChainSnapshot() ChainSnapshot {
 	return out
 }
 
-// pedalOrder returns the stored global display order, or the registry's
-// canonical order when the user has never reordered.
+// pedalOrder returns the stored global FX order, or the canonical order
+// (drive → … → reverb) when the user has never reordered.
 func (c *Controls) pedalOrder() []string {
 	if o := c.st.PedalOrder(); len(o) > 0 {
 		return o
 	}
-	out := make([]string, len(chainStages))
-	for i := range chainStages {
-		out[i] = chainStages[i].ID
-	}
-	return out
+	return append([]string(nil), fxOrderStages...)
 }

@@ -157,12 +157,12 @@ type PatchState struct {
 type Snapshot struct {
 	CurrentPatch string                `toml:"current_patch"`
 	Patches      map[string]PatchState `toml:"patches"`
-	// PedalOrder is the GLOBAL display/edit order of the chain stages
-	// ("drive", "chorus", "tremolo", "delay"), empty until the user
-	// reorders. IMPORTANT: this is DISPLAY/EDIT order only — the DSP
-	// signal path is fixed in Rust (render_block), so reordering here is
-	// NOT audible without a future Rust FFI. Stored globally (not
-	// per-patch) because it is a UI-layout preference, not a patch tone.
+	// PedalOrder is the GLOBAL order of the six post-synth FX pedals
+	// ("drive", "chorus", "tremolo", "delay", "comp", "reverb"), empty
+	// until the user reorders. This is AUDIBLE: controls packs it and
+	// pushes it to the engine (polyclav_dsp_set_fx_order), which applies
+	// the pedals in this order (render_block). Stored globally (not
+	// per-patch) — a pedalboard layout, not a patch tone.
 	PedalOrder []string `toml:"pedal_order,omitempty"`
 }
 
@@ -259,14 +259,14 @@ func fillChainDefaults(md toml.MetaData, snap *Snapshot) {
 	}
 }
 
-// knownChainStage reports whether id is a valid chain stage id — the set
-// SetPedalOrder validates against. Duplicated here (rather than imported
-// from controls) so state stays import-free of controls; the chain
-// registry in internal/controls/chain.go is the authority, and these
-// four ids must stay in lockstep with it.
+// knownChainStage reports whether id is a valid reorderable FX stage id —
+// the set SetPedalOrder validates against. Duplicated here (rather than
+// imported from controls) so state stays import-free of controls;
+// internal/controls/chain.go fxOrderStages is the authority, and these six
+// ids must stay in lockstep with it.
 func knownChainStage(id string) bool {
 	switch id {
-	case "drive", "chorus", "tremolo", "delay":
+	case "drive", "chorus", "tremolo", "delay", "comp", "reverb":
 		return true
 	}
 	return false
@@ -505,12 +505,11 @@ func (s *Store) PedalOrder() []string {
 	return clonePedalOrder(s.snap.PedalOrder)
 }
 
-// SetPedalOrder replaces the global chain display order and schedules a
-// debounced write. order must contain only known stage ids
-// ("drive"/"chorus"/"tremolo"/"delay") with no duplicates; an invalid
-// order is rejected with an error and nothing is stored. Remember this
-// is DISPLAY/EDIT order only (see Snapshot.PedalOrder) — it changes no
-// audio.
+// SetPedalOrder replaces the global FX chain order and schedules a debounced
+// write. order must contain only known stage ids
+// ("drive"/"chorus"/"tremolo"/"delay"/"comp"/"reverb") with no duplicates; an
+// invalid order is rejected with an error and nothing is stored. controls
+// pushes this order to the engine, so it is audible (see Snapshot.PedalOrder).
 func (s *Store) SetPedalOrder(order []string) error {
 	seen := make(map[string]bool, len(order))
 	for _, id := range order {

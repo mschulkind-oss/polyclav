@@ -473,6 +473,16 @@ func SetTremoloDepth(v float32) {
 	C.polyclav_dsp_set_tremolo_depth(C.float(v))
 }
 
+// SetFxOrder sets the post-synth FX chain order — a permutation of the six
+// pedals packed as six 4-bit nibbles, LSB-first (slot ids: 0=drive, 1=chorus,
+// 2=tremolo, 3=analog_delay, 4=compressor, 5=reverb; identity 0x00543210). A
+// value that is not a permutation of {0..5} is ignored in Rust. This actually
+// reorders the FX signal path; the master tail (patch gain, mastering comp,
+// limiter, master volume) is fixed. See internal/controls chain order.
+func SetFxOrder(packed uint32) {
+	C.polyclav_dsp_set_fx_order(C.uint32_t(packed))
+}
+
 // SetNativeCutoffHz pushes the active native synth's filter cutoff. The
 // audio thread reads the atomic per block and applies it to the active
 // SynthBackend::Native (no-op for other backends). Clamped to

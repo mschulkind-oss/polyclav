@@ -37,6 +37,7 @@ type fakeAudio struct {
 	chorusRateHz, chorusDepth        float32
 	chorusMix                        float32
 	tremoloRateHz, tremoloDepth      float32
+	fxOrder                          uint32
 	delayTimeMs, delayFeedback       float32
 	delayMix                         float32
 	cutoffHz                         float32
@@ -142,6 +143,11 @@ func (f *fakeAudio) SetAnalogDelayMix(v float32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.delayMix = v
+}
+func (f *fakeAudio) SetFxOrder(p uint32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fxOrder = p
 }
 
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
@@ -2690,6 +2696,37 @@ func TestSetChainParam(t *testing.T) {
 	}
 	if got := f.st.PatchKnob("salamander").ChorusRateHz; got != 0.02 {
 		t.Errorf("stored after low clamp = %v, want 0.02", got)
+	}
+}
+
+// TestSetPedalOrderPacksAndPushes pins that New restores the identity FX
+// order at boot, a full permutation packs to the right nibble word and is
+// pushed to the engine, and non-permutations are rejected without touching it.
+func TestSetPedalOrderPacksAndPushes(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	if got := f.audio.fxOrder; got != 0x0054_3210 {
+		t.Errorf("boot fxOrder = %#x, want identity 0x00543210", got)
+	}
+	// reverb, comp, delay, tremolo, chorus, drive -> slots 5,4,3,2,1,0 at pos 0..5.
+	if err := f.c.SetPedalOrder([]string{"reverb", "comp", "delay", "tremolo", "chorus", "drive"}); err != nil {
+		t.Fatalf("SetPedalOrder: %v", err)
+	}
+	want := uint32(5 | 4<<4 | 3<<8 | 2<<12 | 1<<16 | 0<<20)
+	if f.audio.fxOrder != want {
+		t.Errorf("fxOrder = %#x, want %#x", f.audio.fxOrder, want)
+	}
+	prev := f.audio.fxOrder
+	for _, bad := range [][]string{
+		{"drive", "chorus", "tremolo", "delay"},                  // partial (missing comp/reverb)
+		{"drive", "drive", "chorus", "delay", "comp", "reverb"},  // duplicate
+		{"drive", "chorus", "tremolo", "delay", "comp", "bogus"}, // unknown id
+	} {
+		if err := f.c.SetPedalOrder(bad); err == nil {
+			t.Errorf("SetPedalOrder(%v): expected rejection", bad)
+		}
+	}
+	if f.audio.fxOrder != prev {
+		t.Errorf("fxOrder changed after rejected orders: %#x != %#x", f.audio.fxOrder, prev)
 	}
 }
 

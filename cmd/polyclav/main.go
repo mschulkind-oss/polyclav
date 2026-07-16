@@ -675,6 +675,7 @@ func (audioBackend) SetTremoloDepth(v float32)        { audio.SetTremoloDepth(v)
 func (audioBackend) SetAnalogDelayTimeMs(ms float32)  { audio.SetAnalogDelayTimeMs(ms) }
 func (audioBackend) SetAnalogDelayFeedback(v float32) { audio.SetAnalogDelayFeedback(v) }
 func (audioBackend) SetAnalogDelayMix(v float32)      { audio.SetAnalogDelayMix(v) }
+func (audioBackend) SetFxOrder(packed uint32)         { audio.SetFxOrder(packed) }
 func (audioBackend) SetNativeCutoffHz(hz float32)     { audio.SetNativeCutoffHz(hz) }
 func (audioBackend) SetMasteringCompressor(v float32) { audio.SetMasteringCompressor(v) }
 func (audioBackend) SetLimiterCeilingDB(db float32)   { audio.SetLimiterCeilingDB(db) }

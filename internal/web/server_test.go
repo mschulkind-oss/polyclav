@@ -32,6 +32,7 @@ type fakeAudio struct {
 	chorusRateHz, chorusDepth       float32
 	chorusMix                       float32
 	tremoloRateHz, tremoloDepth     float32
+	fxOrder                         uint32
 	delayTimeMs, delayFeedback      float32
 	delayMix                        float32
 	cutoffHz                        float32
@@ -84,6 +85,11 @@ func (f *fakeAudio) SetAnalogDelayMix(v float32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.delayMix = v
+}
+func (f *fakeAudio) SetFxOrder(p uint32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fxOrder = p
 }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.mu.Lock()
@@ -204,6 +210,11 @@ func (f *fakeAudio) getOversample() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.oversample
+}
+func (f *fakeAudio) getFxOrder() uint32 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fxOrder
 }
 
 func (f *fakeAudio) get(field string) float32 {
@@ -1633,10 +1644,10 @@ func TestChainGetShape(t *testing.T) {
 		t.Errorf("patch: expected salamander, got %v", m["patch"])
 	}
 	order, ok := m["order"].([]any)
-	if !ok || len(order) != 4 {
-		t.Fatalf("order: expected 4 stage ids, got %v", m["order"])
+	if !ok || len(order) != 6 {
+		t.Fatalf("order: expected 6 fx stage ids, got %v", m["order"])
 	}
-	if order[0] != "drive" || order[3] != "delay" {
+	if order[0] != "drive" || order[3] != "delay" || order[5] != "reverb" {
 		t.Errorf("order: unexpected %v", order)
 	}
 	stages, ok := m["stages"].([]any)
@@ -1743,21 +1754,38 @@ func TestChainPatchNoCurrentPatch(t *testing.T) {
 
 func TestChainPatchOrderAlone(t *testing.T) {
 	f := newFixture(t, nil) // nothing selected — order is a global, no-patch-required key
-	rec := f.do(t, "PATCH", "/api/chain", map[string]any{
-		"order": []string{"delay", "tremolo", "chorus", "drive"},
-	})
+	// A full permutation of the six fx pedals: reverb-first, comp before delay.
+	order := []string{"reverb", "comp", "drive", "chorus", "tremolo", "delay"}
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{"order": order})
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
 	applied := m["applied"].(map[string]any)
 	ord, ok := applied["order"].([]any)
-	if !ok || len(ord) != 4 || ord[0] != "delay" || ord[3] != "drive" {
+	if !ok || len(ord) != 6 || ord[0] != "reverb" || ord[5] != "delay" {
 		t.Errorf("applied order: unexpected %v", applied["order"])
+	}
+	// The new order was packed and pushed to the engine (reverb=5 at position 0).
+	if got := f.audio.getFxOrder(); got&0xF != 5 {
+		t.Errorf("fxOrder: expected reverb (slot 5) at position 0, got %#x", got)
 	}
 	// GET reflects the new global order.
 	rec = f.do(t, "GET", "/api/chain", nil)
 	got := decodeBody(t, rec)["order"].([]any)
-	if got[0] != "delay" || got[3] != "drive" {
+	if got[0] != "reverb" || got[5] != "delay" {
 		t.Errorf("GET order after reorder: unexpected %v", got)
+	}
+}
+
+func TestChainPatchOrderRejectsPartial(t *testing.T) {
+	f := newFixture(t, nil)
+	// A non-permutation (missing comp/reverb) must be rejected as a field error.
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{
+		"order": []string{"delay", "tremolo", "chorus", "drive"},
+	})
+	wantStatus(t, rec, http.StatusOK)
+	errs, ok := decodeBody(t, rec)["errors"].(map[string]any)
+	if !ok || errs["order"] == nil {
+		t.Errorf("expected an order field error for a partial permutation, got %v", decodeBody(t, rec))
 	}
 }
 

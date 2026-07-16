@@ -31,6 +31,7 @@ type fakeAudio struct {
 	drivePedal                                 float32
 	chorusRateHz, chorusDepth, chorusMix       float32
 	tremoloRateHz, tremoloDepth                float32
+	fxOrder                                    uint32
 	delayTimeMs, delayFeedback, delayMix       float32
 	masteringComp, limiterDB                   float32
 	resonance, noise, glide, pulseWidth, drive float32
@@ -76,6 +77,7 @@ func (f *fakeAudio) SetAnalogDelayFeedback(v float32) {
 	f.delayFeedback = v
 }
 func (f *fakeAudio) SetAnalogDelayMix(v float32) { f.rec("SetAnalogDelayMix"); f.delayMix = v }
+func (f *fakeAudio) SetFxOrder(p uint32)         { f.rec("SetFxOrder"); f.fxOrder = p }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.rec("SetNativeCutoffHz")
 	f.cutoffHz = hz
