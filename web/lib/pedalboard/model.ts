@@ -1,8 +1,12 @@
 /**
  * Design-system model for the Flat Modern pedalboard UI.
  *
- * Source of truth for all values: docs/mockups/pedalboard-style-b-flat-modern.html.
- * Static mock data only — the /app/mockup playground never talks to the API.
+ * Param values here are in DISPLAY units (%, Hz, ms, dB) — the knobs render and
+ * format them directly. lib/pedalboard/wiring.ts maps each param id onto its
+ * live backend field (/api/params, /api/mastering, /api/chain) with the unit
+ * conversion, so the main app is fully wired while /app/mockup drives the same
+ * specs from static state. Original showroom values came from
+ * docs/mockups/pedalboard-style-b-flat-modern.html.
  */
 
 /** Param roles — same role always renders in the same grid row (see README). */
@@ -65,8 +69,8 @@ export const CHAIN: PedalSpec[] = [
         id: "chorus.rate",
         label: "Rate",
         role: "time",
-        min: 0.1,
-        max: 8,
+        min: 0.05,
+        max: 5,
         defaultValue: 0.9,
         unit: "Hz",
       },
@@ -154,40 +158,113 @@ export const CHAIN: PedalSpec[] = [
       },
     ],
   },
+  {
+    id: "comp",
+    label: "Comp",
+    slot: "05",
+    accentVar: "--pb-lime",
+    params: [
+      {
+        id: "comp.attack",
+        label: "Attack",
+        role: "time",
+        min: 1,
+        max: 100,
+        defaultValue: 15,
+        unit: "ms",
+      },
+      {
+        id: "comp.amount",
+        label: "Comp",
+        role: "shape",
+        min: 0,
+        max: 100,
+        defaultValue: 35,
+        unit: "%",
+        gate: true,
+      },
+      {
+        id: "comp.glue",
+        label: "Glue",
+        role: "blend",
+        min: 0,
+        max: 100,
+        defaultValue: 0,
+        unit: "%",
+        gate: true,
+      },
+    ],
+  },
+  {
+    id: "reverb",
+    label: "Reverb",
+    slot: "06",
+    accentVar: "--pb-rose",
+    params: [
+      {
+        id: "reverb.decay",
+        label: "Decay",
+        role: "time",
+        min: 200,
+        max: 8000,
+        defaultValue: 2400,
+        unit: "ms",
+      },
+      {
+        id: "reverb.tone",
+        label: "Tone",
+        role: "shape",
+        min: 0,
+        max: 100,
+        defaultValue: 50,
+        unit: "%",
+      },
+      {
+        id: "reverb.mix",
+        label: "Mix",
+        role: "blend",
+        min: 0,
+        max: 100,
+        defaultValue: 26,
+        unit: "%",
+        gate: true,
+      },
+    ],
+  },
 ];
 
-/** Stereo bus card params (accent is the neutral tone, set by .pb-bus in CSS). */
-export const BUS_PARAMS: ParamSpec[] = [
+/**
+ * Master-out card params at the tail of the rail (accent = the neutral tone,
+ * set by .pb-bus in CSS). The old stereo-bus card's Comp and Reverb graduated
+ * into their own pedals (see CHAIN); what's left is the true stereo terminus:
+ * the master fader and the brick-wall limiter ceiling. Both are live —
+ * see lib/pedalboard/wiring.ts (volume, limiter_ceiling_db).
+ */
+export const MASTER_PARAMS: ParamSpec[] = [
   {
-    id: "bus.gain",
-    label: "Gain",
+    id: "master.level",
+    label: "Master",
     role: "level",
-    min: -24,
-    max: 24,
-    defaultValue: 0,
-    unit: "dB",
-    bipolar: true,
-  },
-  { id: "bus.comp", label: "Comp", role: "shape", min: 0, max: 100, defaultValue: 35, unit: "%" },
-  {
-    id: "bus.reverb",
-    label: "Reverb",
-    role: "blend",
     min: 0,
     max: 100,
-    defaultValue: 18,
+    defaultValue: 80,
     unit: "%",
   },
   {
-    id: "bus.master",
-    label: "Master",
+    id: "master.ceiling",
+    label: "Ceiling",
     role: "level",
-    min: -48,
+    min: -12,
     max: 0,
-    defaultValue: -6,
+    defaultValue: -0.3,
     unit: "dB",
   },
 ];
+
+/** Default pedal order = chain order (drive → … → reverb). The board lets the
+ * user reorder this (persisted client-side); the DSP signal path itself is
+ * fixed in the Rust engine, so reordering rearranges the editing surface. */
+export const DEFAULT_PEDAL_ORDER: string[] = CHAIN.map((p) => p.id);
 
 export type PatchType = "native" | "soundfont" | "sfizz";
 

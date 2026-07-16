@@ -2,19 +2,20 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { Pedalboard } from "@/components/pedalboard/Pedalboard";
 
-test("composes the rail: source → 4 wired strips → bus, plus hint and legend", () => {
+test("composes the rail: source → 6 wired strips → master, plus reorder bar, hint and legend", () => {
   const { container } = render(<Pedalboard />);
   const rail = container.querySelector(".pb-railwrap .pb-rail");
   expect(rail).not.toBeNull();
   expect(rail?.querySelector(".pb-srcnode")).not.toBeNull();
-  expect(rail?.querySelectorAll(".pb-strip")).toHaveLength(4);
-  expect(rail?.querySelectorAll(".pb-wire")).toHaveLength(5);
-  expect(rail?.querySelector(".pb-bus")).not.toBeNull();
-  for (const name of ["Drive", "Chorus", "Trem", "Delay"]) {
+  expect(rail?.querySelectorAll(".pb-strip")).toHaveLength(6);
+  expect(rail?.querySelectorAll(".pb-wire")).toHaveLength(7);
+  expect(rail?.querySelector(".pb-bus")).not.toBeNull(); // the master-out card
+  for (const name of ["Drive", "Chorus", "Trem", "Delay", "Comp", "Reverb"]) {
     expect(screen.getByRole("button", { name: `Open ${name} in editor` })).toBeInTheDocument();
   }
+  expect(container.querySelector(".pb-reorder")).not.toBeNull();
   expect(container.querySelector(".pb-rail-hint")?.textContent).toContain(
-    "Click a pedal to open it in the editor",
+    "Drag the chips above to reorder",
   );
   expect(container.querySelector(".pb-legend")).not.toBeNull();
 });
@@ -82,10 +83,10 @@ test("standalone board knobs are live: chorus Rate retimes the wave viz", () => 
   const { container } = render(<Pedalboard />);
   const chorusStrip = screen.getByRole("button", { name: "Open Chorus in editor" });
   const rate = within(chorusStrip).getByRole("slider", { name: "Rate" });
-  fireEvent.keyDown(rate, { key: "ArrowUp" }); // 0.9 + (8 − 0.1)/100 = 0.979 Hz
-  expect(chorusStrip.querySelector(".pb-r-time .pb-p-val")?.textContent).toBe("1.0 Hz");
+  fireEvent.keyDown(rate, { key: "ArrowUp" }); // 0.9 + (5 − 0.05)/100 = 0.9495 Hz
+  expect(chorusStrip.querySelector(".pb-r-time .pb-p-val")?.textContent).toBe("0.9 Hz");
   const wave = container.querySelector<SVGGElement>(".pb-viz .pb-wave-anim");
-  expect(wave?.style.getPropertyValue("--pb-wave-cycle")).toBe("1.0215s"); // 1 / 0.979 Hz
+  expect(wave?.style.getPropertyValue("--pb-wave-cycle")).toBe("1.0532s"); // 1 / 0.9495 Hz
 });
 
 test("raising trem Depth above 0 un-freezes the opto lamp once engaged", () => {
@@ -99,11 +100,11 @@ test("raising trem Depth above 0 un-freezes the opto lamp once engaged", () => {
   expect(opto()).not.toHaveClass("pb-depth-zero");
 });
 
-test("bus knobs are live too and share the board's value state", () => {
+test("master knobs are live too and share the board's value state", () => {
   const { container } = render(<Pedalboard />);
-  fireEvent.keyDown(screen.getByRole("slider", { name: "Comp" }), { key: "ArrowUp" });
-  const comp = container.querySelector(".pb-bus-pair.pb-r1 .pb-param[data-role='shape']");
-  expect(comp?.querySelector(".pb-p-val")?.textContent).toBe("36%");
+  fireEvent.keyDown(screen.getByRole("slider", { name: "Master" }), { key: "ArrowUp" });
+  const level = container.querySelector(".pb-bus-pair.pb-r1 .pb-param[data-role='level']");
+  expect(level?.querySelector(".pb-p-val")?.textContent).toBe("81%"); // 80 + 1/100 of 0–100
 });
 
 test("controlled mode: board knob edits report up through onParamChange", () => {

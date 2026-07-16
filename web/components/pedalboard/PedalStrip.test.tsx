@@ -127,12 +127,12 @@ test("dragging a param knob reports its id and never opens the editor", () => {
   renderStrip("chorus", { onOpen, onParamChange });
   const rate = screen.getByRole("slider", { name: "Rate" });
   fireEvent.pointerDown(rate, { clientY: 300, pointerId: 1 });
-  fireEvent.pointerMove(rate, { clientY: 270 }); // half the 60px mini sweep of 0.1–8 Hz
+  fireEvent.pointerMove(rate, { clientY: 270 }); // half the 60px mini sweep of 0.05–5 Hz
   fireEvent.pointerUp(rate);
   fireEvent.click(rate); // the click a completed drag synthesizes
   expect(onParamChange).toHaveBeenCalledTimes(1);
   expect(onParamChange.mock.calls[0][0]).toBe("chorus.rate");
-  expect(onParamChange.mock.calls[0][1]).toBeCloseTo(4.85, 6); // 0.9 + 7.9 / 2
+  expect(onParamChange.mock.calls[0][1]).toBeCloseTo(3.375, 6); // 0.9 + 4.95 / 2
   expect(onOpen).not.toHaveBeenCalled();
 });
 

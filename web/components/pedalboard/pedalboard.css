@@ -30,7 +30,9 @@
   --pb-cyan: #4cc9f0; /* chorus */
   --pb-violet: #b18cff; /* trem   */
   --pb-mint: #2fe6a8; /* delay  */
-  --pb-neutral: #aeb6c4; /* bus / source */
+  --pb-lime: #b6e14f; /* comp   */
+  --pb-rose: #ff7a9c; /* reverb */
+  --pb-neutral: #aeb6c4; /* master / source */
   --pb-off: #4a4e58;
   color-scheme: dark;
 }

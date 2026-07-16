@@ -1,45 +1,18 @@
 "use client";
 
+import type { CSSProperties, ReactNode } from "react";
+import { ChorusWaveViz } from "@/components/pedalboard/ChorusWaveViz";
+import { CompCurveViz } from "@/components/pedalboard/CompCurveViz";
+import { DriveCurveViz } from "@/components/pedalboard/DriveCurveViz";
 import { EchoTailViz } from "@/components/pedalboard/EchoTailViz";
 import { Knob } from "@/components/pedalboard/Knob";
 import { Led } from "@/components/pedalboard/Led";
+import { ReverbBloomViz } from "@/components/pedalboard/ReverbBloomViz";
 import { GateDot, ROLE_NAMES, RoleGlyph } from "@/components/pedalboard/RoleGlyph";
 import { Stomp } from "@/components/pedalboard/Stomp";
-import { CHAIN, type ParamSpec, type PedalSpec } from "@/lib/pedalboard/model";
-
-function requirePedal(id: string): PedalSpec {
-  const pedal = CHAIN.find((p) => p.id === id);
-  if (!pedal) throw new Error(`pedal ${id} missing from CHAIN`);
-  return pedal;
-}
-
-function requireParam(pedal: PedalSpec, id: string): ParamSpec {
-  const param = pedal.params.find((p) => p.id === id);
-  if (!param) throw new Error(`param ${id} missing from ${pedal.id}`);
-  return param;
-}
-
-const DELAY = requirePedal("delay");
-
-export interface PedalEditorValues {
-  time: number;
-  feedback: number;
-  mix: number;
-}
-
-interface EditorKnobDef {
-  spec: ParamSpec;
-  valueKey: keyof PedalEditorValues;
-  size: number;
-  sizeClass?: "md" | "lg" | "xl";
-}
-
-/** The knob row: Time is the delay's signature OVERSIZED knob (xl, 164). */
-const KNOBS: EditorKnobDef[] = [
-  { spec: requireParam(DELAY, "delay.time_ms"), valueKey: "time", size: 164, sizeClass: "xl" },
-  { spec: requireParam(DELAY, "delay.feedback"), valueKey: "feedback", size: 124 },
-  { spec: requireParam(DELAY, "delay.mix"), valueKey: "mix", size: 124 },
-];
+import { TremOptoViz } from "@/components/pedalboard/TremOptoViz";
+import { formatValue } from "@/lib/pedalboard/knobMath";
+import type { ParamSpec, PedalSpec } from "@/lib/pedalboard/model";
 
 /** Min–max caption under an editor knob, e.g. "1 – 1000 ms" / "0 – 90%". */
 export function rangeLabel(spec: ParamSpec): string {
@@ -49,11 +22,41 @@ export function rangeLabel(spec: ParamSpec): string {
   return `${span} ${spec.unit}`;
 }
 
+/** One-word kind for the hero identity subtitle. */
+const PEDAL_KIND: Record<string, string> = {
+  drive: "Waveshaper drive",
+  chorus: "Stereo chorus",
+  trem: "Optical tremolo",
+  delay: "Stereo echo",
+  comp: "Dynamics",
+  reverb: "Algorithmic reverb",
+};
+/** The pedal's signature knob — rendered oversized (xl) at the head of the row. */
+const SIGNATURE_PARAM: Record<string, string> = {
+  drive: "drive.amount",
+  chorus: "chorus.rate",
+  trem: "trem.rate",
+  delay: "delay.time_ms",
+  comp: "comp.amount",
+  reverb: "reverb.mix",
+};
+/** Caption for the signature tail band. */
+const TAIL_LABEL: Record<string, string> = {
+  drive: "Drive curve",
+  chorus: "Chorus motion",
+  trem: "Tremolo motion",
+  delay: "Echo tail",
+  comp: "Gain curve",
+  reverb: "Reverb tail",
+};
+
 export interface PedalEditorProps {
-  values: PedalEditorValues;
+  pedal: PedalSpec;
+  /** Value per param id; ids not present fall back to the spec defaults. */
+  values: Record<string, number>;
   /** false = parked (bypassed, settings kept). */
   enabled: boolean;
-  /** Fired with the model param id ("delay.time_ms" | "delay.feedback" | "delay.mix"). */
+  /** Fired with the model param id and new value on any knob change. */
   onChange: (paramId: string, value: number) => void;
   onStomp: () => void;
   onReset: () => void;
@@ -61,12 +64,60 @@ export interface PedalEditorProps {
   onBack: () => void;
 }
 
+/** The pedal's parameter-truthful signature module for the editor tail. */
+function tailViz(pedal: PedalSpec, v: (id: string) => number): ReactNode {
+  switch (pedal.id) {
+    case "delay":
+      return (
+        <EchoTailViz
+          timeMs={v("delay.time_ms")}
+          feedback={v("delay.feedback")}
+          mix={v("delay.mix")}
+        />
+      );
+    case "drive":
+      return (
+        <div className="pb-editor-viz">
+          <DriveCurveViz amount={v("drive.amount")} />
+        </div>
+      );
+    case "chorus":
+      return (
+        <div className="pb-editor-viz">
+          <ChorusWaveViz rateHz={v("chorus.rate")} />
+        </div>
+      );
+    case "trem":
+      return (
+        <div className="pb-editor-viz">
+          <TremOptoViz rateHz={v("trem.rate")} active={v("trem.depth") > 0} />
+        </div>
+      );
+    case "comp":
+      return (
+        <div className="pb-editor-viz">
+          <CompCurveViz amount={v("comp.amount")} />
+        </div>
+      );
+    case "reverb":
+      return (
+        <div className="pb-editor-viz">
+          <ReverbBloomViz decay={v("reverb.decay")} tone={v("reverb.tone")} mix={v("reverb.mix")} />
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
 /**
- * The delay hero editor (screen 2 of the reference): identity column with the
- * big stomp, the oversized-Time knob row, and the parameter-truthful echo
- * tail. Fully controlled — all values and state transitions come from props.
+ * The pedal hero editor (reference screen 2, generalised to every pedal): an
+ * identity column with the big stomp + reset, a knob row (the pedal's
+ * signature param oversized), and a parameter-truthful signature tail. Fully
+ * controlled — all values and state transitions come from props.
  */
 export function PedalEditor({
+  pedal,
   values,
   enabled,
   onChange,
@@ -74,7 +125,11 @@ export function PedalEditor({
   onReset,
   onBack,
 }: PedalEditorProps) {
-  const caption = `${Math.round(values.time)} ms · ${Math.round(values.feedback)}% feedback · ${Math.round(values.mix)}% mix`;
+  const v = (id: string): number =>
+    values[id] ?? pedal.params.find((p) => p.id === id)?.defaultValue ?? 0;
+  const sigId = SIGNATURE_PARAM[pedal.id];
+  const caption = pedal.params.map((p) => `${formatValue(v(p.id), p)} ${p.label}`).join(" · ");
+  const accent = { "--pb-accent": `var(${pedal.accentVar})` } as CSSProperties;
   return (
     <>
       <div className="pb-screen-head">
@@ -83,23 +138,30 @@ export function PedalEditor({
             Pedalboard
           </button>
           <span className="pb-sep">/</span>
-          <span className="pb-crumb-cur">{DELAY.label}</span>
+          <span className="pb-crumb-cur">{pedal.label}</span>
         </div>
         <div className={`pb-chip${enabled ? " pb-live" : ""}`}>
           {enabled ? "Engaged" : "Parked — settings kept"}
         </div>
       </div>
 
-      <article className={`pb-hero${enabled ? "" : " pb-bypassed"}`}>
+      <article className={`pb-hero${enabled ? "" : " pb-bypassed"}`} style={accent}>
         <div className="pb-hero-main">
           <div className="pb-hero-id">
             <div className="pb-hero-title">
-              <h2>{DELAY.label.toUpperCase()}</h2>
+              <h2>{pedal.label.toUpperCase()}</h2>
               <Led on={enabled} />
             </div>
             <div className="pb-hero-rule" />
-            <div className="pb-hero-sub">Stereo echo · slot {DELAY.slot}</div>
-            <Stomp big on={enabled} labelOff="Parked" onToggle={onStomp} />
+            <div className="pb-hero-sub">
+              {PEDAL_KIND[pedal.id] ?? "Pedal"} · slot {pedal.slot}
+            </div>
+            <Stomp
+              big
+              on={enabled}
+              labelOff={pedal.id === "delay" ? "Parked" : "Bypassed"}
+              onToggle={onStomp}
+            />
             <button type="button" className="pb-ghostbtn" onClick={onReset}>
               <svg viewBox="0 0 12 12" aria-hidden="true">
                 <path
@@ -117,23 +179,26 @@ export function PedalEditor({
 
           <div>
             <div className="pb-hero-knobs">
-              {KNOBS.map(({ spec, valueKey, size, sizeClass }) => (
-                <div key={spec.id} className="pb-kgroup">
-                  <div className="pb-k-label" title={ROLE_NAMES[spec.role]}>
-                    <RoleGlyph role={spec.role} />
-                    {spec.label}
-                    {spec.gate ? <GateDot /> : null}
+              {pedal.params.map((spec) => {
+                const isSig = spec.id === sigId;
+                return (
+                  <div key={spec.id} className="pb-kgroup">
+                    <div className="pb-k-label" title={ROLE_NAMES[spec.role]}>
+                      <RoleGlyph role={spec.role} />
+                      {spec.label}
+                      {spec.gate ? <GateDot /> : null}
+                    </div>
+                    <Knob
+                      spec={spec}
+                      value={v(spec.id)}
+                      onChange={(val) => onChange(spec.id, val)}
+                      size={isSig ? 164 : 124}
+                      sizeClass={isSig ? "xl" : "lg"}
+                    />
+                    <div className="pb-k-minmax pb-num">{rangeLabel(spec)}</div>
                   </div>
-                  <Knob
-                    spec={spec}
-                    value={values[valueKey]}
-                    onChange={(v) => onChange(spec.id, v)}
-                    size={size}
-                    sizeClass={sizeClass}
-                  />
-                  <div className="pb-k-minmax pb-num">{rangeLabel(spec)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="pb-knob-hint">
               Drag vertically · shift = fine · scroll steps · double-click resets
@@ -143,10 +208,10 @@ export function PedalEditor({
 
         <div className="pb-hero-tail">
           <div className="pb-tail-head">
-            <span className="pb-kicker">Echo tail</span>
+            <span className="pb-kicker">{TAIL_LABEL[pedal.id] ?? "Response"}</span>
             <span className="pb-tail-caption pb-num">{caption}</span>
           </div>
-          <EchoTailViz timeMs={values.time} feedback={values.feedback} mix={values.mix} />
+          {tailViz(pedal, v)}
         </div>
       </article>
     </>

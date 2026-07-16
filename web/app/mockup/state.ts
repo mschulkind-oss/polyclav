@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { INITIAL_ENABLED } from "@/components/pedalboard/Pedalboard";
-import { BUS_PARAMS, CHAIN } from "@/lib/pedalboard/model";
+import { CHAIN, MASTER_PARAMS } from "@/lib/pedalboard/model";
 
 /** The four playground screens, in tab order. */
 export type TabId = "board" | "editor" | "synth" | "macros";
@@ -31,7 +31,7 @@ export interface PedalboardMock {
 function chainDefaults(pedalId?: string): Record<string, number> {
   const params =
     pedalId === undefined
-      ? [...CHAIN.flatMap((pedal) => pedal.params), ...BUS_PARAMS]
+      ? [...CHAIN.flatMap((pedal) => pedal.params), ...MASTER_PARAMS]
       : (CHAIN.find((pedal) => pedal.id === pedalId)?.params ?? []);
   return Object.fromEntries(params.map((p) => [p.id, p.defaultValue]));
 }

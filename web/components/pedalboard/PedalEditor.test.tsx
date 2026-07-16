@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PedalEditor, rangeLabel } from "@/components/pedalboard/PedalEditor";
-import { CHAIN, type ParamSpec } from "@/lib/pedalboard/model";
+import { CHAIN, type ParamSpec, type PedalSpec } from "@/lib/pedalboard/model";
 
 // The Knob's drag machinery (pointer capture, wheel, keys) is the knob
 // package's own test domain, so it is mocked with a native range input:
@@ -30,38 +30,36 @@ vi.mock("@/components/pedalboard/Knob", () => ({
   ),
 }));
 
-const VALUES = { time: 380, feedback: 35, mix: 25 };
+const DELAY = CHAIN.find((p) => p.id === "delay") as PedalSpec;
+const REVERB = CHAIN.find((p) => p.id === "reverb") as PedalSpec;
+const VALUES = { "delay.time_ms": 380, "delay.feedback": 35, "delay.mix": 25 };
 
-function setup(enabled = false, values = VALUES) {
+function setup(enabled = false, pedal: PedalSpec = DELAY, values: Record<string, number> = VALUES) {
   const handlers = {
     onChange: vi.fn(),
     onStomp: vi.fn(),
     onReset: vi.fn(),
     onBack: vi.fn(),
   };
-  const view = render(<PedalEditor values={values} enabled={enabled} {...handlers} />);
+  const view = render(
+    <PedalEditor pedal={pedal} values={values} enabled={enabled} {...handlers} />,
+  );
   return { ...handlers, view };
 }
 
 describe("PedalEditor", () => {
   it("routes each knob's change (drag) to onChange with the model param id", () => {
     const { onChange } = setup();
-    fireEvent.change(screen.getByRole("slider", { name: "Time" }), {
-      target: { value: "500" },
-    });
+    fireEvent.change(screen.getByRole("slider", { name: "Time" }), { target: { value: "500" } });
     expect(onChange).toHaveBeenLastCalledWith("delay.time_ms", 500);
-    fireEvent.change(screen.getByRole("slider", { name: "Feedback" }), {
-      target: { value: "50" },
-    });
+    fireEvent.change(screen.getByRole("slider", { name: "Feedback" }), { target: { value: "50" } });
     expect(onChange).toHaveBeenLastCalledWith("delay.feedback", 50);
-    fireEvent.change(screen.getByRole("slider", { name: "Mix" }), {
-      target: { value: "60" },
-    });
+    fireEvent.change(screen.getByRole("slider", { name: "Mix" }), { target: { value: "60" } });
     expect(onChange).toHaveBeenLastCalledWith("delay.mix", 60);
     expect(onChange).toHaveBeenCalledTimes(3);
   });
 
-  it("gives Time the oversized xl knob and gates only Mix", () => {
+  it("gives the signature param (Time) the oversized xl knob and gates only Mix", () => {
     setup();
     const time = screen.getByRole("slider", { name: "Time" });
     expect(time).toHaveAttribute("data-size", "164");
@@ -73,7 +71,6 @@ describe("PedalEditor", () => {
       expect(knob).toHaveAttribute("data-size-class", "lg");
     }
     expect(screen.getByRole("slider", { name: "Mix" })).toHaveAttribute("data-gate", "true");
-    // the gate marker also shows on the knob label — only on Mix
     const gateDots = document.querySelectorAll(".pb-k-label .pb-gate-dot");
     expect(gateDots).toHaveLength(1);
     expect(gateDots[0]?.parentElement).toHaveTextContent("Mix");
@@ -122,7 +119,9 @@ describe("PedalEditor", () => {
     fireEvent.click(stomp);
     expect(onStomp).toHaveBeenCalledTimes(1);
 
-    view.rerender(<PedalEditor values={VALUES} enabled onStomp={onStomp} {...handlers} />);
+    view.rerender(
+      <PedalEditor pedal={DELAY} values={VALUES} enabled onStomp={onStomp} {...handlers} />,
+    );
     const onStompBtn = screen.getByRole("button", { name: "On" });
     expect(onStompBtn).toHaveClass("pb-stomp", "pb-on", "pb-big");
     expect(onStompBtn).toHaveAttribute("aria-pressed", "true");
@@ -141,17 +140,28 @@ describe("PedalEditor", () => {
 
   it("captions the echo tail from the live values and renders the viz", () => {
     setup();
-    expect(screen.getByText("380 ms · 35% feedback · 25% mix")).toBeInTheDocument();
+    expect(screen.getByText("380 ms Time · 35% Feedback · 25% Mix")).toBeInTheDocument();
     const dots = document.querySelectorAll(".pb-e-dot");
     expect(dots.length).toBeGreaterThan(0);
     expect(dots[0]?.getAttribute("cx")).toBe("116.8");
+  });
+
+  it("generalises to any pedal: reverb gets its own knobs, signature and viz", () => {
+    setup(true, REVERB, { "reverb.decay": 2400, "reverb.tone": 50, "reverb.mix": 26 });
+    // reverb's signature knob is Mix (its one live engine param).
+    expect(screen.getByRole("slider", { name: "Mix" })).toHaveAttribute("data-size-class", "xl");
+    expect(screen.getByRole("slider", { name: "Decay" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Tone" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "REVERB" })).toBeInTheDocument();
+    expect(screen.getByText("Algorithmic reverb · slot 06")).toBeInTheDocument();
+    // the reverb bloom viz renders (fill path) inside the editor tail wrapper.
+    expect(document.querySelector(".pb-editor-viz .pb-fillpath")).not.toBeNull();
   });
 });
 
 describe("rangeLabel", () => {
   it("formats the delay params like the reference", () => {
-    const delay = CHAIN.find((p) => p.id === "delay");
-    const labels = delay?.params.map(rangeLabel);
+    const labels = DELAY.params.map(rangeLabel);
     expect(labels).toEqual(["1 – 1000 ms", "0 – 90%", "0 – 100%"]);
   });
 });

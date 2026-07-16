@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ParamSpec } from "@/lib/pedalboard/model";
-import { BUS_PARAMS, CHAIN, PAD_SLOTS, PATCHES, SYNTH } from "@/lib/pedalboard/model";
+import { CHAIN, MASTER_PARAMS, PAD_SLOTS, PATCHES, SYNTH } from "@/lib/pedalboard/model";
 
 function allSynthParams(): ParamSpec[] {
   const envs = [SYNTH.filterEnv, SYNTH.ampEnv].flatMap((e) => [e.a, e.d, e.s, e.r]);
@@ -23,9 +23,9 @@ function allSynthParams(): ParamSpec[] {
 }
 
 describe("CHAIN", () => {
-  it("models the four-pedal chain in slot order", () => {
-    expect(CHAIN.map((p) => p.id)).toEqual(["drive", "chorus", "trem", "delay"]);
-    expect(CHAIN.map((p) => p.slot)).toEqual(["01", "02", "03", "04"]);
+  it("models the six-pedal chain in signal order", () => {
+    expect(CHAIN.map((p) => p.id)).toEqual(["drive", "chorus", "trem", "delay", "comp", "reverb"]);
+    expect(CHAIN.map((p) => p.slot)).toEqual(["01", "02", "03", "04", "05", "06"]);
   });
   it("assigns one accent var per pedal", () => {
     expect(CHAIN.map((p) => p.accentVar)).toEqual([
@@ -33,11 +33,21 @@ describe("CHAIN", () => {
       "--pb-cyan",
       "--pb-violet",
       "--pb-mint",
+      "--pb-lime",
+      "--pb-rose",
     ]);
   });
-  it("marks the blend-role mixes and trem depth as gates", () => {
+  it("marks the true-bypass knobs as gates", () => {
     const gates = CHAIN.flatMap((p) => p.params.filter((q) => q.gate).map((q) => q.id));
-    expect(gates).toEqual(["drive.amount", "chorus.mix", "trem.depth", "delay.mix"]);
+    expect(gates).toEqual([
+      "drive.amount",
+      "chorus.mix",
+      "trem.depth",
+      "delay.mix",
+      "comp.amount",
+      "comp.glue",
+      "reverb.mix",
+    ]);
   });
   it("keeps at most one param per role per pedal (row alignment contract)", () => {
     for (const pedal of CHAIN) {
@@ -48,7 +58,7 @@ describe("CHAIN", () => {
 });
 
 describe("param invariants", () => {
-  const params = [...CHAIN.flatMap((p) => p.params), ...BUS_PARAMS, ...allSynthParams()];
+  const params = [...CHAIN.flatMap((p) => p.params), ...MASTER_PARAMS, ...allSynthParams()];
   it("keeps every defaultValue inside [min, max]", () => {
     for (const p of params) {
       expect(p.min, p.id).toBeLessThan(p.max);
@@ -67,12 +77,12 @@ describe("param invariants", () => {
   });
 });
 
-describe("BUS_PARAMS", () => {
-  it("models gain as bipolar and master as a cut-only level", () => {
-    const gain = BUS_PARAMS.find((p) => p.id === "bus.gain");
-    const master = BUS_PARAMS.find((p) => p.id === "bus.master");
-    expect(gain).toMatchObject({ bipolar: true, min: -24, max: 24, defaultValue: 0, unit: "dB" });
-    expect(master).toMatchObject({ min: -48, max: 0, defaultValue: -6, unit: "dB" });
+describe("MASTER_PARAMS", () => {
+  it("models the master fader and the brick-wall limiter ceiling", () => {
+    const level = MASTER_PARAMS.find((p) => p.id === "master.level");
+    const ceiling = MASTER_PARAMS.find((p) => p.id === "master.ceiling");
+    expect(level).toMatchObject({ min: 0, max: 100, defaultValue: 80, unit: "%" });
+    expect(ceiling).toMatchObject({ min: -12, max: 0, defaultValue: -0.3, unit: "dB" });
   });
 });
 

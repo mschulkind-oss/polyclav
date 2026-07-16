@@ -4,6 +4,7 @@
 // to the daemon on 127.0.0.1:8666.
 
 import type {
+  ChainState,
   Clip,
   IdentityResult,
   MIDIDevicesResponse,
@@ -62,6 +63,16 @@ export const api = {
 
   patchMastering: (body: Record<string, number>): Promise<Response | null> =>
     request("PATCH", "/api/mastering", body),
+
+  /** GET /api/chain — post-synth pedal registry + live values; null if the
+   * daemon predates the endpoint (the board degrades to local-only chain state). */
+  chain: async (): Promise<ChainState | null> =>
+    json<ChainState>(await request("GET", "/api/chain")),
+
+  /** PATCH /api/chain — flat body, e.g. {"chorus.mix":0.3} / {"delay.enabled":false} /
+   * {"order":["delay","chorus",...]}. Engine units; see lib/pedalboard/wiring.ts. */
+  patchChain: (body: Record<string, number | boolean | string[]>): Promise<Response | null> =>
+    request("PATCH", "/api/chain", body),
 
   clips: async (): Promise<Clip[] | null> => json<Clip[]>(await request("GET", "/api/clips")),
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type TabId, usePedalboardMock } from "@/app/mockup/state";
 import { HwHintBar, type HwMapping } from "@/components/pedalboard/HwHintBar";
 import { MacroGrid } from "@/components/pedalboard/MacroGrid";
@@ -9,7 +9,7 @@ import { Pedalboard } from "@/components/pedalboard/Pedalboard";
 import { PedalEditor } from "@/components/pedalboard/PedalEditor";
 import { ScaleControl, useUiScale } from "@/components/pedalboard/ScaleControl";
 import { SynthPanel } from "@/components/pedalboard/SynthPanel";
-import { PATCHES } from "@/lib/pedalboard/model";
+import { CHAIN, PATCHES } from "@/lib/pedalboard/model";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "board", label: "Pedalboard" },
@@ -33,6 +33,8 @@ const DELAY_HW: HwMapping[] = [
 export default function MockupPage() {
   const ui = useUiScale();
   const mock = usePedalboardMock();
+  const [editId, setEditId] = useState("delay");
+  const editPedal = CHAIN.find((p) => p.id === editId) ?? CHAIN[0];
 
   // The A−/A+ control resizes the whole system: --pb-scale lives on the
   // layout's .pb-root wrapper, reached from any element inside it.
@@ -88,24 +90,24 @@ export default function MockupPage() {
             enabled={mock.enabled}
             onToggle={mock.togglePedal}
             onParamChange={mock.setValue}
-            onOpenPedal={() => mock.setTab("editor")}
+            onOpenPedal={(id) => {
+              setEditId(id);
+              mock.setTab("editor");
+            }}
           />
         </section>
 
         <section className={screenClass("editor")}>
           <PedalEditor
-            values={{
-              time: mock.values["delay.time_ms"],
-              feedback: mock.values["delay.feedback"],
-              mix: mock.values["delay.mix"],
-            }}
-            enabled={mock.enabled.delay}
+            pedal={editPedal}
+            values={mock.values}
+            enabled={mock.enabled[editPedal.id] ?? true}
             onChange={mock.setValue}
-            onStomp={() => mock.togglePedal("delay")}
-            onReset={() => mock.resetPedal("delay")}
+            onStomp={() => mock.togglePedal(editPedal.id)}
+            onReset={() => mock.resetPedal(editPedal.id)}
             onBack={() => mock.setTab("board")}
           />
-          <HwHintBar path="FX > Delay" mappings={DELAY_HW} />
+          {editPedal.id === "delay" ? <HwHintBar path="FX > Delay" mappings={DELAY_HW} /> : null}
         </section>
 
         <section className={screenClass("synth")}>

@@ -3,7 +3,6 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { MiniKnob } from "@/components/pedalboard/MiniKnob";
 import type { ParamSpec } from "@/lib/pedalboard/model";
-import { BUS_PARAMS } from "@/lib/pedalboard/model";
 
 function spec(over: Partial<ParamSpec> = {}): ParamSpec {
   return {
@@ -254,7 +253,17 @@ describe("MiniKnob interactive mode (onChange)", () => {
 });
 
 describe("MiniKnob bipolar arc (bus gain style)", () => {
-  const gain = BUS_PARAMS[0]; // -24..+24 dB, bipolar
+  // -24..+24 dB, bipolar — the classic center-detent gain knob.
+  const gain = spec({
+    id: "x.gain",
+    label: "Gain",
+    role: "level",
+    min: -24,
+    max: 24,
+    defaultValue: 0,
+    unit: "dB",
+    bipolar: true,
+  });
 
   it("hides at center with the minimum dash", () => {
     const { container } = render(<MiniKnob spec={gain} value={0} />);

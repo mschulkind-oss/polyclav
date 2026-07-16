@@ -8,7 +8,7 @@ playground page `/app/mockup` with static mock data only (no API calls).
 
 | Path | Owns |
 | --- | --- |
-| `web/lib/pedalboard/model.ts` | Types (`Role`, `ParamSpec`, `PedalSpec`, …) + static data (`CHAIN`, `BUS_PARAMS`, `PATCHES`/`PAD_SLOTS`, `SYNTH`) |
+| `web/lib/pedalboard/model.ts` | Types (`Role`, `ParamSpec`, `PedalSpec`, …) + data (`CHAIN`, `MASTER_PARAMS`, `PATCHES`/`PAD_SLOTS`, `SYNTH`, `DEFAULT_PEDAL_ORDER`) |
 | `web/lib/pedalboard/knobMath.ts` | Pure knob math: `clamp`, `valueToFrac`, `fracToAngle`, `arcDash`, `pointerTransform`, `gateNotchTransform`, `formatValue`, `dragValue`, `wheelStep`, `keyStep`, `A0`, `SWEEP` |
 | `web/components/pedalboard/pedalboard.css` | ALL shared styles (Foundation-owned; do not edit) |
 | `web/components/pedalboard/<yourpkg>.extra.css` | Styles a builder genuinely needs that are missing here — scoped under `.pb-root`, `pb-` prefixed, declared in your return |

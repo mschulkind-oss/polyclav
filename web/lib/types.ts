@@ -63,6 +63,45 @@ export interface Status {
   player: PlayerState | null;
 }
 
+// ---- /api/chain (post-synth pedal registry: schema + live values) -------
+// Emitted by GET /api/chain; deltas arrive as SSE "chain" events
+// {field, value, patch}. Engine units (0..1, Hz, ms); the UI converts via
+// lib/pedalboard/wiring.ts.
+
+export interface ChainParamState {
+  id: string;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  default: number;
+  step: number;
+  taper: string;
+  gate: boolean;
+  value: number;
+}
+
+export interface ChainStageState {
+  id: string;
+  label: string;
+  kind: string;
+  enabled: boolean;
+  params: ChainParamState[];
+}
+
+export interface ChainState {
+  patch: string;
+  order: string[];
+  stages: ChainStageState[];
+}
+
+/** "chain": {field:"chorus.mix"|"chorus.enabled", value:number|boolean, patch}. */
+export interface ChainEvent {
+  field: string;
+  value?: number | boolean;
+  patch?: string;
+}
+
 // ---- SSE event payloads (controls hub Change.Data) ----------------------
 
 /** "params": {field:"volume"|"reverb"|"compressor", value} or {field:"cutoff", pos, hz}. */
