@@ -241,6 +241,14 @@ export function usePolyclav(): Polyclav {
     guard.current[id] = (typeof performance !== "undefined" ? performance.now() : 0) + GUARD_MS;
   }, []);
   const guarded = (id: string) => now() < (guard.current[id] ?? 0);
+  // A soft-bypass pedal (comp/reverb) stomped off holds its engine param at 0
+  // while the UI keeps the stored display value; ignore the resulting 0 echo so
+  // re-enabling restores the real setting (chain pedals park server-side, so
+  // this only matters for the /api/params + /api/mastering routed params).
+  const parked = (id: string) => {
+    const pedalId = id.split(".")[0];
+    return Boolean(SOFT_BYPASS_PARAMS[pedalId]) && !(enabledRef.current[pedalId] ?? true);
+  };
 
   const flush = useCallback(() => {
     const byEndpoint: Record<Endpoint, Record<string, number>> = {
@@ -272,6 +280,15 @@ export function usePolyclav(): Polyclav {
     [flush],
   );
 
+  // Drop any queued debounced write (its value belongs to the old patch).
+  const cancelPending = useCallback(() => {
+    pending.current.clear();
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  // Never let a queued flush fire after the component unmounts.
+  useEffect(() => () => cancelPending(), [cancelPending]);
+
   const connected = useSSE("/api/events", {
     snapshot: (d) => dispatch({ t: "snapshot", s: d as Status }),
     params: (d) => {
@@ -282,7 +299,7 @@ export function usePolyclav(): Polyclav {
       }
       const id = WIRE_BY_BACKEND[`params:${e.field}`];
       const w = id ? PARAM_WIRING[id] : undefined;
-      if (id && w && typeof e.value === "number" && !guarded(id)) {
+      if (id && w && typeof e.value === "number" && !guarded(id) && !parked(id)) {
         dispatch({ t: "values", patch: { [id]: w.fromEngine(e.value) } });
       }
     },
@@ -293,7 +310,7 @@ export function usePolyclav(): Polyclav {
         if (typeof val !== "number") continue;
         const id = WIRE_BY_BACKEND[`mastering:${field}`];
         const w = id ? PARAM_WIRING[id] : undefined;
-        if (id && w && !guarded(id)) patch[id] = w.fromEngine(val);
+        if (id && w && !guarded(id) && !parked(id)) patch[id] = w.fromEngine(val);
       }
       if (Object.keys(patch).length) dispatch({ t: "values", patch });
     },
@@ -312,11 +329,13 @@ export function usePolyclav(): Polyclav {
       }
     },
     patch: (d) => {
-      const e = d as PatchEvent & { chain?: Record<string, number | boolean> };
+      const e = d as PatchEvent & { chain?: Record<string, Record<string, number | boolean>> };
       dispatch({ t: "current", name: e.name });
-      // A patch switch loads that patch's stored settings — clear guards so the
-      // fresh values always win, then apply everything the event carries.
+      // A patch switch loads that patch's stored settings — clear the guards and
+      // any pending debounced send (a queued edit belongs to the OLD patch) so
+      // the fresh values always win, then apply everything the event carries.
       guard.current = {};
+      cancelPending();
       const patch: Record<string, number> = {};
       const add = (endpoint: Endpoint, field: string, val: unknown) => {
         if (typeof val !== "number") return;
@@ -327,17 +346,25 @@ export function usePolyclav(): Polyclav {
       add("params", "volume", e.volume);
       add("params", "reverb", e.reverb);
       add("params", "compressor", e.compressor);
+      // comp/reverb have no per-patch engine enable; the engine loads the new
+      // patch's real reverb/compressor values, so un-park their client stomp.
+      dispatch({ t: "enable", pedalId: "comp", on: true });
+      dispatch({ t: "enable", pedalId: "reverb", on: true });
       if (typeof e.cutoff_pos === "number" || typeof e.cutoff_hz === "number") {
         dispatch({ t: "cutoff", pos: e.cutoff_pos, hz: e.cutoff_hz });
       }
+      // The daemon folds the chain nested by stage:
+      // {chorus: {enabled, rate_hz, depth, mix}, delay: {...}, …}.
       if (e.chain) {
-        for (const [field, val] of Object.entries(e.chain)) {
-          if (field.endsWith(".enabled")) {
-            const stage = field.slice(0, -".enabled".length);
-            const pedalId = STAGE_TO_PEDAL[stage] ?? stage;
-            if (typeof val === "boolean") dispatch({ t: "enable", pedalId, on: val });
-          } else {
-            add("chain", field, val);
+        for (const [stage, block] of Object.entries(e.chain)) {
+          if (typeof block !== "object" || block === null) continue;
+          for (const [leaf, val] of Object.entries(block)) {
+            if (leaf === "enabled") {
+              if (typeof val === "boolean")
+                dispatch({ t: "enable", pedalId: STAGE_TO_PEDAL[stage] ?? stage, on: val });
+            } else {
+              add("chain", `${stage}.${leaf}`, val);
+            }
           }
         }
       }
@@ -393,10 +420,14 @@ export function usePolyclav(): Polyclav {
     }
   }, [state.hasPlayer]);
 
-  const selectPatch = useCallback((name: string) => {
-    dispatch({ t: "current", name });
-    api.selectPatch(name);
-  }, []);
+  const selectPatch = useCallback(
+    (name: string) => {
+      cancelPending();
+      dispatch({ t: "current", name });
+      api.selectPatch(name);
+    },
+    [cancelPending],
+  );
 
   const setParam = useCallback(
     (id: string, value: number) => {

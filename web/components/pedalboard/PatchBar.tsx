@@ -10,18 +10,21 @@ export interface PatchBarProps {
 }
 
 /**
- * Global patch row: PAD_SLOTS Launchkey-style pads. Occupied pads carry a
- * dim wash of their patch color; the active one fills solid with a glow.
- * Slots beyond patches.length are inert dashed placeholders (deliberately
- * empty, like the rail's empty role slots). Next to the pads: the active
- * patch's name and engine-type chip. Styles live in chrome.extra.css.
+ * Global patch row: Launchkey-style pads — at least PAD_SLOTS, and one per
+ * patch when there are more than fit the device's top row (so every patch
+ * stays reachable in the browser). Occupied pads carry a dim wash of their
+ * patch color; the active one fills solid with a glow. Slots beyond
+ * patches.length are inert dashed placeholders (deliberately empty, like the
+ * rail's empty role slots). Next to the pads: the active patch's name and
+ * engine-type chip. Styles live in chrome.extra.css.
  */
 export function PatchBar({ patches, activeIx, onSelect }: PatchBarProps) {
   const active = patches[activeIx];
+  const slots = Math.max(PAD_SLOTS, patches.length);
   return (
     <div className="pb-patchbar">
       <div className="pb-pads" role="listbox" aria-label="Patches">
-        {Array.from({ length: PAD_SLOTS }, (_, ix) => {
+        {Array.from({ length: slots }, (_, ix) => {
           const patch = patches[ix];
           if (!patch) {
             // biome-ignore lint/suspicious/noArrayIndexKey: empty slots are positional by nature

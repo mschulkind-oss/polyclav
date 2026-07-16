@@ -105,6 +105,61 @@ test("toggling a chain pedal sends its enable; toggling reverb parks the param",
   expect(mocked.patchParams).toHaveBeenCalledWith({ reverb: 0 });
 });
 
+test("soft-bypass keeps the stored value: the parked 0 echo is ignored, restore on re-enable", () => {
+  const { result } = renderHook(() => usePolyclav());
+  act(() =>
+    handlers.snapshot?.({
+      version: "",
+      devices: { launchkey: "", xr18: "" },
+      patches: [],
+      params: { patch: "", reverb: 0.5 }, // -> reverb.mix 50
+      player: null,
+    }),
+  );
+  expect(result.current.state.chainValues["reverb.mix"]).toBe(50);
+  // stomp reverb off -> engine wet send pushed to 0
+  act(() => result.current.togglePedal("reverb"));
+  expect(mocked.patchParams).toHaveBeenCalledWith({ reverb: 0 });
+  // the daemon echoes {reverb:0}; while parked it must NOT clobber the stored 50
+  act(() => handlers.params?.({ field: "reverb", value: 0 }));
+  expect(result.current.state.chainValues["reverb.mix"]).toBe(50);
+  // re-enable restores the stored value (50% -> 0.5)
+  mocked.patchParams.mockClear();
+  act(() => result.current.togglePedal("reverb"));
+  expect(mocked.patchParams).toHaveBeenCalledWith({ reverb: 0.5 });
+});
+
+test("patch switch applies the daemon's nested-by-stage chain block", () => {
+  const { result } = renderHook(() => usePolyclav());
+  act(() =>
+    handlers.patch?.({
+      name: "Rhodes",
+      chain: {
+        chorus: { enabled: true, rate_hz: 1.2, depth: 0.5, mix: 0.3 },
+        delay: { enabled: false, time_ms: 500, feedback: 0.4, mix: 0.2 },
+      },
+    }),
+  );
+  const s = result.current.state;
+  expect(s.current).toBe("Rhodes");
+  expect(s.chainValues["chorus.rate"]).toBeCloseTo(1.2);
+  expect(s.chainValues["chorus.depth"]).toBe(50);
+  expect(s.chainValues["chorus.mix"]).toBe(30);
+  expect(s.chainValues["delay.time_ms"]).toBe(500);
+  expect(s.chainValues["delay.feedback"]).toBe(40); // 0.4 engine -> 40%
+  expect(s.enabled.chorus).toBe(true);
+  expect(s.enabled.delay).toBe(false); // tremolo->trem / delay->delay stage mapping
+});
+
+test("a patch switch cancels a knob edit queued just before it", () => {
+  vi.useFakeTimers();
+  const { result } = renderHook(() => usePolyclav());
+  act(() => result.current.setParam("delay.mix", 60)); // queued (90ms debounce)
+  act(() => handlers.patch?.({ name: "Other" })); // switch before the flush fires
+  act(() => vi.advanceTimersByTime(200));
+  expect(mocked.patchChain).not.toHaveBeenCalled(); // the stale edit never lands
+});
+
 test("reorder persists to localStorage and syncs the chain-stage subset", () => {
   const { result } = renderHook(() => usePolyclav());
   const next = ["reverb", "drive", "chorus", "trem", "delay", "comp"];
