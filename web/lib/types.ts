@@ -95,11 +95,13 @@ export interface ChainState {
   stages: ChainStageState[];
 }
 
-/** "chain": {field:"chorus.mix"|"chorus.enabled", value:number|boolean, patch}. */
+/** "chain": {field:"chorus.mix"|"chorus.enabled", value:number|boolean, patch}
+ * for params/enables, or {field:"order", order:string[]} for a reorder. */
 export interface ChainEvent {
   field: string;
   value?: number | boolean;
   patch?: string;
+  order?: string[];
 }
 
 // ---- SSE event payloads (controls hub Change.Data) ----------------------

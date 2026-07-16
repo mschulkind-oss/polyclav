@@ -174,11 +174,12 @@ test("reorder writes the full FX order to the daemon (no localStorage)", () => {
 
 test("a chain order SSE event reorders the board (engine ids -> pedal ids)", () => {
   const { result } = renderHook(() => usePolyclav());
+  // The daemon's real shape: the array lives under `order`, not `value`.
   act(() =>
     handlers.chain?.({
       field: "order",
-      value: ["reverb", "tremolo", "drive", "chorus", "delay", "comp"],
-    } as unknown as Parameters<NonNullable<typeof handlers.chain>>[0]),
+      order: ["reverb", "tremolo", "drive", "chorus", "delay", "comp"],
+    }),
   );
   expect(result.current.state.order).toEqual([
     "reverb",

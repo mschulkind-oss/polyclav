@@ -439,9 +439,11 @@ func (c *Controls) ChainSnapshot() ChainSnapshot {
 }
 
 // pedalOrder returns the stored global FX order, or the canonical order
-// (drive → … → reverb) when the user has never reordered.
+// (drive → … → reverb) when the user has never reordered or the persisted
+// value is not a full permutation (a hand-edited/downgraded state.toml must
+// not zero-fill into a valid-but-wrong permutation at the boot push).
 func (c *Controls) pedalOrder() []string {
-	if o := c.st.PedalOrder(); len(o) > 0 {
+	if o := c.st.PedalOrder(); validFxOrder(o) {
 		return o
 	}
 	return append([]string(nil), fxOrderStages...)

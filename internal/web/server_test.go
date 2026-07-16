@@ -1820,3 +1820,37 @@ func TestSSEChainFrame(t *testing.T) {
 		t.Errorf("chain data: unexpected %v", data)
 	}
 }
+
+// TestSSEChainOrderFrame pins the reorder SSE wire shape: {field:"order",
+// order:[…]} — the array lives under "order", NOT "value" (the frontend reader
+// depends on this exact key).
+func TestSSEChainOrderFrame(t *testing.T) {
+	f := newFixture(t, nil)
+	ts := httptest.NewServer(f.srv.Handler())
+	defer ts.Close()
+
+	sc, cancel := openSSE(t, ts, 10*time.Second)
+	defer cancel()
+	if ev := readSSEEvent(t, sc); ev.name != "snapshot" {
+		t.Fatalf("expected snapshot, got %q", ev.name)
+	}
+
+	order := []string{"reverb", "comp", "drive", "chorus", "tremolo", "delay"}
+	wantStatus(t, f.do(t, "PATCH", "/api/chain", map[string]any{"order": order}), http.StatusOK)
+
+	ev := readSSEEvent(t, sc)
+	if ev.name != "chain" {
+		t.Fatalf("expected chain event, got %q", ev.name)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(ev.data), &data); err != nil {
+		t.Fatalf("chain data: %v", err)
+	}
+	if data["field"] != "order" {
+		t.Errorf("expected field=order, got %v", data["field"])
+	}
+	got, ok := data["order"].([]any)
+	if !ok || len(got) != 6 || got[0] != "reverb" || got[5] != "delay" {
+		t.Errorf("order frame: expected array under key \"order\", got %v (value=%v)", data["order"], data["value"])
+	}
+}

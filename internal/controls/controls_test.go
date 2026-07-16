@@ -2730,6 +2730,21 @@ func TestSetPedalOrderPacksAndPushes(t *testing.T) {
 	}
 }
 
+// TestPedalOrderRejectsCorruptPersisted pins that pedalOrder() (the source of
+// the boot-time engine push) falls back to the canonical order when the
+// persisted value is not a full permutation — so a hand-edited/downgraded
+// state.toml can't zero-fill into a valid-but-wrong permutation and silently
+// reorder the DSP.
+func TestPedalOrderRejectsCorruptPersisted(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	// A 5-element order missing "drive" — the fake store keeps it unvalidated.
+	f.st.SetPedalOrder([]string{"chorus", "tremolo", "delay", "comp", "reverb"})
+	got := fmt.Sprintf("%v", f.c.pedalOrder())
+	if want := "[drive chorus tremolo delay comp reverb]"; got != want {
+		t.Errorf("pedalOrder() with corrupt persisted = %s, want canonical %s", got, want)
+	}
+}
+
 // TestSetChainParamUnknownAndNoPatch pins the two error paths: an
 // unrecognized id (ErrUnknownChainParam) and no patch selected
 // (errNoPatch).

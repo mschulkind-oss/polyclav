@@ -340,9 +340,9 @@ export function usePolyclav(): Polyclav {
     chain: (d) => {
       const e = d as ChainEvent;
       if (e.field === "order") {
-        const raw = (e as { value?: unknown }).value;
-        if (Array.isArray(raw)) {
-          dispatch({ t: "order", order: (raw as string[]).map((s) => ORDER_PEDAL[s] ?? s) });
+        // The daemon carries the reorder array under `order` (not `value`).
+        if (Array.isArray(e.order)) {
+          dispatch({ t: "order", order: e.order.map((s) => ORDER_PEDAL[s] ?? s) });
         }
         return;
       }
