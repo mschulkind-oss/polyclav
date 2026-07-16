@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -360,6 +361,7 @@ type fakeStore struct {
 	synthUpdates int
 	setCurrCalls int
 	pedalOrder   []string
+	macros       []state.Macro
 }
 
 func newFakeStore() *fakeStore {
@@ -427,6 +429,13 @@ func (f *fakeStore) PedalOrder() []string { return f.pedalOrder }
 
 func (f *fakeStore) SetPedalOrder(order []string) error {
 	f.pedalOrder = append([]string(nil), order...)
+	return nil
+}
+
+func (f *fakeStore) Macros() []state.Macro { return append([]state.Macro(nil), f.macros...) }
+
+func (f *fakeStore) SetMacros(m []state.Macro) error {
+	f.macros = append([]state.Macro(nil), m...)
 	return nil
 }
 
@@ -2857,5 +2866,48 @@ func TestSelectPatchRestoresChain(t *testing.T) {
 	}
 	if delay["mix"] != float32(0.7) {
 		t.Errorf("chain.delay.mix = %v, want 0.7 (stored, not gated)", delay["mix"])
+	}
+}
+
+// TestSetMacrosValidatesAndPublishes pins the macro-assignment backend:
+// invalid arrays (dup slot / slot 0 / slot 9 / non-finite min) are
+// rejected with ErrInvalidMacro and neither persist nor publish, while a
+// valid array persists to the store and publishes a "macros" change
+// carrying the assignments.
+func TestSetMacrosValidatesAndPublishes(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+
+	for _, bad := range [][]state.Macro{
+		{{Slot: 1, Target: "a"}, {Slot: 1, Target: "b"}},    // duplicate slot
+		{{Slot: 0, Target: "a"}},                            // slot below 1
+		{{Slot: 9, Target: "a"}},                            // slot above 8
+		{{Slot: 2, Target: "a", Min: float32(math.Inf(1))}}, // non-finite min
+	} {
+		if err := f.c.SetMacros(bad); !errors.Is(err, ErrInvalidMacro) {
+			t.Errorf("SetMacros(%v): got %v, want ErrInvalidMacro", bad, err)
+		}
+	}
+	assertNoChange(t, f.ch)
+	if f.st.macros != nil {
+		t.Errorf("rejected macros must not persist, got %+v", f.st.macros)
+	}
+
+	macros := []state.Macro{
+		{Slot: 1, Target: "delay.mix", Name: "Echo", Min: 0, Max: 0.6},
+		{Slot: 8, Target: "chorus.mix", Min: 0, Max: 1},
+	}
+	if err := f.c.SetMacros(macros); err != nil {
+		t.Fatalf("SetMacros: %v", err)
+	}
+	if !slices.Equal(f.st.macros, macros) {
+		t.Errorf("persisted macros = %+v, want %+v", f.st.macros, macros)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "macros" {
+		t.Fatalf("change Type = %q, want macros", ch.Type)
+	}
+	got, ok := ch.Data["macros"].([]state.Macro)
+	if !ok || !slices.Equal(got, macros) {
+		t.Errorf("macros change data = %+v, want %+v", ch.Data["macros"], macros)
 	}
 }

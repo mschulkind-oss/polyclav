@@ -13,11 +13,11 @@ import "sync"
 // Change is one observable state transition (a knob turn, a patch
 // switch, a mastering tweak, a velocity-curve swap). Type is a coarse
 // category subscribers can switch on ("params", "patch", "synth",
-// "chain", "mastering", "velocity"); Data carries only the changed keys
-// and their new values so subscribers (e.g. the web UI's SSE stream) can
-// update incrementally without re-fetching a full snapshot. The SSE
-// handler forwards any Type verbatim as the event name, so a new Type
-// needs no plumbing there.
+// "chain", "mastering", "velocity", "macros"); Data carries only the
+// changed keys and their new values so subscribers (e.g. the web UI's SSE
+// stream) can update incrementally without re-fetching a full snapshot.
+// The SSE handler forwards any Type verbatim as the event name, so a new
+// Type needs no plumbing there.
 //
 // The "chain" type covers the post-synth pedal chain
 // (internal/controls/chain.go): a param set carries {field: "<stage>.
@@ -25,6 +25,11 @@ import "sync"
 // enabled", value: bool, patch}; a reorder {field: "order", order:
 // [...]}. A patch switch's "patch" change also folds the whole chain
 // block into Data["chain"] (mirroring Data["synth"]).
+//
+// The "macros" type carries the global 8-slot macro assignments after an
+// edit: Data{macros: [{slot, target, name, min, max}, …]}. The backend
+// only stores and broadcasts the assignments — the web drives the target
+// params (see internal/controls/macros.go).
 type Change struct {
 	Type string         `json:"type"`
 	Data map[string]any `json:"data,omitempty"`

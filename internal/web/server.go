@@ -22,10 +22,12 @@ import (
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
+	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
 	"github.com/mschulkind-oss/polyclav/internal/midi"
 	"github.com/mschulkind-oss/polyclav/internal/midiprobe"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
+	"github.com/mschulkind-oss/polyclav/internal/state"
 )
 
 // DeviceStates reports the reconciler state of each hardware device.
@@ -132,6 +134,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/synth", s.handleSynth)
 	s.mux.HandleFunc("GET /api/chain", s.handleChainGet)
 	s.mux.HandleFunc("PATCH /api/chain", s.handleChainPatch)
+	s.mux.HandleFunc("GET /api/macros", s.handleMacrosGet)
+	s.mux.HandleFunc("PUT /api/macros", s.handleMacrosPut)
+	s.mux.HandleFunc("GET /api/hwmap", s.handleHwmap)
 	s.mux.HandleFunc("PATCH /api/mastering", s.handleMastering)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("PUT /api/config", s.handleConfigPut)
@@ -869,6 +874,52 @@ func (s *Server) handleChainPatch(w http.ResponseWriter, r *http.Request) {
 		resp["errors"] = fieldErrs
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMacrosGet is GET /api/macros: the stored (assigned) macro slots
+// as a JSON array. The backend only stores the assignments — the web
+// drives each target param through the existing setters.
+func (s *Server) handleMacrosGet(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.deps.Controls.Macros())
+}
+
+// handleMacrosPut is PUT /api/macros: replace the stored macro
+// assignments with the posted array (slots 1..8, no duplicate slots,
+// finite min/max; target opaque), then echo the stored array. An invalid
+// body 400s; the controls layer publishes a "macros" SSE change on
+// success.
+func (s *Server) handleMacrosPut(w http.ResponseWriter, r *http.Request) {
+	var body []state.Macro
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	if err := s.deps.Controls.SetMacros(body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.deps.Controls.Macros())
+}
+
+type hwmapJSON struct {
+	Pages     []pages.HardwarePage `json:"pages"`
+	Pads      string               `json:"pads"`
+	Transport string               `json:"transport"`
+	Note      string               `json:"note"`
+}
+
+// handleHwmap is GET /api/hwmap: the Launchkey knob-page map (what each
+// encoder controls) as a read-only reference — "the self-updating manual".
+// The knob pages come from the live pages registry; the pad/transport lines
+// and the Categories × Pages note are dictated (docs/LAUNCHKEY_NAVIGATION.md
+// is still a proposal, so there is no live device-nav state to report yet).
+func (s *Server) handleHwmap(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, hwmapJSON{
+		Pages:     pages.HardwareMap(),
+		Pads:      "Top row: patch select (8 pads). Bottom row cols 1–5: current knob-page indicator.",
+		Transport: "Play: audition play/stop. Page ◂ ▸: previous / next knob page.",
+		Note:      "Categories × Pages navigation (docs/LAUNCHKEY_NAVIGATION.md) is proposed but not yet built; this reflects the current fixed page layout.",
+	})
 }
 
 type masteringPatchBody struct {

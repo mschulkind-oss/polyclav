@@ -153,6 +153,20 @@ type PatchState struct {
 	Synth *SynthState `toml:"synth,omitempty"`
 }
 
+// Macro is one Launchkey-style macro-slot assignment: slot 1..8 mapped
+// to a board param (Target, an opaque id like "delay.mix") with a display
+// Name and the Min/Max the web maps the knob sweep across. The backend
+// only STORES + broadcasts these assignments — the web drives the target
+// params directly through the existing setters — so nothing here is
+// clamped or applied to the engine.
+type Macro struct {
+	Slot   int     `toml:"slot" json:"slot"`
+	Target string  `toml:"target" json:"target"`
+	Name   string  `toml:"name,omitempty" json:"name"`
+	Min    float32 `toml:"min" json:"min"`
+	Max    float32 `toml:"max" json:"max"`
+}
+
 // Snapshot is the file-level shape persisted to state.toml.
 type Snapshot struct {
 	CurrentPatch string                `toml:"current_patch"`
@@ -164,6 +178,12 @@ type Snapshot struct {
 	// the pedals in this order (render_block). Stored globally (not
 	// per-patch) — a pedalboard layout, not a patch tone.
 	PedalOrder []string `toml:"pedal_order,omitempty"`
+	// Macros is the GLOBAL set of the 8 macro-slot assignments, empty
+	// until the user assigns one. Stored globally (not per-patch) and
+	// edited only by the web UI; the backend persists and broadcasts the
+	// assignments but never applies them (the web drives each Target param
+	// through the existing setters). See controls.SetMacros.
+	Macros []Macro `toml:"macros,omitempty"`
 }
 
 // Store owns the in-memory snapshot and a debounced write loop.
@@ -484,6 +504,7 @@ func (s *Store) Snapshot() Snapshot {
 		CurrentPatch: s.snap.CurrentPatch,
 		Patches:      clonePatches(s.snap.Patches),
 		PedalOrder:   clonePedalOrder(s.snap.PedalOrder),
+		Macros:       cloneMacros(s.snap.Macros),
 	}
 }
 
@@ -494,6 +515,16 @@ func clonePedalOrder(in []string) []string {
 		return nil
 	}
 	return append([]string(nil), in...)
+}
+
+// cloneMacros copies the global macro-assignment slice so callers (and
+// the flush encoder) never share the store's backing array. Macro is all
+// value types, so a shallow slice copy is a full clone.
+func cloneMacros(in []Macro) []Macro {
+	if len(in) == 0 {
+		return nil
+	}
+	return append([]Macro(nil), in...)
 }
 
 // PedalOrder returns a copy of the global chain display order, or nil
@@ -523,6 +554,28 @@ func (s *Store) SetPedalOrder(order []string) error {
 	}
 	s.mu.Lock()
 	s.snap.PedalOrder = clonePedalOrder(order)
+	s.dirty = true
+	s.mu.Unlock()
+	s.signalWake()
+	return nil
+}
+
+// Macros returns a copy of the global macro-slot assignments, or nil when
+// the user has never assigned one.
+func (s *Store) Macros() []Macro {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneMacros(s.snap.Macros)
+}
+
+// SetMacros replaces the global macro-slot assignments and schedules a
+// debounced write. Mirrors SetPedalOrder minus the validation, which
+// lives in controls (the store persists whatever assignments controls has
+// already vetted). The error return is always nil — it exists so the type
+// satisfies the same StateStore seam SetPedalOrder does.
+func (s *Store) SetMacros(m []Macro) error {
+	s.mu.Lock()
+	s.snap.Macros = cloneMacros(m)
 	s.dirty = true
 	s.mu.Unlock()
 	s.signalWake()
@@ -724,6 +777,7 @@ func (s *Store) flush() error {
 		CurrentPatch: s.snap.CurrentPatch,
 		Patches:      clonePatches(s.snap.Patches),
 		PedalOrder:   clonePedalOrder(s.snap.PedalOrder),
+		Macros:       cloneMacros(s.snap.Macros),
 	}
 	s.dirty = false
 	s.mu.Unlock()

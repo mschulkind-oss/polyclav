@@ -964,3 +964,39 @@ func TestSetPedalOrderValidation(t *testing.T) {
 		t.Errorf("rejected orders must not be stored, got %v", o)
 	}
 }
+
+// TestSetMacrosRoundTrip pins that the global macro-slot assignments
+// survive SetMacros -> flush -> Load unchanged.
+func TestSetMacrosRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+
+	macros := []Macro{
+		{Slot: 1, Target: "delay.mix", Name: "Echo", Min: 0, Max: 0.6},
+		{Slot: 4, Target: "chorus.rate_hz", Min: 0.02, Max: 5},
+	}
+
+	store := NewStore(path, 10*time.Millisecond, slog.Default(), Snapshot{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = store.Run(ctx); close(done) }()
+
+	if err := store.SetMacros(macros); err != nil {
+		t.Fatalf("SetMacros: %v", err)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit within 2s")
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load round-trip: %v", err)
+	}
+	if !slices.Equal(got.Macros, macros) {
+		t.Errorf("macros did not round-trip: got %+v want %+v", got.Macros, macros)
+	}
+}

@@ -174,6 +174,7 @@ type fakeStore struct {
 	synths       map[string]state.SynthState
 	currentPatch string
 	pedalOrder   []string
+	macros       []state.Macro
 }
 
 func newFakeStore() *fakeStore {
@@ -237,6 +238,13 @@ func (f *fakeStore) PedalOrder() []string { return f.pedalOrder }
 
 func (f *fakeStore) SetPedalOrder(order []string) error {
 	f.pedalOrder = append([]string(nil), order...)
+	return nil
+}
+
+func (f *fakeStore) Macros() []state.Macro { return append([]state.Macro(nil), f.macros...) }
+
+func (f *fakeStore) SetMacros(m []state.Macro) error {
+	f.macros = append([]state.Macro(nil), m...)
 	return nil
 }
 

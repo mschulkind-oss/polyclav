@@ -78,12 +78,20 @@ type StateStore interface {
 	SetCurrentPatch(string)
 	// UpdatePatchEnable sets a chain stage's enable flag; stage is one of
 	// "drive"/"chorus"/"tremolo"/"delay". PedalOrder/SetPedalOrder carry
-	// the GLOBAL chain display order (display/edit only, not audible —
-	// see state.Snapshot.PedalOrder). SetPedalOrder rejects unknown/
-	// duplicate stage ids.
+	// the GLOBAL FX chain order — AUDIBLE now: controls packs it and pushes
+	// it to the engine (see state.Snapshot.PedalOrder). SetPedalOrder
+	// rejects unknown/duplicate stage ids.
 	UpdatePatchEnable(patch, stage string, on bool)
 	PedalOrder() []string
 	SetPedalOrder(order []string) error
+	// Macros/SetMacros carry the GLOBAL 8-slot macro-slot assignments,
+	// edited only by the web UI. The backend just stores + broadcasts the
+	// assignments — the web drives each Target param directly through the
+	// existing setters — so SetMacros neither clamps nor applies anything.
+	// Validation (slot range, dup slot, finite min/max) lives in controls;
+	// the store's SetMacros always returns nil (see state.Snapshot.Macros).
+	Macros() []state.Macro
+	SetMacros([]state.Macro) error
 }
 
 // Compile-time guarantees that the production types satisfy the seams —

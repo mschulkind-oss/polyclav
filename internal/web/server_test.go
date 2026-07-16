@@ -343,6 +343,7 @@ type fakeStore struct {
 	synths       map[string]state.SynthState
 	currentPatch string
 	pedalOrder   []string
+	macros       []state.Macro
 }
 
 func newFakeStore() *fakeStore {
@@ -427,6 +428,19 @@ func (f *fakeStore) SetPedalOrder(order []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pedalOrder = append([]string(nil), order...)
+	return nil
+}
+
+func (f *fakeStore) Macros() []state.Macro {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]state.Macro(nil), f.macros...)
+}
+
+func (f *fakeStore) SetMacros(m []state.Macro) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.macros = append([]state.Macro(nil), m...)
 	return nil
 }
 
@@ -1852,5 +1866,102 @@ func TestSSEChainOrderFrame(t *testing.T) {
 	got, ok := data["order"].([]any)
 	if !ok || len(got) != 6 || got[0] != "reverb" || got[5] != "delay" {
 		t.Errorf("order frame: expected array under key \"order\", got %v (value=%v)", data["order"], data["value"])
+	}
+}
+
+// TestMacrosPutGet pins the REST contract for the macro-assignment
+// backend: PUT stores the posted array and echoes it (200), GET reflects
+// the stored assignments, and an invalid body (duplicate slot) 400s.
+func TestHwmapGet(t *testing.T) {
+	f := newFixture(t, nil)
+	rec := f.do(t, "GET", "/api/hwmap", nil)
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	ps, ok := m["pages"].([]any)
+	if !ok || len(ps) != 5 {
+		t.Fatalf("hwmap pages: expected 5, got %v", m["pages"])
+	}
+	first := ps[0].(map[string]any)
+	if first["name"] != "MAIN" {
+		t.Errorf("hwmap pages[0].name = %v, want MAIN", first["name"])
+	}
+	knobs, ok := first["knobs"].([]any)
+	if !ok || len(knobs) != 8 || knobs[0] != "Volume" {
+		t.Errorf("hwmap MAIN knobs: unexpected %v", first["knobs"])
+	}
+	if m["pads"] == "" || m["transport"] == "" {
+		t.Errorf("hwmap missing pads/transport lines: %v", m)
+	}
+}
+
+func TestMacrosPutGet(t *testing.T) {
+	f := newFixture(t, nil)
+
+	macros := []map[string]any{
+		{"slot": 1, "target": "delay.mix", "name": "Echo", "min": 0, "max": 0.6},
+		{"slot": 8, "target": "chorus.mix", "min": 0, "max": 1},
+	}
+	rec := f.do(t, "PUT", "/api/macros", macros)
+	wantStatus(t, rec, http.StatusOK)
+
+	var put []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &put); err != nil {
+		t.Fatalf("unmarshal PUT response %q: %v", rec.Body.String(), err)
+	}
+	if len(put) != 2 || put[0]["slot"].(float64) != 1 || put[0]["target"] != "delay.mix" {
+		t.Fatalf("PUT response = %v", put)
+	}
+
+	rec = f.do(t, "GET", "/api/macros", nil)
+	wantStatus(t, rec, http.StatusOK)
+	var got []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal GET response %q: %v", rec.Body.String(), err)
+	}
+	if len(got) != 2 || got[1]["slot"].(float64) != 8 || got[1]["target"] != "chorus.mix" {
+		t.Errorf("GET macros = %v", got)
+	}
+
+	bad := []map[string]any{
+		{"slot": 1, "target": "a"},
+		{"slot": 1, "target": "b"},
+	}
+	wantStatus(t, f.do(t, "PUT", "/api/macros", bad), http.StatusBadRequest)
+}
+
+// TestSSEMacrosFrame pins that a PUT /api/macros surfaces on the SSE
+// stream as a "macros" event whose data carries the assignment array
+// (mirrors TestSSEChainFrame).
+func TestSSEMacrosFrame(t *testing.T) {
+	f := newFixture(t, nil)
+	ts := httptest.NewServer(f.srv.Handler())
+	defer ts.Close()
+
+	sc, cancel := openSSE(t, ts, 10*time.Second)
+	defer cancel()
+	if ev := readSSEEvent(t, sc); ev.name != "snapshot" {
+		t.Fatalf("expected snapshot, got %q", ev.name)
+	}
+
+	macros := []map[string]any{
+		{"slot": 2, "target": "tremolo.depth", "name": "Shiver", "min": 0, "max": 1},
+	}
+	wantStatus(t, f.do(t, "PUT", "/api/macros", macros), http.StatusOK)
+
+	ev := readSSEEvent(t, sc)
+	if ev.name != "macros" {
+		t.Fatalf("expected macros event, got %q", ev.name)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(ev.data), &data); err != nil {
+		t.Fatalf("macros data: %v", err)
+	}
+	arr, ok := data["macros"].([]any)
+	if !ok || len(arr) != 1 {
+		t.Fatalf("macros frame: expected 1-element array, got %v", data["macros"])
+	}
+	m0 := arr[0].(map[string]any)
+	if m0["slot"].(float64) != 2 || m0["target"] != "tremolo.depth" {
+		t.Errorf("macros frame element = %v", m0)
 	}
 }
