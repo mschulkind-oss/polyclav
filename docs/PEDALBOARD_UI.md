@@ -9,10 +9,14 @@
 > web pedalboard + generic pedal editor consuming them
 > (`web/lib/pedalboard/wiring.ts`). Beyond the original Phase-1 scope:
 > the post-synth **compressor and reverb** graduated from the old bus
-> card into their own pedals, and pedals gained a drag/keyboard
-> **reorder** bar (display order only — the DSP path stays fixed in
-> Rust; `docs/mockups/pedalboard-style-b-flat-modern.html` is the
-> art-direction reference). Still open: Phase 2 (Launchkey Categories ×
+> card into their own pedals; pedals **reorder** by dragging a tile's top
+> bar (or ←/→) and collapse to vertical strips; and reordering is now
+> **audible end-to-end** — the six-pedal order is packed and pushed to the
+> engine (`polyclav_dsp_set_fx_order`), so `render_block` applies the
+> pedals in the chosen order (the master tail stays fixed). Order is
+> daemon-persisted (`state.toml` `pedal_order`), not client-side.
+> (`docs/mockups/pedalboard-style-b-flat-modern.html` is the
+> art-direction reference.) Still open: Phase 2 (Launchkey Categories ×
 > Pages, `nav`/`hwmap` sync) and Phase 3 (macros). Original motivation:
 > three of the four pedals (`docs/VISION.md` §1b/1c/1d) had shipped with
 > **zero interface** — chorus, tremolo, and the analog delay existed in
@@ -388,7 +392,10 @@ max = 0.6
 | **1 — registry + plumbing + web pedalboard** | `chain.go` registry, 8 params + 4 enables wired end-to-end, `GET/PATCH /api/chain`, SSE `chain`, pedalboard strip + pedal editors, per-patch persistence | Chorus/tremolo/delay controllable **at all**, from any browser; settings stick per patch |
 | **2 — Launchkey categories + FX/MIX pages + nav sync** | Categories × Pages build-out, registry-generated FX pages, MIX page, `nav` SSE + `POST /api/nav` + `GET /api/hwmap`, Hardware Map page, follow mode | Pedals playable from the device; web ↔ hardware jump in both directions |
 | **3 — macros** | Slot storage, `AdjustMacro` scaling, MACROS category, macros card | User-shaped performance page |
-| **later / not scheduled** | chain reorder, multi-target macros, pad stomps, custom mapping UI, Tier 3 generic surface | — |
+| **later / not scheduled** | multi-target macros, pad stomps, custom mapping UI, Tier 3 generic surface | — |
+
+(Chain reorder — once listed here — shipped: the six FX pedals reorder
+audibly via `pedal_order` → `polyclav_dsp_set_fx_order`.)
 
 Phase 1 stands alone and kills the immediate pain (three pedals with
 no interface). Phase 2 depends on 1; 3 depends on 1 (not on 2 for the
