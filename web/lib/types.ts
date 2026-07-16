@@ -107,7 +107,8 @@ export interface ChainEvent {
 // ---- /api/macros (8 macro-slot assignments; SSE "macros") ---------------
 
 /** One macro slot assignment — the daemon stores these; the web drives the
- * target board param live. min/max are in the target's display units. */
+ * target board param live. min/max are percent-of-range [0,100] — a sub-range
+ * of the target's full span, not its display units. */
 export interface Macro {
   slot: number; // 1..8
   target: string; // board param id (e.g. "delay.mix"); "" = unassigned

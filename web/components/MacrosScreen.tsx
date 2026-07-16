@@ -5,6 +5,7 @@ import { GhostKnob } from "@/components/pedalboard/GhostKnob";
 import { MacroKnob } from "@/components/pedalboard/MacroKnob";
 import { clamp, formatValue } from "@/lib/pedalboard/knobMath";
 import { CHAIN, MASTER_PARAMS, type ParamSpec } from "@/lib/pedalboard/model";
+import { PARAM_WIRING } from "@/lib/pedalboard/wiring";
 import type { Macro } from "@/lib/types";
 
 const SLOTS = 8;
@@ -17,20 +18,27 @@ interface Target {
   spec: ParamSpec;
 }
 
-/** Every assignable board control, grouped by pedal + the master card. */
+/**
+ * Every assignable board control, grouped by pedal + the master card. Only
+ * params the engine can actually drive (present in PARAM_WIRING) are offered —
+ * a macro over a UI-only param (comp.attack, reverb decay/tone) would silently
+ * do nothing.
+ */
 const MACRO_TARGETS: Target[] = [
   ...CHAIN.flatMap((p) =>
-    p.params.map(
-      (spec): Target => ({
-        id: spec.id,
-        group: p.label,
-        label: `${p.label} · ${spec.label}`,
-        accentVar: p.accentVar,
-        spec,
-      }),
-    ),
+    p.params
+      .filter((spec) => PARAM_WIRING[spec.id])
+      .map(
+        (spec): Target => ({
+          id: spec.id,
+          group: p.label,
+          label: `${p.label} · ${spec.label}`,
+          accentVar: p.accentVar,
+          spec,
+        }),
+      ),
   ),
-  ...MASTER_PARAMS.map(
+  ...MASTER_PARAMS.filter((spec) => PARAM_WIRING[spec.id]).map(
     (spec): Target => ({
       id: spec.id,
       group: "Master",

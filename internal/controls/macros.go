@@ -52,8 +52,10 @@ func (c *Controls) SetMacros(m []state.Macro) error {
 	if err := c.st.SetMacros(m); err != nil {
 		return err
 	}
+	// Clone (don't alias the caller's slice); start from a non-nil empty slice so
+	// clearing every macro marshals to [] rather than null (which the web drops).
 	c.hub.Publish(Change{Type: "macros", Data: map[string]any{
-		"macros": append([]state.Macro(nil), m...), // clone — don't alias the caller's slice
+		"macros": append([]state.Macro{}, m...),
 	}})
 	return nil
 }

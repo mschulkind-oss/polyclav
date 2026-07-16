@@ -880,7 +880,17 @@ func (s *Server) handleChainPatch(w http.ResponseWriter, r *http.Request) {
 // as a JSON array. The backend only stores the assignments — the web
 // drives each target param through the existing setters.
 func (s *Server) handleMacrosGet(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.deps.Controls.Macros())
+	writeJSON(w, http.StatusOK, macrosSlice(s.deps.Controls.Macros()))
+}
+
+// macrosSlice coerces a nil macro slice to an empty (non-nil) one so an empty
+// set marshals to [] rather than null — the web treats null as "no data" and
+// would keep a stale array on reconnect instead of clearing it.
+func macrosSlice(m []state.Macro) []state.Macro {
+	if m == nil {
+		return []state.Macro{}
+	}
+	return m
 }
 
 // handleMacrosPut is PUT /api/macros: replace the stored macro
@@ -898,7 +908,7 @@ func (s *Server) handleMacrosPut(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deps.Controls.Macros())
+	writeJSON(w, http.StatusOK, macrosSlice(s.deps.Controls.Macros()))
 }
 
 type hwmapJSON struct {

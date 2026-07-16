@@ -192,3 +192,36 @@ test("a chain order SSE event reorders the board (engine ids -> pedal ids)", () 
     "comp",
   ]);
 });
+
+const macro = (name: string) => [{ slot: 1, target: "delay.mix", name, min: 0, max: 100 }];
+
+test("setMacros debounces the PUT (one write per typing burst, final value)", () => {
+  vi.useFakeTimers();
+  const { result } = renderHook(() => usePolyclav());
+  act(() => result.current.setMacros(macro("E")));
+  act(() => result.current.setMacros(macro("Ec")));
+  act(() => result.current.setMacros(macro("Ech")));
+  expect(result.current.state.macros[0].name).toBe("Ech"); // optimistic, immediate
+  expect(mocked.putMacros).not.toHaveBeenCalled(); // still within the debounce window
+  act(() => vi.advanceTimersByTime(150));
+  expect(mocked.putMacros).toHaveBeenCalledTimes(1);
+  expect(mocked.putMacros).toHaveBeenCalledWith(macro("Ech"));
+});
+
+test("a stale macros SSE echo can't revert an in-flight name edit", () => {
+  vi.useFakeTimers();
+  const { result } = renderHook(() => usePolyclav());
+  act(() => result.current.setMacros(macro("Echo")));
+  // The daemon rebroadcasts an earlier keystroke while the local edit is guarded.
+  act(() => handlers.macros?.({ macros: macro("Ech") }));
+  expect(result.current.state.macros[0].name).toBe("Echo"); // guard held; not reverted
+});
+
+test("an empty macros SSE frame (null over the wire) clears to []", () => {
+  const { result } = renderHook(() => usePolyclav());
+  act(() => handlers.macros?.({ macros: macro("E") }));
+  expect(result.current.state.macros).toHaveLength(1);
+  // An empty macro set marshals to null; the handler must treat it as [].
+  act(() => handlers.macros?.({ macros: null }));
+  expect(result.current.state.macros).toEqual([]);
+});

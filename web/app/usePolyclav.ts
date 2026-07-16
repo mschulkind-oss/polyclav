@@ -258,6 +258,10 @@ export function usePolyclav(): Polyclav {
   const guard = useRef<Record<string, number>>({});
   const pending = useRef<Map<string, number>>(new Map());
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Macro-slot writes are debounced separately (they PUT the whole array, not a
+  // single param), so per-keystroke name edits don't spam the daemon.
+  const macrosLatest = useRef<Macro[] | null>(null);
+  const macrosTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const now = () => (typeof performance !== "undefined" ? performance.now() : 0);
   // Stable so the send callbacks can list it as a dependency.
@@ -313,14 +317,30 @@ export function usePolyclav(): Polyclav {
     [flush],
   );
 
+  const flushMacros = useCallback(() => {
+    if (macrosLatest.current) api.putMacros(macrosLatest.current);
+    macrosLatest.current = null;
+  }, []);
+
   // Drop any queued debounced write (its value belongs to the old patch).
+  // Macros are global (not per-patch), so a patch switch must NOT drop them.
   const cancelPending = useCallback(() => {
     pending.current.clear();
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
-  // Never let a queued flush fire after the component unmounts.
-  useEffect(() => () => cancelPending(), [cancelPending]);
+  // On unmount: drop queued param writes, but flush the pending macro edit so
+  // the last keystroke still persists.
+  useEffect(
+    () => () => {
+      cancelPending();
+      if (macrosTimer.current) {
+        clearTimeout(macrosTimer.current);
+        flushMacros();
+      }
+    },
+    [cancelPending, flushMacros],
+  );
 
   const connected = useSSE("/api/events", {
     snapshot: (d) => dispatch({ t: "snapshot", s: d as Status, skip: guardedIds() }),
@@ -418,7 +438,9 @@ export function usePolyclav(): Polyclav {
       if (typeof c === "string") dispatch({ t: "velocity", label: c });
     },
     macros: (d) => {
-      const m = (d as MacrosEvent).macros;
+      if (guarded("macros")) return; // a local edit is in flight; ignore the echo
+      // An empty macro set marshals to null over the wire; treat it as [].
+      const m = (d as MacrosEvent).macros ?? [];
       if (Array.isArray(m)) dispatch({ t: "macros", macros: m });
     },
     note: (d) => {
@@ -522,10 +544,18 @@ export function usePolyclav(): Polyclav {
   const setVelocityLabel = useCallback((label: string) => dispatch({ t: "velocity", label }), []);
   const setPlayer = useCallback((p: PlayerState) => dispatch({ t: "player", d: p }), []);
 
-  const setMacros = useCallback((macros: Macro[]) => {
-    dispatch({ t: "macros", macros }); // optimistic; the daemon echoes it back
-    api.putMacros(macros);
-  }, []);
+  const setMacros = useCallback(
+    (macros: Macro[]) => {
+      dispatch({ t: "macros", macros }); // optimistic; the daemon echoes it back
+      // Guard so the daemon's full-array rebroadcast can't revert an in-flight
+      // name edit; debounce so per-keystroke typing sends one PUT, not a flood.
+      touch("macros");
+      macrosLatest.current = macros;
+      if (macrosTimer.current) clearTimeout(macrosTimer.current);
+      macrosTimer.current = setTimeout(flushMacros, SEND_MS);
+    },
+    [touch, flushMacros],
+  );
 
   return {
     connected,

@@ -1927,6 +1927,15 @@ func TestMacrosPutGet(t *testing.T) {
 		{"slot": 1, "target": "b"},
 	}
 	wantStatus(t, f.do(t, "PUT", "/api/macros", bad), http.StatusBadRequest)
+
+	// Clearing every macro must serialize as [] (a JSON array), not null:
+	// the web treats null as "no data" and would keep a stale array.
+	wantStatus(t, f.do(t, "PUT", "/api/macros", []map[string]any{}), http.StatusOK)
+	rec = f.do(t, "GET", "/api/macros", nil)
+	wantStatus(t, rec, http.StatusOK)
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Errorf("GET empty macros body = %q, want []", body)
+	}
 }
 
 // TestSSEMacrosFrame pins that a PUT /api/macros surfaces on the SSE
