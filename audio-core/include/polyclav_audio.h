@@ -197,6 +197,16 @@ void polyclav_dsp_set_tremolo_rate_hz(float hz);
  * post-synth DSP chain, so it applies to every synth backend. */
 void polyclav_dsp_set_tremolo_depth(float v);
 
+/* Post-synth FX chain order: a permutation of the six pedals packed as
+ * six 4-bit nibbles, LSB-first — the slot to apply at chain position p
+ * sits in bits [4p, 4p+4). Slot ids: 0=drive, 1=chorus, 2=tremolo,
+ * 3=analog_delay, 4=compressor, 5=reverb. Identity (default) =
+ * 0x00543210. A value that is not a permutation of {0..5} is ignored
+ * (the previous order is kept). Only the six pedals reorder; patch gain,
+ * the mastering compressor, the limiter and master volume stay a fixed
+ * tail. */
+void polyclav_dsp_set_fx_order(uint32_t packed);
+
 /* Native synth filter cutoff in Hz, pushed from the FILTER page's
  * Cutoff knob (MAIN knob 4 now drives the drive pedal instead). The
  * audio thread reads the atomic per block and applies it to the active

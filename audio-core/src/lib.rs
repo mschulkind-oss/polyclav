@@ -248,6 +248,18 @@ pub(crate) struct DspParams {
     /// knob exists for this pedal (see `dsp::Tremolo`'s module doc
     /// comment for why).
     tremolo_depth: AtomicU32,
+    /// Post-synth FX chain order, a permutation of the six reorderable
+    /// pedal slots packed as six 4-bit nibbles: the slot applied at
+    /// chain position `p` occupies bits `[4p, 4p+4)`. Slot indices are
+    /// 0 = drive pedal, 1 = chorus, 2 = tremolo, 3 = analog delay,
+    /// 4 = compressor, 5 = reverb. Identity (the default) is
+    /// `0x0054_3210` (position 0 → slot 0 … position 5 → slot 5) — the
+    /// historic fixed order, so the default render is unchanged. Written
+    /// by Go via `polyclav_dsp_set_fx_order`, validated to a permutation
+    /// at the boundary and again (defensively) on read. The master tail
+    /// (patch gain → mastering → limiter → master volume) is NOT part of
+    /// this ordering — it is a fixed stage after the six pedals.
+    fx_order: AtomicU32,
     /// Native synth filter cutoff in Hz, written by Go whenever the
     /// cutoff control (FILTER page knob 1) is adjusted — MAIN knob 4 was
     /// reassigned to the drive pedal above. The audio thread reads this
@@ -407,6 +419,7 @@ impl DspParams {
             chorus_mix: AtomicU32::new(0.0_f32.to_bits()),
             tremolo_rate_hz: AtomicU32::new(4.0_f32.to_bits()),
             tremolo_depth: AtomicU32::new(0.0_f32.to_bits()),
+            fx_order: AtomicU32::new(0x0054_3210),
             native_cutoff_hz: AtomicU32::new(2_000.0_f32.to_bits()),
             native_resonance: AtomicU32::new(0.3_f32.to_bits()),
             native_filter_env_attack_s: AtomicU32::new(0.005_f32.to_bits()),
@@ -521,6 +534,35 @@ impl DspParams {
     }
     pub fn tremolo_depth(&self) -> f32 {
         Self::load(&self.tremolo_depth)
+    }
+    /// The post-synth FX chain order as slot indices in application
+    /// position, unpacked from the `fx_order` nibble permutation:
+    /// position `p`'s slot is nibble `p` (bits `[4p, 4p+4)`). Slot
+    /// indices are 0 = drive, 1 = chorus, 2 = tremolo, 3 = analog delay,
+    /// 4 = compressor, 5 = reverb. Read once per audio block into a
+    /// fixed [u8; 6] `Copy` value (allocation- and lock-free). If the
+    /// stored value is not a permutation of {0,1,2,3,4,5} — each present
+    /// exactly once, none > 5 — it is treated as corrupt and the
+    /// identity order `[0, 1, 2, 3, 4, 5]` is returned, so the audio
+    /// thread never dispatches an out-of-range slot.
+    pub fn fx_order(&self) -> [u8; 6] {
+        let packed = self.fx_order.load(Ordering::Relaxed);
+        let mut order = [0u8; 6];
+        let mut seen = 0u8; // bitset of slots encountered
+        for (p, slot) in order.iter_mut().enumerate() {
+            let s = ((packed >> (4 * p)) & 0xF) as u8;
+            *slot = s;
+            if s < 6 {
+                seen |= 1 << s;
+            }
+        }
+        // All six bits set <=> every slot 0..=5 present exactly once
+        // (6 positions, 6 distinct in-range values => a permutation).
+        if seen == 0b0011_1111 {
+            order
+        } else {
+            [0, 1, 2, 3, 4, 5]
+        }
     }
     pub fn native_cutoff_hz(&self) -> f32 {
         Self::load(&self.native_cutoff_hz)
@@ -661,6 +703,25 @@ impl DspParams {
     }
     pub fn set_tremolo_depth(&self, v: f32) {
         Self::store(&self.tremolo_depth, v);
+    }
+    /// Set the post-synth FX chain order from a packed nibble
+    /// permutation (see the `fx_order` field / getter for the
+    /// encoding). The six nibbles (each masked to `& 0xF`) must form a
+    /// permutation of {0,1,2,3,4,5}; if valid, the low 24 bits are
+    /// stored, otherwise the write is IGNORED and the previous order is
+    /// kept — the same "ignore garbage at the FFI boundary" convention
+    /// as `store_clamped`.
+    pub fn set_fx_order(&self, packed: u32) {
+        let mut seen = 0u8; // bitset of slots encountered
+        for p in 0..6 {
+            let slot = (packed >> (4 * p)) & 0xF;
+            if slot < 6 {
+                seen |= 1 << slot;
+            }
+        }
+        if seen == 0b0011_1111 {
+            self.fx_order.store(packed & 0x00FF_FFFF, Ordering::Relaxed);
+        }
     }
     pub fn set_native_cutoff_hz(&self, hz: f32) {
         Self::store_clamped(&self.native_cutoff_hz, hz, 20.0, 20_000.0);
@@ -1281,6 +1342,28 @@ pub extern "C" fn polyclav_dsp_set_tremolo_rate_hz(hz: f32) {
 #[no_mangle]
 pub extern "C" fn polyclav_dsp_set_tremolo_depth(v: f32) {
     dsp_params().set_tremolo_depth(v);
+}
+
+/// Set the post-synth FX chain order — the sequence in which the six
+/// reorderable pedals are applied to the synth output. `packed` is a
+/// permutation of the six FX slots stored as six 4-bit nibbles: the
+/// slot applied at chain position `p` occupies bits `[4p, 4p+4)`.
+///
+/// Slot indices: 0 = drive pedal, 1 = chorus, 2 = tremolo,
+/// 3 = analog delay, 4 = compressor, 5 = reverb. Identity (the
+/// default) is `0x0054_3210` — position 0 → slot 0, position 1 →
+/// slot 1, … position 5 → slot 5, i.e. the historic fixed order.
+///
+/// The nibbles (each masked to `& 0xF`) must form a permutation of
+/// {0,1,2,3,4,5} — each slot present exactly once, none out of range.
+/// A non-permutation is ignored and the previous order kept, mirroring
+/// the "ignore garbage at the boundary" rule of the f32 setters. Only
+/// these six pedals reorder: the master tail (patch gain → mastering →
+/// limiter → master volume) stays a FIXED stage applied after them and
+/// never moves.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_fx_order(packed: u32) {
+    dsp_params().set_fx_order(packed);
 }
 
 /// Set the native synth's filter cutoff in Hz, pushed from the FILTER
@@ -2227,11 +2310,14 @@ pub(crate) fn drain_midi(user_data: &mut UserData) {
 
 /// Render one block of audio: push the live native-synth params, dispatch the
 /// active backend into `samples` (interleaved stereo f32, `len = frames * 2`,
-/// 48 kHz), then run the DSP chain (patch gain → compressor → reverb →
-/// mastering → limiter → master volume). Pure portable buffer math — no OS
-/// audio API — so it is shared verbatim by the PipeWire callback (Linux) and
-/// the CoreAudio backend (macOS), and is exercised directly by the offline
-/// render tests.
+/// 48 kHz), then run the DSP chain. The chain has two parts: a reorderable FX
+/// section of six pedals — drive pedal, chorus, tremolo, analog delay,
+/// compressor, reverb — applied in the order configured via
+/// `polyclav_dsp_set_fx_order` (identity by default), followed by a FIXED
+/// master tail (patch gain → mastering → limiter → master volume) that never
+/// reorders. Pure portable buffer math — no OS audio API — so it is shared
+/// verbatim by the PipeWire callback (Linux) and the CoreAudio backend
+/// (macOS), and is exercised directly by the offline render tests.
 pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
     let n_frames = samples.len() / 2;
 
@@ -2286,26 +2372,26 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         }
     }
 
-    // 2.5. Drive pedal — runs on the raw synth output, before patch gain
-    // and the rest of the dynamics chain, so its character is
-    // independent of per-patch gain staging (matches an analog pedal
-    // sitting in front of the amp) and applies identically regardless
-    // of which synth backend produced `samples`.
+    // 2.5. Reorderable post-synth FX section. Push params for all six
+    // pedals up front, then apply them in the configured order (identity
+    // by default). Each pedal runs on the raw synth output, ahead of the
+    // fixed master tail, so its character is independent of per-patch
+    // gain staging (matches an analog pedal sitting in front of the amp)
+    // and applies identically regardless of which backend produced
+    // `samples`.
+
+    // Slot 0 — drive pedal. Change-detected setter: skip recomputing the
+    // saturation curve when the knob hasn't moved.
     let drive_pedal_amount = user_data.dsp_params.drive_pedal_amount();
     if (drive_pedal_amount - user_data.last_drive_pedal_amount).abs() > f32::EPSILON {
         user_data.drive_pedal.set_amount(drive_pedal_amount);
         user_data.last_drive_pedal_amount = drive_pedal_amount;
     }
-    if drive_pedal_amount > 0.0 {
-        user_data.drive_pedal.process(samples);
-    }
+    let drive_active = drive_pedal_amount > 0.0;
 
-    // 2.6. Chorus — pedalboard-order after drive, in the "modulation"
-    // slot ahead of the time-based delay/reverb effects (so a delay's
-    // repeats carry the chorus's character forward, not the reverse).
-    // Params are pushed unconditionally each block, same rationale as
-    // `analog_delay` below (trivial setters, no coefficient
-    // recomputation to skip). See docs/VISION.md §1c.
+    // Slot 1 — chorus. Params pushed unconditionally each block (trivial
+    // setters, no coefficient recomputation to skip). See docs/VISION.md
+    // §1c.
     user_data
         .chorus
         .set_rate_hz(user_data.dsp_params.chorus_rate_hz());
@@ -2314,27 +2400,19 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         .set_depth(user_data.dsp_params.chorus_depth());
     let chorus_mix = user_data.dsp_params.chorus_mix();
     user_data.chorus.set_mix(chorus_mix);
-    if chorus_mix > 0.0 {
-        user_data.chorus.process(samples);
-    }
+    let chorus_active = chorus_mix > 0.0;
 
-    // 2.7. Tremolo — same modulation slot as chorus, right after it.
-    // Params are pushed unconditionally each block, same rationale as
-    // `analog_delay` below. See docs/VISION.md §1d.
+    // Slot 2 — tremolo. Params pushed unconditionally each block, same
+    // rationale as chorus. See docs/VISION.md §1d.
     user_data
         .tremolo
         .set_rate_hz(user_data.dsp_params.tremolo_rate_hz());
     let tremolo_depth = user_data.dsp_params.tremolo_depth();
     user_data.tremolo.set_depth(tremolo_depth);
-    if tremolo_depth > 0.0 {
-        user_data.tremolo.process(samples);
-    }
+    let tremolo_active = tremolo_depth > 0.0;
 
-    // 2.8. Analog delay — pedalboard-order after drive/chorus/tremolo
-    // (a delay catches everything ahead of it, not the reverse), before
-    // patch gain/dynamics for the same reason as the drive pedal above.
-    // Params are pushed unconditionally each block — see UserData's
-    // `analog_delay` field doc comment for why that's fine here
+    // Slot 3 — analog delay. Params pushed unconditionally each block —
+    // see UserData's `analog_delay` field doc comment for why that's fine
     // (trivial setters, no coefficient recomputation to skip).
     user_data
         .analog_delay
@@ -2344,26 +2422,62 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         .set_feedback(user_data.dsp_params.analog_delay_feedback());
     let analog_delay_mix = user_data.dsp_params.analog_delay_mix();
     user_data.analog_delay.set_mix(analog_delay_mix);
-    if analog_delay_mix > 0.0 {
-        user_data.analog_delay.process(samples);
-    }
+    let delay_active = analog_delay_mix > 0.0;
 
-    // 3. DSP chain. Read parameters once per callback.
-    let master = user_data.dsp_params.master_volume();
+    // Slots 4 & 5 — compressor and reverb. Change-detected setters, read
+    // here (rather than after patch gain, where they used to sit) so they
+    // join the reorderable section.
     let comp_amount = user_data.dsp_params.comp_amount();
-    let reverb_mix = user_data.dsp_params.reverb_mix();
-    let patch_gain = user_data.dsp_params.patch_gain();
-    let mastering_amount = user_data.dsp_params.mastering_amount();
-    let limiter_ceiling_db = user_data.dsp_params.limiter_ceiling_db();
-
     if (comp_amount - user_data.last_comp_amount).abs() > f32::EPSILON {
         user_data.compressor.set_amount(comp_amount);
         user_data.last_comp_amount = comp_amount;
     }
+    let comp_active = comp_amount > 0.0;
+    let reverb_mix = user_data.dsp_params.reverb_mix();
     if (reverb_mix - user_data.last_reverb_mix).abs() > f32::EPSILON {
         user_data.reverb.set_mix(reverb_mix);
         user_data.last_reverb_mix = reverb_mix;
     }
+    let reverb_active = reverb_mix > 0.0;
+
+    // Apply the six pedals in the configured order. `fx_order()` returns
+    // a validated permutation of the six slot indices (identity by
+    // default), read once into a fixed [u8; 6] `Copy` value so this loop
+    // is allocation- and lock-free on the audio thread. A pedal whose
+    // bypass condition is unmet is skipped exactly as in the historic
+    // fixed-order chain, so the default render stays bit-identical.
+    let active = [
+        drive_active,
+        chorus_active,
+        tremolo_active,
+        delay_active,
+        comp_active,
+        reverb_active,
+    ];
+    let order = user_data.dsp_params.fx_order();
+    for &slot in &order {
+        if !active[slot as usize] {
+            continue;
+        }
+        match slot {
+            0 => user_data.drive_pedal.process(samples),
+            1 => user_data.chorus.process(samples),
+            2 => user_data.tremolo.process(samples),
+            3 => user_data.analog_delay.process(samples),
+            4 => user_data.compressor.process(samples),
+            5 => user_data.reverb.process(samples),
+            _ => {}
+        }
+    }
+
+    // 3. Fixed master tail — patch gain → mastering → limiter → master
+    // volume, always in this order, never reordered. Read parameters once
+    // per callback.
+    let master = user_data.dsp_params.master_volume();
+    let patch_gain = user_data.dsp_params.patch_gain();
+    let mastering_amount = user_data.dsp_params.mastering_amount();
+    let limiter_ceiling_db = user_data.dsp_params.limiter_ceiling_db();
+
     if (mastering_amount - user_data.last_mastering_amount).abs() > f32::EPSILON {
         user_data.mastering.set_amount(mastering_amount);
         user_data.last_mastering_amount = mastering_amount;
@@ -2373,17 +2487,15 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         user_data.last_limiter_ceiling_db = limiter_ceiling_db;
     }
 
-    // Patch gain first — direct multiply on every sample.
+    // Patch gain — direct multiply on every sample. It now applies AFTER
+    // the six pedals (compressor/reverb moved from post-gain into the
+    // reorderable section): the pedals sit in front of the amp, matching
+    // the drive-pedal rationale above, so per-patch gain staging doesn't
+    // colour their character.
     if (patch_gain - 1.0).abs() > f32::EPSILON {
         for s in samples.iter_mut() {
             *s *= patch_gain;
         }
-    }
-    if comp_amount > 0.0 {
-        user_data.compressor.process(samples);
-    }
-    if reverb_mix > 0.0 {
-        user_data.reverb.process(samples);
     }
     if mastering_amount > 0.0 {
         user_data.mastering.process(samples);
@@ -3224,6 +3336,107 @@ mod tests {
             peak_dbfs < 6.0,
             "peak {peak_dbfs:.2} dBFS suggests the stacked chain isn't staying bounded"
         );
+    }
+
+    /// The FX chain order round-trips through `set_fx_order` /
+    /// `fx_order()` for a valid permutation, and a non-permutation (a
+    /// duplicated slot, or an out-of-range nibble) is IGNORED so the
+    /// previous order is kept — the "ignore garbage at the boundary"
+    /// convention. Boots at the identity order (historic fixed chain).
+    #[test]
+    fn fx_order_set_validates_and_round_trips() {
+        let p = DspParams::new();
+        assert_eq!(p.fx_order(), [0, 1, 2, 3, 4, 5]);
+
+        // A valid permutation round-trips. 0x0012_3450 unpacks LSB-first
+        // (position p is nibble p): pos0 -> slot 0, pos1 -> slot 5,
+        // pos2 -> 4, pos3 -> 3, pos4 -> 2, pos5 -> 1.
+        p.set_fx_order(0x0012_3450);
+        assert_eq!(p.fx_order(), [0, 5, 4, 3, 2, 1]);
+
+        // Duplicate slot (nibble 0 changed 0 -> 1, so slot 1 appears
+        // twice and slot 0 is missing): not a permutation, ignored.
+        p.set_fx_order(0x0054_3211);
+        assert_eq!(p.fx_order(), [0, 5, 4, 3, 2, 1]);
+
+        // Out-of-range nibble (slot 6): likewise ignored.
+        p.set_fx_order(0x0054_3216);
+        assert_eq!(p.fx_order(), [0, 5, 4, 3, 2, 1]);
+
+        // The identity restores cleanly.
+        p.set_fx_order(0x0054_3210);
+        assert_eq!(p.fx_order(), [0, 1, 2, 3, 4, 5]);
+    }
+
+    /// The C-ABI `polyclav_dsp_set_fx_order` routes through the same
+    /// permutation validation into the global params the audio thread
+    /// reads. Resets to identity at the end so the reorder doesn't leak
+    /// into other tests (mirrors the other FFI-setter restores).
+    #[test]
+    fn fx_order_ffi_setter_validates() {
+        polyclav_dsp_set_fx_order(0x0012_3450);
+        assert_eq!(dsp_params().fx_order(), [0, 5, 4, 3, 2, 1]);
+        // Non-permutation (duplicate) ignored — order unchanged.
+        polyclav_dsp_set_fx_order(0x0054_3211);
+        assert_eq!(dsp_params().fx_order(), [0, 5, 4, 3, 2, 1]);
+        // Out-of-range nibble ignored.
+        polyclav_dsp_set_fx_order(0x0054_3216);
+        assert_eq!(dsp_params().fx_order(), [0, 5, 4, 3, 2, 1]);
+        // Restore the identity so later tests see the documented boot order.
+        polyclav_dsp_set_fx_order(0x0054_3210);
+        assert_eq!(dsp_params().fx_order(), [0, 1, 2, 3, 4, 5]);
+    }
+
+    /// Reordering the FX chain changes the rendered output. With both the
+    /// (nonlinear) drive pedal and reverb engaged, drive -> reverb is not
+    /// the same as reverb -> drive, so swapping their two slots in
+    /// `fx_order` must produce a different — but still finite — buffer.
+    /// `fx_order` is set on the isolated offline params (a fresh
+    /// `DspParams` per `UserData`), so nothing leaks to the global chain.
+    #[test]
+    fn fx_order_reorder_changes_render_output() {
+        const N_FRAMES: usize = 48_000; // 1 s — long enough for a reverb tail
+
+        // Render a held middle-C minimoog note with drive + reverb both
+        // engaged, applying the six pedals in `fx_order`.
+        let render = |fx_order: u32| -> Vec<f32> {
+            let synth = SynthBackend::load_native("minimoog").expect("native synth load");
+            let mut ud = offline_user_data(synth);
+            ud.dsp_params.set_drive_pedal_amount(0.9);
+            ud.dsp_params.set_reverb_mix(0.8);
+            ud.dsp_params.set_fx_order(fx_order);
+            let _ = ud.midi_queue.push(MidiEvent::NoteOn {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            });
+            drain_midi(&mut ud);
+
+            let mut buf = vec![0.0f32; N_FRAMES * 2];
+            let mut done = 0usize;
+            while done < N_FRAMES {
+                let this = 128usize.min(N_FRAMES - done);
+                render_block(&mut ud, &mut buf[done * 2..(done + this) * 2]);
+                done += this;
+            }
+            buf
+        };
+
+        // Identity: drive (slot 0) -> reverb (slot 5).
+        let identity_buf = render(0x0054_3210);
+        // Swap slots 0 and 5 so reverb runs before drive: order
+        // [5, 1, 2, 3, 4, 0] packs to 0x0004_3215.
+        let swapped_buf = render(0x0004_3215);
+
+        assert!(identity_buf.iter().all(|s| s.is_finite()));
+        assert!(swapped_buf.iter().all(|s| s.is_finite()));
+        assert_ne!(
+            identity_buf, swapped_buf,
+            "swapping drive and reverb in fx_order left the render unchanged"
+        );
+        // Nothing to reset: `fx_order` was set only on the isolated
+        // per-UserData params (both dropped here), never on the global
+        // chain, so this test can't leak into any other.
     }
 
     /// `native_resonance` defaults to the Minimoog factory 0.3 and
