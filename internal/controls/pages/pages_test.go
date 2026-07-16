@@ -29,6 +29,9 @@ type fakeAudio struct {
 
 	volume, reverb, compressor, cutoffHz       float32
 	drivePedal                                 float32
+	chorusRateHz, chorusDepth, chorusMix       float32
+	tremoloRateHz, tremoloDepth                float32
+	delayTimeMs, delayFeedback, delayMix       float32
 	masteringComp, limiterDB                   float32
 	resonance, noise, glide, pulseWidth, drive float32
 	kbdTrack, bendRange                        float32
@@ -52,10 +55,27 @@ func (f *fakeAudio) rec(m string) { f.calls[m]++ }
 // state) so a test can assert only the calls it caused.
 func (f *fakeAudio) reset() { f.calls = map[string]int{} }
 
-func (f *fakeAudio) SetMasterVolume(v float32) { f.rec("SetMasterVolume"); f.volume = v }
-func (f *fakeAudio) SetReverb(v float32)       { f.rec("SetReverb"); f.reverb = v }
-func (f *fakeAudio) SetCompressor(v float32)   { f.rec("SetCompressor"); f.compressor = v }
-func (f *fakeAudio) SetDrivePedal(v float32)   { f.rec("SetDrivePedal"); f.drivePedal = v }
+func (f *fakeAudio) SetMasterVolume(v float32)  { f.rec("SetMasterVolume"); f.volume = v }
+func (f *fakeAudio) SetReverb(v float32)        { f.rec("SetReverb"); f.reverb = v }
+func (f *fakeAudio) SetCompressor(v float32)    { f.rec("SetCompressor"); f.compressor = v }
+func (f *fakeAudio) SetDrivePedal(v float32)    { f.rec("SetDrivePedal"); f.drivePedal = v }
+func (f *fakeAudio) SetChorusRateHz(hz float32) { f.rec("SetChorusRateHz"); f.chorusRateHz = hz }
+func (f *fakeAudio) SetChorusDepth(v float32)   { f.rec("SetChorusDepth"); f.chorusDepth = v }
+func (f *fakeAudio) SetChorusMix(v float32)     { f.rec("SetChorusMix"); f.chorusMix = v }
+func (f *fakeAudio) SetTremoloRateHz(hz float32) {
+	f.rec("SetTremoloRateHz")
+	f.tremoloRateHz = hz
+}
+func (f *fakeAudio) SetTremoloDepth(v float32) { f.rec("SetTremoloDepth"); f.tremoloDepth = v }
+func (f *fakeAudio) SetAnalogDelayTimeMs(ms float32) {
+	f.rec("SetAnalogDelayTimeMs")
+	f.delayTimeMs = ms
+}
+func (f *fakeAudio) SetAnalogDelayFeedback(v float32) {
+	f.rec("SetAnalogDelayFeedback")
+	f.delayFeedback = v
+}
+func (f *fakeAudio) SetAnalogDelayMix(v float32) { f.rec("SetAnalogDelayMix"); f.delayMix = v }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.rec("SetNativeCutoffHz")
 	f.cutoffHz = hz
@@ -151,6 +171,7 @@ type fakeStore struct {
 	knobs        map[string]state.Knob
 	synths       map[string]state.SynthState
 	currentPatch string
+	pedalOrder   []string
 }
 
 func newFakeStore() *fakeStore {
@@ -173,8 +194,48 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 		k.Reverb = value
 	case "compressor":
 		k.Compressor = value
+	case "drive_pedal":
+		k.DrivePedal = value
+	case "chorus_rate_hz":
+		k.ChorusRateHz = value
+	case "chorus_depth":
+		k.ChorusDepth = value
+	case "chorus_mix":
+		k.ChorusMix = value
+	case "tremolo_rate_hz":
+		k.TremoloRateHz = value
+	case "tremolo_depth":
+		k.TremoloDepth = value
+	case "delay_time_ms":
+		k.DelayTimeMs = value
+	case "delay_feedback":
+		k.DelayFeedback = value
+	case "delay_mix":
+		k.DelayMix = value
 	}
 	f.knobs[name] = k
+}
+
+func (f *fakeStore) UpdatePatchEnable(name, stage string, on bool) {
+	k := f.PatchKnob(name)
+	switch stage {
+	case "drive":
+		k.DriveEnabled = on
+	case "chorus":
+		k.ChorusEnabled = on
+	case "tremolo":
+		k.TremoloEnabled = on
+	case "delay":
+		k.DelayEnabled = on
+	}
+	f.knobs[name] = k
+}
+
+func (f *fakeStore) PedalOrder() []string { return f.pedalOrder }
+
+func (f *fakeStore) SetPedalOrder(order []string) error {
+	f.pedalOrder = append([]string(nil), order...)
+	return nil
 }
 
 func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {

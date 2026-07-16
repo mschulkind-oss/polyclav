@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +130,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/patches/{name}/select", s.handlePatchSelect)
 	s.mux.HandleFunc("PATCH /api/params", s.handleParams)
 	s.mux.HandleFunc("PATCH /api/synth", s.handleSynth)
+	s.mux.HandleFunc("GET /api/chain", s.handleChainGet)
+	s.mux.HandleFunc("PATCH /api/chain", s.handleChainPatch)
 	s.mux.HandleFunc("PATCH /api/mastering", s.handleMastering)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("PUT /api/config", s.handleConfigPut)
@@ -785,6 +788,87 @@ func (s *Server) handleSynth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, synthView(syn))
+}
+
+// handleChainGet is GET /api/chain: the post-synth pedal chain schema
+// (stages + params) with the current patch's values/enables and the
+// global display order. controls.ChainSnapshot is already JSON-shaped.
+func (s *Server) handleChainGet(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.deps.Controls.ChainSnapshot())
+}
+
+// handleChainPatch is PATCH /api/chain: a flat object whose keys are
+// chain param ids ("chorus.rate_hz" → number, clamped to the registry
+// range), stage-enable toggles ("<stage>.enabled" → bool), and/or the
+// global "order" (→ array of stage ids). "order" is global and allowed
+// with no patch selected; every other key is patch-scoped and 409s with
+// no current patch (mirroring PATCH /api/params). Unknown ids and
+// invalid values become per-field errors in the body (200), not a
+// request-level failure. Response: {applied, errors?}.
+func (s *Server) handleChainPatch(w http.ResponseWriter, r *http.Request) {
+	var body map[string]json.RawMessage
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+
+	applied := map[string]any{}
+	fieldErrs := map[string]string{}
+
+	// "order" is global (allowed with no patch); everything else is
+	// patch-scoped. Pull order aside, then run the patch gate on the
+	// remaining keys BEFORE applying anything — so a 409 leaves the whole
+	// request unapplied (no partial order write masked as a failure).
+	orderRaw, hasOrder := body["order"]
+	delete(body, "order")
+	if len(body) > 0 && s.deps.Registry.Current() == nil {
+		writeErr(w, http.StatusConflict, "no patch selected")
+		return
+	}
+
+	if hasOrder {
+		var order []string
+		if err := json.Unmarshal(orderRaw, &order); err != nil {
+			fieldErrs["order"] = "must be an array of stage ids"
+		} else if err := s.deps.Controls.SetPedalOrder(order); err != nil {
+			fieldErrs["order"] = err.Error()
+		} else {
+			applied["order"] = order
+		}
+	}
+	for key, raw := range body {
+		if stage, ok := strings.CutSuffix(key, ".enabled"); ok {
+			var on bool
+			if err := json.Unmarshal(raw, &on); err != nil {
+				fieldErrs[key] = "must be a boolean"
+				continue
+			}
+			v, err := s.deps.Controls.SetChainEnable(stage, on)
+			if err != nil {
+				fieldErrs[key] = err.Error()
+				continue
+			}
+			applied[key] = v
+			continue
+		}
+		var num float64
+		if err := json.Unmarshal(raw, &num); err != nil || !finite(num) {
+			fieldErrs[key] = "must be a finite number"
+			continue
+		}
+		v, err := s.deps.Controls.SetChainParam(key, float32(num))
+		if err != nil {
+			fieldErrs[key] = err.Error()
+			continue
+		}
+		applied[key] = v
+	}
+
+	resp := map[string]any{"applied": applied}
+	if len(fieldErrs) > 0 {
+		resp["errors"] = fieldErrs
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type masteringPatchBody struct {

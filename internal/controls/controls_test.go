@@ -34,6 +34,11 @@ type fakeAudio struct {
 
 	volume, reverb, compressor       float32
 	drivePedal                       float32
+	chorusRateHz, chorusDepth        float32
+	chorusMix                        float32
+	tremoloRateHz, tremoloDepth      float32
+	delayTimeMs, delayFeedback       float32
+	delayMix                         float32
 	cutoffHz                         float32
 	masteringComp, limiterCeilingDB  float32
 	resonance, noise, glide          float32
@@ -89,6 +94,54 @@ func (f *fakeAudio) SetDrivePedal(v float32) {
 	defer f.mu.Unlock()
 	f.drivePedal = v
 	f.drivePedalCalls++
+}
+
+func (f *fakeAudio) SetChorusRateHz(hz float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.chorusRateHz = hz
+}
+
+func (f *fakeAudio) SetChorusDepth(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.chorusDepth = v
+}
+
+func (f *fakeAudio) SetChorusMix(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.chorusMix = v
+}
+
+func (f *fakeAudio) SetTremoloRateHz(hz float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tremoloRateHz = hz
+}
+
+func (f *fakeAudio) SetTremoloDepth(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tremoloDepth = v
+}
+
+func (f *fakeAudio) SetAnalogDelayTimeMs(ms float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayTimeMs = ms
+}
+
+func (f *fakeAudio) SetAnalogDelayFeedback(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayFeedback = v
+}
+
+func (f *fakeAudio) SetAnalogDelayMix(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayMix = v
 }
 
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
@@ -300,6 +353,7 @@ type fakeStore struct {
 	updates      []knobUpdate
 	synthUpdates int
 	setCurrCalls int
+	pedalOrder   []string
 }
 
 func newFakeStore() *fakeStore {
@@ -327,9 +381,47 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 		k.Compressor = value
 	case "drive_pedal":
 		k.DrivePedal = value
+	case "chorus_rate_hz":
+		k.ChorusRateHz = value
+	case "chorus_depth":
+		k.ChorusDepth = value
+	case "chorus_mix":
+		k.ChorusMix = value
+	case "tremolo_rate_hz":
+		k.TremoloRateHz = value
+	case "tremolo_depth":
+		k.TremoloDepth = value
+	case "delay_time_ms":
+		k.DelayTimeMs = value
+	case "delay_feedback":
+		k.DelayFeedback = value
+	case "delay_mix":
+		k.DelayMix = value
 	}
 	f.knobs[name] = k
 	f.updates = append(f.updates, knobUpdate{patch: name, field: field, value: value})
+}
+
+func (f *fakeStore) UpdatePatchEnable(name, stage string, on bool) {
+	k := f.PatchKnob(name)
+	switch stage {
+	case "drive":
+		k.DriveEnabled = on
+	case "chorus":
+		k.ChorusEnabled = on
+	case "tremolo":
+		k.TremoloEnabled = on
+	case "delay":
+		k.DelayEnabled = on
+	}
+	f.knobs[name] = k
+}
+
+func (f *fakeStore) PedalOrder() []string { return f.pedalOrder }
+
+func (f *fakeStore) SetPedalOrder(order []string) error {
+	f.pedalOrder = append([]string(nil), order...)
+	return nil
 }
 
 func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
@@ -2552,5 +2644,166 @@ func TestConcurrentSelectVsWritersConverge(t *testing.T) {
 	}
 	if got := f.st.PatchKnob(lastVolPatch).Volume; got != lastVol {
 		t.Errorf("state volume diverged for %q: state=%v last-published=%v", lastVolPatch, got, lastVol)
+	}
+}
+
+// ---- chain (post-synth pedal chain) --------------------------------------
+
+// TestSetChainParam pins the happy path plus range clamping: a value
+// stores, reaches the engine, and publishes a "chain" change; out-of-range
+// values clamp to the registry [Min,Max].
+func TestSetChainParam(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	recvChange(t, f.ch) // drain the patch change
+
+	v, err := f.c.SetChainParam("chorus.rate_hz", 1.5)
+	if err != nil {
+		t.Fatalf("SetChainParam: %v", err)
+	}
+	if v != 1.5 {
+		t.Errorf("returned value = %v, want 1.5", v)
+	}
+	if f.audio.chorusRateHz != 1.5 {
+		t.Errorf("audio chorusRateHz = %v, want 1.5", f.audio.chorusRateHz)
+	}
+	if got := f.st.PatchKnob("salamander").ChorusRateHz; got != 1.5 {
+		t.Errorf("stored chorus_rate_hz = %v, want 1.5", got)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "chain" || ch.Data["field"] != "chorus.rate_hz" ||
+		ch.Data["value"] != float32(1.5) || ch.Data["patch"] != "salamander" {
+		t.Errorf("unexpected chain change: %+v", ch)
+	}
+
+	// Clamp above the max (5) and below the min (0.02).
+	if v, _ := f.c.SetChainParam("chorus.rate_hz", 100); v != 5 {
+		t.Errorf("clamp high: got %v, want 5", v)
+	}
+	if f.audio.chorusRateHz != 5 {
+		t.Errorf("audio after high clamp = %v, want 5", f.audio.chorusRateHz)
+	}
+	if v, _ := f.c.SetChainParam("chorus.rate_hz", 0); v != 0.02 {
+		t.Errorf("clamp low: got %v, want 0.02", v)
+	}
+	if got := f.st.PatchKnob("salamander").ChorusRateHz; got != 0.02 {
+		t.Errorf("stored after low clamp = %v, want 0.02", got)
+	}
+}
+
+// TestSetChainParamUnknownAndNoPatch pins the two error paths: an
+// unrecognized id (ErrUnknownChainParam) and no patch selected
+// (errNoPatch).
+func TestSetChainParamUnknownAndNoPatch(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+
+	// No patch selected: a known id still errors errNoPatch.
+	if _, err := f.c.SetChainParam("chorus.rate_hz", 1); !errors.Is(err, errNoPatch) {
+		t.Errorf("no-patch: got %v, want errNoPatch", err)
+	}
+	assertNoChange(t, f.ch)
+
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	recvChange(t, f.ch)
+
+	// Unknown id, patch selected.
+	if _, err := f.c.SetChainParam("bogus.knob", 1); !errors.Is(err, ErrUnknownChainParam) {
+		t.Errorf("unknown id: got %v, want ErrUnknownChainParam", err)
+	}
+	assertNoChange(t, f.ch)
+}
+
+// TestSetChainEnableGate pins the gate/enable interaction: a disabled
+// stage parks its gate param at 0 in the engine while the stored value is
+// preserved, and re-enabling pushes the stored value back.
+func TestSetChainEnableGate(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	recvChange(t, f.ch)
+
+	// Disable chorus.
+	if on, err := f.c.SetChainEnable("chorus", false); err != nil || on {
+		t.Fatalf("SetChainEnable(off) = %v, %v", on, err)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "chain" || ch.Data["field"] != "chorus.enabled" || ch.Data["value"] != false {
+		t.Errorf("unexpected enable change: %+v", ch)
+	}
+	if f.audio.chorusMix != 0 {
+		t.Errorf("disabling chorus must park chorus.mix at 0, got %v", f.audio.chorusMix)
+	}
+
+	// Set chorus.mix while disabled: stored, but the engine stays parked.
+	v, err := f.c.SetChainParam("chorus.mix", 0.5)
+	if err != nil {
+		t.Fatalf("SetChainParam(mix): %v", err)
+	}
+	if v != 0.5 {
+		t.Errorf("returned mix = %v, want 0.5", v)
+	}
+	if got := f.st.PatchKnob("salamander").ChorusMix; got != 0.5 {
+		t.Errorf("stored chorus_mix = %v, want 0.5", got)
+	}
+	if f.audio.chorusMix != 0 {
+		t.Errorf("audio chorusMix = %v, want 0 (gated while disabled)", f.audio.chorusMix)
+	}
+	recvChange(t, f.ch) // the chain param change
+
+	// Re-enable: the stored 0.5 is pushed to the engine.
+	if _, err := f.c.SetChainEnable("chorus", true); err != nil {
+		t.Fatalf("SetChainEnable(on): %v", err)
+	}
+	if f.audio.chorusMix != 0.5 {
+		t.Errorf("audio chorusMix after re-enable = %v, want 0.5", f.audio.chorusMix)
+	}
+}
+
+// TestSelectPatchRestoresChain pins the patch-select restore: every chain
+// param reaches the engine at its EFFECTIVE value (a gate param of a
+// disabled stage parked at 0), and the "patch" change folds a chain block
+// carrying the STORED values + enable flags.
+func TestSelectPatchRestoresChain(t *testing.T) {
+	f := newFixture(t, sfPatch, nativePatch)
+	k := state.Defaults()
+	k.DelayMix = 0.7
+	k.DelayEnabled = false // gate param delay.mix must park at 0
+	k.ChorusMix = 0.4      // chorus enabled → restored as-is
+	f.st.knobs["salamander"] = k
+
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	if f.audio.delayMix != 0 {
+		t.Errorf("audio delayMix = %v, want 0 (delay disabled)", f.audio.delayMix)
+	}
+	if f.audio.chorusMix != 0.4 {
+		t.Errorf("audio chorusMix = %v, want 0.4 (chorus enabled)", f.audio.chorusMix)
+	}
+	// Non-gate params always restore at their stored value.
+	if f.audio.delayTimeMs != 300 {
+		t.Errorf("audio delayTimeMs = %v, want 300", f.audio.delayTimeMs)
+	}
+
+	ch := recvChange(t, f.ch)
+	chain, ok := ch.Data["chain"].(map[string]any)
+	if !ok {
+		t.Fatalf("patch change missing chain block: %+v", ch.Data)
+	}
+	delay, ok := chain["delay"].(map[string]any)
+	if !ok {
+		t.Fatalf("chain block missing delay: %+v", chain)
+	}
+	if delay["enabled"] != false {
+		t.Errorf("chain.delay.enabled = %v, want false", delay["enabled"])
+	}
+	if delay["mix"] != float32(0.7) {
+		t.Errorf("chain.delay.mix = %v, want 0.7 (stored, not gated)", delay["mix"])
 	}
 }

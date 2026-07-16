@@ -21,6 +21,18 @@ type Audio interface {
 	SetReverb(float32)
 	SetCompressor(float32)
 	SetDrivePedal(float32)
+	// Post-synth chain effects (chorus/tremolo/analog-delay). Like the
+	// drive pedal above, these run in the shared post-synth DSP chain, so
+	// they apply to every synth backend. See internal/controls/chain.go
+	// for the registry that drives them.
+	SetChorusRateHz(float32)
+	SetChorusDepth(float32)
+	SetChorusMix(float32)
+	SetTremoloRateHz(float32)
+	SetTremoloDepth(float32)
+	SetAnalogDelayTimeMs(float32)
+	SetAnalogDelayFeedback(float32)
+	SetAnalogDelayMix(float32)
 	SetNativeCutoffHz(float32)
 	SetMasteringCompressor(float32)
 	SetLimiterCeilingDB(float32)
@@ -60,6 +72,14 @@ type StateStore interface {
 	PatchSynth(string) (state.SynthState, bool)
 	UpdatePatchSynth(string, state.SynthState)
 	SetCurrentPatch(string)
+	// UpdatePatchEnable sets a chain stage's enable flag; stage is one of
+	// "drive"/"chorus"/"tremolo"/"delay". PedalOrder/SetPedalOrder carry
+	// the GLOBAL chain display order (display/edit only, not audible —
+	// see state.Snapshot.PedalOrder). SetPedalOrder rejects unknown/
+	// duplicate stage ids.
+	UpdatePatchEnable(patch, stage string, on bool)
+	PedalOrder() []string
+	SetPedalOrder(order []string) error
 }
 
 // Compile-time guarantees that the production types satisfy the seams —
@@ -575,7 +595,9 @@ func (c *Controls) publishKnob(field string, v float32, patch string) {
 }
 
 // knobField reads the named field off a state.Knob. Field names match
-// state.Store.UpdatePatchKnob ("volume", "reverb", "compressor").
+// state.Store.UpdatePatchKnob and the chain registry's state-key column
+// ("volume", "reverb", "compressor", "drive_pedal", and the chorus/
+// tremolo/delay chain params).
 func knobField(k state.Knob, field string) float32 {
 	switch field {
 	case "volume":
@@ -586,6 +608,22 @@ func knobField(k state.Knob, field string) float32 {
 		return k.Compressor
 	case "drive_pedal":
 		return k.DrivePedal
+	case "chorus_rate_hz":
+		return k.ChorusRateHz
+	case "chorus_depth":
+		return k.ChorusDepth
+	case "chorus_mix":
+		return k.ChorusMix
+	case "tremolo_rate_hz":
+		return k.TremoloRateHz
+	case "tremolo_depth":
+		return k.TremoloDepth
+	case "delay_time_ms":
+		return k.DelayTimeMs
+	case "delay_feedback":
+		return k.DelayFeedback
+	case "delay_mix":
+		return k.DelayMix
 	}
 	return 0
 }
@@ -1565,15 +1603,23 @@ func (c *Controls) afterSelect() {
 	c.audio.SetMasterVolume(k.Volume)
 	c.audio.SetReverb(k.Reverb)
 	c.audio.SetCompressor(k.Compressor)
-	c.audio.SetDrivePedal(k.DrivePedal)
+	// The chain registry owns the post-synth restore, drive pedal
+	// included (the standalone SetDrivePedal call it replaced): each
+	// stage's params go to the engine at their EFFECTIVE value (a gate
+	// param of a disabled stage is parked at 0 — there is no Rust
+	// bypass). Backend-agnostic, so it runs for every patch type.
+	c.restoreChain(k)
 	c.st.SetCurrentPatch(cur.Name)
 	data := map[string]any{
-		"name":        cur.Name,
-		"display":     cur.Display,
-		"volume":      k.Volume,
-		"reverb":      k.Reverb,
-		"compressor":  k.Compressor,
+		"name":       cur.Name,
+		"display":    cur.Display,
+		"volume":     k.Volume,
+		"reverb":     k.Reverb,
+		"compressor": k.Compressor,
+		// drive_pedal stays a top-level key for /api/params back-compat;
+		// the full chain (drive included) also rides in data["chain"].
 		"drive_pedal": k.DrivePedal,
+		"chain":       chainChangeData(k),
 	}
 	if cur.Type == "native" {
 		// Cutoff position is per-session, not persisted (Phase 2): every

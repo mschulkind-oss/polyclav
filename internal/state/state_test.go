@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -43,11 +44,19 @@ func TestLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.toml")
 
+	// Expected knobs are Defaults() with only volume/reverb/compressor
+	// overridden: UpdatePatchKnob seeds a new patch from Defaults(), and
+	// Load's fillChainDefaults backfills the chain params/enables, so the
+	// round trip lands on the full default block plus those three edits.
+	ydp := Defaults()
+	ydp.Volume, ydp.Reverb, ydp.Compressor = 0.8, 0.2, 0.1
+	rhodes := Defaults()
+	rhodes.Volume, rhodes.Reverb, rhodes.Compressor = 0.6, 0.4, 0.3
 	initial := Snapshot{
 		CurrentPatch: "rhodes",
 		Patches: map[string]PatchState{
-			"ydp-grand": {Knob: Knob{Volume: 0.8, Reverb: 0.2, Compressor: 0.1}},
-			"rhodes":    {Knob: Knob{Volume: 0.6, Reverb: 0.4, Compressor: 0.3}},
+			"ydp-grand": {Knob: ydp},
+			"rhodes":    {Knob: rhodes},
 		},
 	}
 
@@ -363,7 +372,11 @@ compressor = 0.1
 	if !ok {
 		t.Fatal("ydp-grand entry missing")
 	}
-	if want := (Knob{Volume: 0.8, Reverb: 0.2, Compressor: 0.1}); p.Knob != want {
+	// A legacy file carries no chain keys, so fillChainDefaults backfills
+	// them: the loaded knob is Defaults() with the three stored values.
+	want := Defaults()
+	want.Volume, want.Reverb, want.Compressor = 0.8, 0.2, 0.1
+	if p.Knob != want {
 		t.Errorf("knobs = %+v, want %+v", p.Knob, want)
 	}
 	if p.Synth != nil {
@@ -825,4 +838,129 @@ func TestInvalidFieldIsNoop(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// ---- chain (post-synth pedal chain) --------------------------------------
+
+// TestChainDefaults pins the registry-mirroring defaults: the three
+// rate/time params are non-zero, every mix/depth/feedback is 0, and every
+// stage is enabled.
+func TestChainDefaults(t *testing.T) {
+	d := Defaults()
+	if d.ChorusRateHz != 0.8 || d.TremoloRateHz != 4 || d.DelayTimeMs != 300 {
+		t.Errorf("chain rate/time defaults wrong: %+v", d)
+	}
+	if d.ChorusMix != 0 || d.ChorusDepth != 0 || d.TremoloDepth != 0 || d.DelayMix != 0 || d.DelayFeedback != 0 {
+		t.Errorf("chain mix/depth/feedback defaults must be 0: %+v", d)
+	}
+	if !d.DriveEnabled || !d.ChorusEnabled || !d.TremoloEnabled || !d.DelayEnabled {
+		t.Errorf("all chain stages must default enabled: %+v", d)
+	}
+}
+
+// TestLoadChainBackfill pins fillChainDefaults: omitted chain keys land on
+// the registry defaults (rate/time non-zero, enables true), while explicit
+// values — including chorus_enabled=false — survive.
+func TestLoadChainBackfill(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	src := `current_patch = "p1"
+
+[patches.p1]
+volume = 1.0
+
+[patches.p2]
+volume = 1.0
+chorus_enabled = false
+chorus_mix = 0.0
+chorus_rate_hz = 2.5
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	p1 := snap.Patches["p1"].Knob
+	if p1.ChorusRateHz != 0.8 || p1.TremoloRateHz != 4 || p1.DelayTimeMs != 300 {
+		t.Errorf("p1 omitted rate/time keys must backfill to defaults: %+v", p1)
+	}
+	if !p1.DriveEnabled || !p1.ChorusEnabled || !p1.TremoloEnabled || !p1.DelayEnabled {
+		t.Errorf("p1 omitted enables must backfill to true: %+v", p1)
+	}
+	if p1.ChorusMix != 0 || p1.DelayMix != 0 {
+		t.Errorf("p1 zero-default mix keys stay 0: %+v", p1)
+	}
+
+	p2 := snap.Patches["p2"].Knob
+	if p2.ChorusEnabled {
+		t.Errorf("p2 explicit chorus_enabled=false must survive backfill, got true")
+	}
+	if p2.ChorusRateHz != 2.5 {
+		t.Errorf("p2 explicit chorus_rate_hz must survive, got %v", p2.ChorusRateHz)
+	}
+	if !p2.DriveEnabled || !p2.TremoloEnabled || !p2.DelayEnabled {
+		t.Errorf("p2 omitted enables must still backfill to true: %+v", p2)
+	}
+}
+
+// TestChainRoundTrip pins that chain knob values, a disabled stage, and
+// the global pedal order all survive a write/Load cycle.
+func TestChainRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+
+	store := NewStore(path, 10*time.Millisecond, slog.Default(), Snapshot{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = store.Run(ctx); close(done) }()
+
+	store.UpdatePatchKnob("moog", "chorus_mix", 0.42)
+	store.UpdatePatchKnob("moog", "delay_time_ms", 450)
+	store.UpdatePatchEnable("moog", "tremolo", false)
+	if err := store.SetPedalOrder([]string{"delay", "drive", "chorus", "tremolo"}); err != nil {
+		t.Fatalf("SetPedalOrder: %v", err)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit within 2s")
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	k := got.Patches["moog"].Knob
+	if k.ChorusMix != 0.42 || k.DelayTimeMs != 450 {
+		t.Errorf("chain values did not round-trip: %+v", k)
+	}
+	if k.TremoloEnabled {
+		t.Error("tremolo disable did not round-trip")
+	}
+	if !k.ChorusEnabled || !k.DriveEnabled || !k.DelayEnabled {
+		t.Errorf("untouched enables must stay true: %+v", k)
+	}
+	if want := []string{"delay", "drive", "chorus", "tremolo"}; !slices.Equal(got.PedalOrder, want) {
+		t.Errorf("pedal order did not round-trip: got %v want %v", got.PedalOrder, want)
+	}
+}
+
+// TestSetPedalOrderValidation pins that SetPedalOrder rejects unknown and
+// duplicate stage ids and leaves the stored order untouched.
+func TestSetPedalOrderValidation(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "s.toml"), time.Second, slog.Default(), Snapshot{})
+	if err := store.SetPedalOrder([]string{"drive", "bogus"}); err == nil {
+		t.Error("expected error for unknown stage id")
+	}
+	if err := store.SetPedalOrder([]string{"drive", "drive"}); err == nil {
+		t.Error("expected error for duplicate stage id")
+	}
+	if o := store.PedalOrder(); o != nil {
+		t.Errorf("rejected orders must not be stored, got %v", o)
+	}
 }

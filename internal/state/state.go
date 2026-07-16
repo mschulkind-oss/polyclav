@@ -18,8 +18,12 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Knob holds the four user-controllable DSP knob values for a patch.
-// Values are 0..1 linear (matching audio.SetMasterVolume etc.).
+// Knob holds the user-controllable post-synth DSP values for a patch:
+// the four original knobs (volume/reverb/compressor/drive) plus the
+// chorus/tremolo/analog-delay chain-effect params and per-stage enable
+// flags. Volume/reverb/compressor/mix/depth values are 0..1 linear
+// (matching audio.SetMasterVolume etc.); the rate/time params carry
+// their engine units (Hz, ms).
 type Knob struct {
 	Volume     float32 `toml:"volume"`
 	Reverb     float32 `toml:"reverb"`
@@ -29,6 +33,29 @@ type Knob struct {
 	// runs in the shared post-synth chain, not inside the native synth
 	// — so it lives here rather than in SynthState.
 	DrivePedal float32 `toml:"drive_pedal"`
+	// Post-synth chain-effect params (chorus/tremolo/analog-delay),
+	// backend-agnostic like DrivePedal above. Units are the engine's:
+	// *_rate_hz in Hz, delay_time_ms in ms, the rest 0..1. The registry
+	// in internal/controls/chain.go is the single source of the ranges,
+	// defaults, and which audio setter each drives.
+	ChorusRateHz  float32 `toml:"chorus_rate_hz"`
+	ChorusDepth   float32 `toml:"chorus_depth"`
+	ChorusMix     float32 `toml:"chorus_mix"`
+	TremoloRateHz float32 `toml:"tremolo_rate_hz"`
+	TremoloDepth  float32 `toml:"tremolo_depth"`
+	DelayTimeMs   float32 `toml:"delay_time_ms"`
+	DelayFeedback float32 `toml:"delay_feedback"`
+	DelayMix      float32 `toml:"delay_mix"`
+	// Per-stage enable flags. An ABSENT enable means "enabled" (see
+	// fillChainDefaults) so legacy state.toml files and hand-written
+	// partial blocks keep every pedal on. Disabling a stage parks its
+	// gate param (mix/amount/depth) at 0 in the engine — there is no
+	// Rust-side bypass — but the stored param value is preserved so
+	// re-enabling restores it.
+	DriveEnabled   bool `toml:"drive_enabled"`
+	ChorusEnabled  bool `toml:"chorus_enabled"`
+	TremoloEnabled bool `toml:"tremolo_enabled"`
+	DelayEnabled   bool `toml:"delay_enabled"`
 }
 
 // SynthState is the persisted per-patch native-synth block — the
@@ -130,6 +157,13 @@ type PatchState struct {
 type Snapshot struct {
 	CurrentPatch string                `toml:"current_patch"`
 	Patches      map[string]PatchState `toml:"patches"`
+	// PedalOrder is the GLOBAL display/edit order of the chain stages
+	// ("drive", "chorus", "tremolo", "delay"), empty until the user
+	// reorders. IMPORTANT: this is DISPLAY/EDIT order only — the DSP
+	// signal path is fixed in Rust (render_block), so reordering here is
+	// NOT audible without a future Rust FFI. Stored globally (not
+	// per-patch) because it is a UI-layout preference, not a patch tone.
+	PedalOrder []string `toml:"pedal_order,omitempty"`
 }
 
 // Store owns the in-memory snapshot and a debounced write loop.
@@ -151,9 +185,20 @@ type Store struct {
 }
 
 // Defaults returns sensible starting knob values for a patch we've never
-// seen before: full volume, no reverb, no compression, no drive.
+// seen before: full volume, no reverb, no compression, no drive, every
+// chain effect at its registry default (chorus 0.8 Hz / tremolo 4 Hz /
+// delay 300 ms rates and times; every mix/depth/feedback at 0 = silent),
+// and every stage enabled. The non-zero rate/time defaults mirror
+// internal/controls/chain.go (and fillChainDefaults) — keep the three
+// in lockstep.
 func Defaults() Knob {
-	return Knob{Volume: 1.0, Reverb: 0.0, Compressor: 0.0, DrivePedal: 0.0}
+	return Knob{
+		Volume: 1.0, Reverb: 0.0, Compressor: 0.0, DrivePedal: 0.0,
+		ChorusRateHz: 0.8, ChorusDepth: 0.0, ChorusMix: 0.0,
+		TremoloRateHz: 4.0, TremoloDepth: 0.0,
+		DelayTimeMs: 300.0, DelayFeedback: 0.0, DelayMix: 0.0,
+		DriveEnabled: true, ChorusEnabled: true, TremoloEnabled: true, DelayEnabled: true,
+	}
 }
 
 // Load reads a TOML file at path and returns its decoded Snapshot.
@@ -171,7 +216,60 @@ func Load(path string) (Snapshot, error) {
 		snap.Patches = map[string]PatchState{}
 	}
 	fillSynthDefaults(md, &snap)
+	fillChainDefaults(md, &snap)
 	return snap, nil
+}
+
+// fillChainDefaults backfills the post-synth chain knobs whose TOML keys
+// are absent — the backward-compat path for state.toml files written
+// before the chain params existed, and for hand-written partial blocks.
+// Only the leaves whose default is NON-ZERO need filling: an absent key
+// otherwise decodes to the Go zero value, which IS the registry default
+// for every mix/depth/feedback (0) and for drive_pedal. The three
+// rate/time params (chorus_rate_hz 0.8, tremolo_rate_hz 4, delay_time_ms
+// 300) and the four enable flags (absent == enabled) do need it. Values
+// mirror controls.chain.go and Defaults() — keep the three in lockstep.
+func fillChainDefaults(md toml.MetaData, snap *Snapshot) {
+	for name, p := range snap.Patches {
+		defined := func(key string) bool {
+			return md.IsDefined("patches", name, key)
+		}
+		if !defined("chorus_rate_hz") {
+			p.ChorusRateHz = 0.8
+		}
+		if !defined("tremolo_rate_hz") {
+			p.TremoloRateHz = 4
+		}
+		if !defined("delay_time_ms") {
+			p.DelayTimeMs = 300
+		}
+		if !defined("drive_enabled") {
+			p.DriveEnabled = true
+		}
+		if !defined("chorus_enabled") {
+			p.ChorusEnabled = true
+		}
+		if !defined("tremolo_enabled") {
+			p.TremoloEnabled = true
+		}
+		if !defined("delay_enabled") {
+			p.DelayEnabled = true
+		}
+		snap.Patches[name] = p
+	}
+}
+
+// knownChainStage reports whether id is a valid chain stage id — the set
+// SetPedalOrder validates against. Duplicated here (rather than imported
+// from controls) so state stays import-free of controls; the chain
+// registry in internal/controls/chain.go is the authority, and these
+// four ids must stay in lockstep with it.
+func knownChainStage(id string) bool {
+	switch id {
+	case "drive", "chorus", "tremolo", "delay":
+		return true
+	}
+	return false
 }
 
 // fillSynthDefaults backfills ENGINE defaults into synth blocks whose
@@ -385,7 +483,51 @@ func (s *Store) Snapshot() Snapshot {
 	return Snapshot{
 		CurrentPatch: s.snap.CurrentPatch,
 		Patches:      clonePatches(s.snap.Patches),
+		PedalOrder:   clonePedalOrder(s.snap.PedalOrder),
 	}
+}
+
+// clonePedalOrder copies the global pedal-order slice so callers (and
+// the flush encoder) never share the store's backing array.
+func clonePedalOrder(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	return append([]string(nil), in...)
+}
+
+// PedalOrder returns a copy of the global chain display order, or nil
+// when the user has never reordered (callers fall back to the registry's
+// canonical order).
+func (s *Store) PedalOrder() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return clonePedalOrder(s.snap.PedalOrder)
+}
+
+// SetPedalOrder replaces the global chain display order and schedules a
+// debounced write. order must contain only known stage ids
+// ("drive"/"chorus"/"tremolo"/"delay") with no duplicates; an invalid
+// order is rejected with an error and nothing is stored. Remember this
+// is DISPLAY/EDIT order only (see Snapshot.PedalOrder) — it changes no
+// audio.
+func (s *Store) SetPedalOrder(order []string) error {
+	seen := make(map[string]bool, len(order))
+	for _, id := range order {
+		if !knownChainStage(id) {
+			return fmt.Errorf("unknown pedal stage %q", id)
+		}
+		if seen[id] {
+			return fmt.Errorf("duplicate pedal stage %q", id)
+		}
+		seen[id] = true
+	}
+	s.mu.Lock()
+	s.snap.PedalOrder = clonePedalOrder(order)
+	s.dirty = true
+	s.mu.Unlock()
+	s.signalWake()
+	return nil
 }
 
 // PatchKnob returns the stored Knob for patchName, or Defaults() if absent.
@@ -398,9 +540,13 @@ func (s *Store) PatchKnob(patchName string) Knob {
 	return Defaults()
 }
 
-// UpdatePatchKnob sets one of volume/reverb/compressor/drive_pedal for
-// patchName. field is case-sensitive: "volume", "reverb", "compressor",
-// or "drive_pedal". The patch's synth block (if any) is untouched.
+// UpdatePatchKnob sets one post-synth knob for patchName. field is
+// case-sensitive and matches the state-key column of the chain registry
+// (internal/controls/chain.go): "volume", "reverb", "compressor",
+// "drive_pedal", or one of the chain params ("chorus_rate_hz",
+// "chorus_depth", "chorus_mix", "tremolo_rate_hz", "tremolo_depth",
+// "delay_time_ms", "delay_feedback", "delay_mix"). The patch's synth
+// block (if any) and per-stage enables are untouched.
 func (s *Store) UpdatePatchKnob(patchName string, field string, value float32) {
 	s.mu.Lock()
 	p, ok := s.snap.Patches[patchName]
@@ -416,9 +562,55 @@ func (s *Store) UpdatePatchKnob(patchName string, field string, value float32) {
 		p.Compressor = value
 	case "drive_pedal":
 		p.DrivePedal = value
+	case "chorus_rate_hz":
+		p.ChorusRateHz = value
+	case "chorus_depth":
+		p.ChorusDepth = value
+	case "chorus_mix":
+		p.ChorusMix = value
+	case "tremolo_rate_hz":
+		p.TremoloRateHz = value
+	case "tremolo_depth":
+		p.TremoloDepth = value
+	case "delay_time_ms":
+		p.DelayTimeMs = value
+	case "delay_feedback":
+		p.DelayFeedback = value
+	case "delay_mix":
+		p.DelayMix = value
 	default:
 		s.mu.Unlock()
 		s.logger.Debug("invalid knob field", "field", field)
+		return
+	}
+	s.snap.Patches[patchName] = p
+	s.dirty = true
+	s.mu.Unlock()
+	s.signalWake()
+}
+
+// UpdatePatchEnable sets one chain stage's enable flag for patchName.
+// stage is one of "drive", "chorus", "tremolo", "delay". The patch's
+// knob values and synth block are untouched. A never-seen patch gets
+// Defaults() first so the entry is complete on disk.
+func (s *Store) UpdatePatchEnable(patchName, stage string, on bool) {
+	s.mu.Lock()
+	p, ok := s.snap.Patches[patchName]
+	if !ok {
+		p = PatchState{Knob: Defaults()}
+	}
+	switch stage {
+	case "drive":
+		p.DriveEnabled = on
+	case "chorus":
+		p.ChorusEnabled = on
+	case "tremolo":
+		p.TremoloEnabled = on
+	case "delay":
+		p.DelayEnabled = on
+	default:
+		s.mu.Unlock()
+		s.logger.Debug("invalid enable stage", "stage", stage)
 		return
 	}
 	s.snap.Patches[patchName] = p
@@ -532,6 +724,7 @@ func (s *Store) flush() error {
 	snap := Snapshot{
 		CurrentPatch: s.snap.CurrentPatch,
 		Patches:      clonePatches(s.snap.Patches),
+		PedalOrder:   clonePedalOrder(s.snap.PedalOrder),
 	}
 	s.dirty = false
 	s.mu.Unlock()

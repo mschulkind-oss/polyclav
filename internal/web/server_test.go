@@ -29,6 +29,11 @@ type fakeAudio struct {
 
 	volume, reverb, compressor      float32
 	drivePedal                      float32
+	chorusRateHz, chorusDepth       float32
+	chorusMix                       float32
+	tremoloRateHz, tremoloDepth     float32
+	delayTimeMs, delayFeedback      float32
+	delayMix                        float32
 	cutoffHz                        float32
 	masteringComp, limiterCeilingDB float32
 	resonance, noise, glide         float32
@@ -48,6 +53,38 @@ func (f *fakeAudio) SetMasterVolume(v float32) { f.mu.Lock(); defer f.mu.Unlock(
 func (f *fakeAudio) SetReverb(v float32)       { f.mu.Lock(); defer f.mu.Unlock(); f.reverb = v }
 func (f *fakeAudio) SetCompressor(v float32)   { f.mu.Lock(); defer f.mu.Unlock(); f.compressor = v }
 func (f *fakeAudio) SetDrivePedal(v float32)   { f.mu.Lock(); defer f.mu.Unlock(); f.drivePedal = v }
+func (f *fakeAudio) SetChorusRateHz(hz float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.chorusRateHz = hz
+}
+func (f *fakeAudio) SetChorusDepth(v float32) { f.mu.Lock(); defer f.mu.Unlock(); f.chorusDepth = v }
+func (f *fakeAudio) SetChorusMix(v float32)   { f.mu.Lock(); defer f.mu.Unlock(); f.chorusMix = v }
+func (f *fakeAudio) SetTremoloRateHz(hz float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tremoloRateHz = hz
+}
+func (f *fakeAudio) SetTremoloDepth(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tremoloDepth = v
+}
+func (f *fakeAudio) SetAnalogDelayTimeMs(ms float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayTimeMs = ms
+}
+func (f *fakeAudio) SetAnalogDelayFeedback(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayFeedback = v
+}
+func (f *fakeAudio) SetAnalogDelayMix(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delayMix = v
+}
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -181,6 +218,22 @@ func (f *fakeAudio) get(field string) float32 {
 		return f.compressor
 	case "drive_pedal":
 		return f.drivePedal
+	case "chorusRateHz":
+		return f.chorusRateHz
+	case "chorusDepth":
+		return f.chorusDepth
+	case "chorusMix":
+		return f.chorusMix
+	case "tremoloRateHz":
+		return f.tremoloRateHz
+	case "tremoloDepth":
+		return f.tremoloDepth
+	case "delayTimeMs":
+		return f.delayTimeMs
+	case "delayFeedback":
+		return f.delayFeedback
+	case "delayMix":
+		return f.delayMix
 	case "cutoffHz":
 		return f.cutoffHz
 	case "masteringComp":
@@ -278,6 +331,7 @@ type fakeStore struct {
 	knobs        map[string]state.Knob
 	synths       map[string]state.SynthState
 	currentPatch string
+	pedalOrder   []string
 }
 
 func newFakeStore() *fakeStore {
@@ -312,8 +366,57 @@ func (f *fakeStore) UpdatePatchKnob(name, field string, value float32) {
 		k.Compressor = value
 	case "drive_pedal":
 		k.DrivePedal = value
+	case "chorus_rate_hz":
+		k.ChorusRateHz = value
+	case "chorus_depth":
+		k.ChorusDepth = value
+	case "chorus_mix":
+		k.ChorusMix = value
+	case "tremolo_rate_hz":
+		k.TremoloRateHz = value
+	case "tremolo_depth":
+		k.TremoloDepth = value
+	case "delay_time_ms":
+		k.DelayTimeMs = value
+	case "delay_feedback":
+		k.DelayFeedback = value
+	case "delay_mix":
+		k.DelayMix = value
 	}
 	f.knobs[name] = k
+}
+
+func (f *fakeStore) UpdatePatchEnable(name, stage string, on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.knobs[name]
+	if !ok {
+		k = state.Defaults()
+	}
+	switch stage {
+	case "drive":
+		k.DriveEnabled = on
+	case "chorus":
+		k.ChorusEnabled = on
+	case "tremolo":
+		k.TremoloEnabled = on
+	case "delay":
+		k.DelayEnabled = on
+	}
+	f.knobs[name] = k
+}
+
+func (f *fakeStore) PedalOrder() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.pedalOrder...)
+}
+
+func (f *fakeStore) SetPedalOrder(order []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pedalOrder = append([]string(nil), order...)
+	return nil
 }
 
 func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
@@ -1512,5 +1615,180 @@ func TestServeBadListenAddr(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve did not return a listen error")
+	}
+}
+
+// ---- chain (post-synth pedal chain) --------------------------------------
+
+func TestChainGetShape(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	rec := f.do(t, "GET", "/api/chain", nil)
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+
+	if m["patch"] != "salamander" {
+		t.Errorf("patch: expected salamander, got %v", m["patch"])
+	}
+	order, ok := m["order"].([]any)
+	if !ok || len(order) != 4 {
+		t.Fatalf("order: expected 4 stage ids, got %v", m["order"])
+	}
+	if order[0] != "drive" || order[3] != "delay" {
+		t.Errorf("order: unexpected %v", order)
+	}
+	stages, ok := m["stages"].([]any)
+	if !ok || len(stages) != 4 {
+		t.Fatalf("stages: expected 4, got %v", m["stages"])
+	}
+
+	drive := stages[0].(map[string]any)
+	if drive["id"] != "drive" || drive["kind"] != "drive" || drive["enabled"] != true {
+		t.Errorf("stages[0] (drive): unexpected %v", drive)
+	}
+	dp := drive["params"].([]any)
+	if len(dp) != 1 {
+		t.Fatalf("drive params: expected 1, got %v", dp)
+	}
+	amount := dp[0].(map[string]any)
+	if amount["id"] != "drive.amount" || amount["gate"] != true || amount["taper"] != "linear" {
+		t.Errorf("drive.amount: unexpected %v", amount)
+	}
+
+	// chorus.rate_hz: exp taper, range 0.02..5, value at the 0.8 default.
+	chorus := stages[1].(map[string]any)
+	rate := chorus["params"].([]any)[0].(map[string]any)
+	if rate["id"] != "chorus.rate_hz" || rate["taper"] != "exp" || rate["unit"] != "Hz" {
+		t.Errorf("chorus.rate_hz: unexpected %v", rate)
+	}
+	if v := rate["value"].(float64); !approxEq(v, 0.8) {
+		t.Errorf("chorus.rate_hz value: expected 0.8 default, got %v", v)
+	}
+	if v := rate["max"].(float64); !approxEq(v, 5) {
+		t.Errorf("chorus.rate_hz max: expected 5, got %v", v)
+	}
+}
+
+func TestChainPatchNumberAndEnable(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{
+		"chorus.rate_hz": 100, // clamps to the 5 max
+		"tremolo.depth":  0.5, // gate param, tremolo still enabled
+		"chorus.enabled": false,
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	if _, present := m["errors"]; present {
+		t.Fatalf("expected no errors, got %v", m["errors"])
+	}
+	applied := m["applied"].(map[string]any)
+	if v := applied["chorus.rate_hz"].(float64); !approxEq(v, 5) {
+		t.Errorf("applied chorus.rate_hz: expected clamp to 5, got %v", v)
+	}
+	if v := applied["tremolo.depth"].(float64); !approxEq(v, 0.5) {
+		t.Errorf("applied tremolo.depth: expected 0.5, got %v", v)
+	}
+	if applied["chorus.enabled"] != false {
+		t.Errorf("applied chorus.enabled: expected false, got %v", applied["chorus.enabled"])
+	}
+	if v := f.audio.get("chorusRateHz"); !approxEq(float64(v), 5) {
+		t.Errorf("audio chorusRateHz: expected 5, got %v", v)
+	}
+	if v := f.audio.get("tremoloDepth"); !approxEq(float64(v), 0.5) {
+		t.Errorf("audio tremoloDepth: expected 0.5, got %v", v)
+	}
+	// chorus.mix (chorus's gate param) parked at 0 by the disable.
+	if v := f.audio.get("chorusMix"); v != 0 {
+		t.Errorf("audio chorusMix: expected 0 after disable, got %v", v)
+	}
+	if k := f.st.PatchKnob("salamander"); k.ChorusEnabled {
+		t.Errorf("state chorus_enabled: expected false after disable")
+	}
+}
+
+func TestChainPatchUnknownField(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{"bogus.knob": 0.5})
+	wantStatus(t, rec, http.StatusOK) // per-field error, not a request failure
+	m := decodeBody(t, rec)
+	errs, ok := m["errors"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected errors map, got %v", m)
+	}
+	if _, present := errs["bogus.knob"]; !present {
+		t.Errorf("expected bogus.knob field error, got %v", errs)
+	}
+	if applied := m["applied"].(map[string]any); len(applied) != 0 {
+		t.Errorf("expected nothing applied, got %v", applied)
+	}
+}
+
+func TestChainPatchNoCurrentPatch(t *testing.T) {
+	f := newFixture(t, nil) // nothing selected
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{"chorus.rate_hz": 1})
+	wantStatus(t, rec, http.StatusConflict)
+	if v := f.audio.get("chorusRateHz"); v != 0 {
+		t.Errorf("audio must not be touched, got chorusRateHz %v", v)
+	}
+}
+
+func TestChainPatchOrderAlone(t *testing.T) {
+	f := newFixture(t, nil) // nothing selected — order is a global, no-patch-required key
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{
+		"order": []string{"delay", "tremolo", "chorus", "drive"},
+	})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	applied := m["applied"].(map[string]any)
+	ord, ok := applied["order"].([]any)
+	if !ok || len(ord) != 4 || ord[0] != "delay" || ord[3] != "drive" {
+		t.Errorf("applied order: unexpected %v", applied["order"])
+	}
+	// GET reflects the new global order.
+	rec = f.do(t, "GET", "/api/chain", nil)
+	got := decodeBody(t, rec)["order"].([]any)
+	if got[0] != "delay" || got[3] != "drive" {
+		t.Errorf("GET order after reorder: unexpected %v", got)
+	}
+}
+
+func TestSSEChainFrame(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	ts := httptest.NewServer(f.srv.Handler())
+	defer ts.Close()
+
+	sc, cancel := openSSE(t, ts, 10*time.Second)
+	defer cancel()
+	if ev := readSSEEvent(t, sc); ev.name != "snapshot" {
+		t.Fatalf("expected snapshot, got %q", ev.name)
+	}
+
+	// A chain PATCH surfaces as an event: chain frame (the SSE layer
+	// forwards any Change.Type verbatim).
+	rec := f.do(t, "PATCH", "/api/chain", map[string]any{"delay.mix": 0.6})
+	wantStatus(t, rec, http.StatusOK)
+
+	ev := readSSEEvent(t, sc)
+	if ev.name != "chain" {
+		t.Fatalf("expected chain event, got %q", ev.name)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(ev.data), &data); err != nil {
+		t.Fatalf("chain data: %v", err)
+	}
+	if data["field"] != "delay.mix" || !approxEq(data["value"].(float64), 0.6) {
+		t.Errorf("chain data: unexpected %v", data)
 	}
 }
