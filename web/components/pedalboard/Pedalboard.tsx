@@ -6,15 +6,14 @@ import { CompCurveViz } from "@/components/pedalboard/CompCurveViz";
 import { DelayTailViz } from "@/components/pedalboard/DelayTailViz";
 import { DriveCurveViz } from "@/components/pedalboard/DriveCurveViz";
 import { MasterCard } from "@/components/pedalboard/MasterCard";
-import { PedalStrip } from "@/components/pedalboard/PedalStrip";
-import { ReorderBar } from "@/components/pedalboard/ReorderBar";
+import { PedalStrip, type StripReorder } from "@/components/pedalboard/PedalStrip";
 import { ReverbBloomViz } from "@/components/pedalboard/ReverbBloomViz";
 import { RoleLegend } from "@/components/pedalboard/RoleLegend";
 import { SrcNode } from "@/components/pedalboard/SrcNode";
 import { TremOptoViz } from "@/components/pedalboard/TremOptoViz";
 import { Wire } from "@/components/pedalboard/Wire";
 import { CHAIN, DEFAULT_PEDAL_ORDER, type PedalSpec } from "@/lib/pedalboard/model";
-import { normalizeOrder } from "@/lib/pedalboard/order";
+import { moveBy, moveRelative, normalizeOrder } from "@/lib/pedalboard/order";
 
 export interface PedalboardProps {
   /** A strip asked to open in the editor (click / Enter / Space). */
@@ -92,12 +91,13 @@ function signatureViz(pedal: PedalSpec, values: Record<string, number>, on: bool
 }
 
 /**
- * The pedalboard screen: a reorder bar, then source node → wires → the pedal
- * strips in display order → the master-out card, all on one shared grid so
- * every role row lines up. Every knob is adjustable in place. Standalone it
- * owns its stomp/value/order state (seeded from spec defaults); pages pass
- * values/enabled/order + the on* callbacks so the editor screen and the board
- * share one source of truth.
+ * The pedalboard screen: source node → wires → the pedal strips in display
+ * order → the master-out card, all on one shared grid. Reorder the FX chain by
+ * dragging a pedal's top bar onto another (or focus a strip and press ←/→);
+ * collapse a pedal to a vertical strip to reclaim horizontal space. Every knob
+ * is adjustable in place. Standalone the board owns its stomp/value/order
+ * state; pages pass values/enabled/order + the on* callbacks so the editor and
+ * the board share one source of truth.
  */
 export function Pedalboard({
   onOpenPedal,
@@ -112,6 +112,10 @@ export function Pedalboard({
   const [localEnabled, setLocalEnabled] = useState(INITIAL_ENABLED);
   const [localValues, setLocalValues] = useState<Record<string, number>>({});
   const [localOrder, setLocalOrder] = useState<string[]>(DEFAULT_PEDAL_ORDER);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+
   const enabledMap = enabled ?? localEnabled;
   const valueMap = values ?? localValues;
   const orderIds = normalizeOrder(order ?? localOrder, DEFAULT_PEDAL_ORDER);
@@ -125,10 +129,46 @@ export function Pedalboard({
     if (onParamChange) onParamChange(paramId, value);
     else setLocalValues((prev) => ({ ...prev, [paramId]: value }));
   };
-  const reorder = (next: string[]) => {
+  const applyOrder = (next: string[]) => {
     if (onReorder) onReorder(next);
     else setLocalOrder(next);
   };
+  const toggleCollapse = (id: string) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+
+  const stripDrag = (id: string): StripReorder => ({
+    dragging: dragId === id,
+    dropTarget: overId === id && dragId !== null && dragId !== id,
+    position: `${orderIds.indexOf(id) + 1} of ${orderIds.length}`,
+    handleProps: {
+      draggable: true,
+      onDragStart: (e) => {
+        setDragId(id);
+        e.dataTransfer.setData("text/plain", id);
+        e.dataTransfer.effectAllowed = "move";
+      },
+      onDragEnd: () => {
+        setDragId(null);
+        setOverId(null);
+      },
+      onDragOver: (e) => {
+        e.preventDefault();
+        setOverId(id);
+      },
+      onDragLeave: () => setOverId((c) => (c === id ? null : c)),
+      onDrop: (e) => {
+        e.preventDefault();
+        const from = dragId ?? e.dataTransfer.getData("text/plain");
+        if (from) {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const after = e.clientX > rect.left + rect.width / 2;
+          applyOrder(moveRelative(orderIds, from, id, after));
+        }
+        setDragId(null);
+        setOverId(null);
+      },
+    },
+    onKey: (dir) => applyOrder(moveBy(orderIds, id, dir)),
+  });
 
   return (
     <>
@@ -141,7 +181,6 @@ export function Pedalboard({
         </div>
         <div className="pb-meta pb-num">{meta ?? "48 kHz · 128 smp · stereo"}</div>
       </div>
-      <ReorderBar pedals={orderedPedals} enabled={enabledMap} onReorder={reorder} />
       <div className="pb-railwrap">
         <div className="pb-rail">
           <SrcNode />
@@ -161,6 +200,9 @@ export function Pedalboard({
                   labelOff={pedal.id === "delay" ? "Parked" : undefined}
                   miniSizes={pedal.id === "delay" ? { "delay.time_ms": 44 } : undefined}
                   onParamChange={changeParam}
+                  collapsed={collapsed[pedal.id] ?? false}
+                  onToggleCollapse={() => toggleCollapse(pedal.id)}
+                  reorder={stripDrag(pedal.id)}
                 />
                 <Wire />
               </Fragment>
@@ -170,8 +212,8 @@ export function Pedalboard({
         </div>
       </div>
       <p className="pb-rail-hint">
-        Drag the chips above to reorder · click a pedal to open it · drag its knobs to tweak in
-        place · stomp switches toggle bypass · parked pedals keep their settings
+        Drag a pedal's top bar to reorder the FX chain · press ←/→ on a focused pedal · collapse a
+        pedal to a strip to reclaim space · click to edit · stomp switches toggle bypass
       </p>
       <RoleLegend />
     </>

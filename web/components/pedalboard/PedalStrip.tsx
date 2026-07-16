@@ -9,7 +9,7 @@
 
 "use client";
 
-import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
+import type { CSSProperties, DragEventHandler, KeyboardEvent, ReactNode } from "react";
 import { Led } from "@/components/pedalboard/Led";
 import { MiniKnob } from "@/components/pedalboard/MiniKnob";
 import { GateDot, ROLE_NAMES, RoleGlyph } from "@/components/pedalboard/RoleGlyph";
@@ -23,6 +23,24 @@ const STRIP_ROWS: { role: Role; row: number }[] = [
   { role: "shape", row: 3 },
   { role: "blend", row: 4 },
 ];
+
+/** Reorder wiring for the strip's top bar (the drag handle). Built by Pedalboard. */
+export interface StripReorder {
+  dragging: boolean;
+  dropTarget: boolean;
+  /** "3 of 6", for the handle's aria-label. */
+  position: string;
+  handleProps: {
+    draggable: true;
+    onDragStart: DragEventHandler<HTMLDivElement>;
+    onDragEnd: () => void;
+    onDragOver: DragEventHandler<HTMLDivElement>;
+    onDragLeave: () => void;
+    onDrop: DragEventHandler<HTMLDivElement>;
+  };
+  /** Keyboard nudge left/right one slot. */
+  onKey: (dir: -1 | 1) => void;
+}
 
 export interface PedalStripProps {
   pedal: PedalSpec;
@@ -43,15 +61,21 @@ export interface PedalStripProps {
    * it never triggers onOpen.
    */
   onParamChange?: (paramId: string, value: number) => void;
+  /** Shrunk to a vertical strip (view-only convenience for horizontal scroll). */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  /** Drag/keyboard reorder wired onto the top bar; omit to disable reordering. */
+  reorder?: StripReorder;
 }
 
 /**
  * A pedal strip on the rail (reference `.strip`) — THE alignment-contract
- * card. Header, one mini knob per param placed by its ROLE's grid row (time /
- * intensity / blend), a faint dashed ring where a role is deliberately absent,
- * the pedal's signature module in the viz band, and the stomp pinned last.
- * The card itself is a button: click / Enter / Space opens the editor; the
- * stomp toggles bypass without opening (its click never bubbles up).
+ * card. Its TOP BAR is the drag handle (reorder the FX chain) and carries the
+ * collapse toggle; below it, one mini knob per param placed by its ROLE's grid
+ * row, the pedal's signature module, and the stomp. Clicking the body opens
+ * the editor (or, when collapsed, expands the strip); the stomp and header
+ * controls never bubble up to that. Collapsed, it becomes a narrow vertical
+ * strip so pedals you're not poking at get out of the horizontal scroll's way.
  */
 export function PedalStrip({
   pedal,
@@ -63,53 +87,104 @@ export function PedalStrip({
   labelOff,
   miniSizes,
   onParamChange,
+  collapsed = false,
+  onToggleCollapse,
+  reorder,
 }: PedalStripProps) {
+  const activate = () => (collapsed ? onToggleCollapse?.() : onOpen());
   const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.target !== e.currentTarget) return; // keys inside (e.g. the stomp) keep their meaning
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onOpen();
+      activate();
+    } else if (reorder && e.key === "ArrowLeft") {
+      e.preventDefault();
+      reorder.onKey(-1);
+    } else if (reorder && e.key === "ArrowRight") {
+      e.preventDefault();
+      reorder.onKey(1);
     }
   };
+
+  const cls = ["pb-strip"];
+  if (!enabled) cls.push("pb-bypassed");
+  if (collapsed) cls.push("pb-collapsed");
+  if (reorder?.dragging) cls.push("pb-dragging");
+  else if (reorder?.dropTarget) cls.push("pb-drop");
+
+  const collapseBtn = onToggleCollapse ? (
+    <button
+      type="button"
+      className="pb-strip-collapse"
+      draggable={false}
+      aria-label={`${collapsed ? "Expand" : "Collapse"} ${pedal.label}`}
+      title={collapsed ? "Expand" : "Collapse to a strip"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggleCollapse();
+      }}
+      onDragStart={(e) => e.preventDefault()}
+    >
+      {collapsed ? "»" : "«"}
+    </button>
+  ) : null;
+
   return (
     <article
-      className={enabled ? "pb-strip" : "pb-strip pb-bypassed"}
+      className={cls.join(" ")}
       role="button"
       tabIndex={0}
-      aria-label={`Open ${pedal.label} in editor`}
+      aria-label={collapsed ? `${pedal.label} — collapsed` : `Open ${pedal.label} in editor`}
       style={{ "--pb-accent": `var(${pedal.accentVar})` } as CSSProperties}
-      onClick={onOpen}
+      onClick={activate}
       onKeyDown={handleKeyDown}
     >
-      <div className="pb-strip-top">
+      <div
+        className="pb-strip-top"
+        title={reorder ? `Drag to reorder · ${pedal.label} ${reorder.position}` : undefined}
+        {...reorder?.handleProps}
+      >
         <Led on={enabled} />
-        <h3>{pedal.label}</h3>
-        <span className="pb-slot-ix pb-num">{pedal.slot}</span>
+        {!collapsed && <h3>{pedal.label}</h3>}
+        {collapseBtn}
+        {!collapsed && <span className="pb-slot-ix pb-num">{pedal.slot}</span>}
       </div>
-      {STRIP_ROWS.map(({ role, row }) => {
-        const param = pedal.params.find((p) => p.role === role);
-        if (!param) {
-          return (
-            <div
-              key={role}
-              className="pb-slot-empty"
-              style={{ "--pb-row": String(row) } as CSSProperties}
-              aria-hidden="true"
-            />
-          );
-        }
-        return (
-          <StripParam
-            key={role}
-            param={param}
-            value={values[param.id] ?? param.defaultValue}
-            size={miniSizes?.[param.id]}
-            onChange={onParamChange && ((v: number) => onParamChange(param.id, v))}
-          />
-        );
-      })}
-      <div className="pb-viz">{extra}</div>
-      <Stomp on={enabled} onToggle={onStomp} labelOff={labelOff} />
+
+      {collapsed ? (
+        <>
+          <div className="pb-strip-vname" aria-hidden="true">
+            {pedal.label}
+          </div>
+          <Stomp on={enabled} onToggle={onStomp} labelOff={labelOff} />
+        </>
+      ) : (
+        <>
+          {STRIP_ROWS.map(({ role, row }) => {
+            const param = pedal.params.find((p) => p.role === role);
+            if (!param) {
+              return (
+                <div
+                  key={role}
+                  className="pb-slot-empty"
+                  style={{ "--pb-row": String(row) } as CSSProperties}
+                  aria-hidden="true"
+                />
+              );
+            }
+            return (
+              <StripParam
+                key={role}
+                param={param}
+                value={values[param.id] ?? param.defaultValue}
+                size={miniSizes?.[param.id]}
+                onChange={onParamChange && ((v: number) => onParamChange(param.id, v))}
+              />
+            );
+          })}
+          <div className="pb-viz">{extra}</div>
+          <Stomp on={enabled} onToggle={onStomp} labelOff={labelOff} />
+        </>
+      )}
     </article>
   );
 }

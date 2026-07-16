@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { Pedalboard } from "@/components/pedalboard/Pedalboard";
 
-test("composes the rail: source → 6 wired strips → master, plus reorder bar, hint and legend", () => {
+test("composes the rail: source → 6 wired strips → master, plus hint and legend", () => {
   const { container } = render(<Pedalboard />);
   const rail = container.querySelector(".pb-railwrap .pb-rail");
   expect(rail).not.toBeNull();
@@ -13,11 +13,34 @@ test("composes the rail: source → 6 wired strips → master, plus reorder bar,
   for (const name of ["Drive", "Chorus", "Trem", "Delay", "Comp", "Reverb"]) {
     expect(screen.getByRole("button", { name: `Open ${name} in editor` })).toBeInTheDocument();
   }
-  expect(container.querySelector(".pb-reorder")).not.toBeNull();
+  // every pedal's top bar is a drag handle (no separate reorder bar).
+  expect(rail?.querySelectorAll(".pb-strip .pb-strip-top[draggable='true']")).toHaveLength(6);
   expect(container.querySelector(".pb-rail-hint")?.textContent).toContain(
-    "Drag the chips above to reorder",
+    "Drag a pedal's top bar to reorder",
   );
   expect(container.querySelector(".pb-legend")).not.toBeNull();
+});
+
+test("ArrowRight on a focused strip reorders the FX chain in place", () => {
+  const { container } = render(<Pedalboard />);
+  const drive = screen.getByRole("button", { name: "Open Drive in editor" });
+  fireEvent.keyDown(drive, { key: "ArrowRight" });
+  // drive moved one slot later → the second strip is now Drive.
+  const strips = container.querySelectorAll(".pb-strip h3");
+  expect(strips[0]?.textContent).toBe("Chorus");
+  expect(strips[1]?.textContent).toBe("Drive");
+});
+
+test("collapse shrinks a pedal to a vertical strip and back", () => {
+  const { container } = render(<Pedalboard />);
+  fireEvent.click(screen.getByRole("button", { name: "Collapse Chorus" }));
+  const chorus = container.querySelector<HTMLElement>(".pb-strip.pb-collapsed");
+  expect(chorus).not.toBeNull();
+  // collapsed hides the knob row; the vertical name carries the label.
+  expect(within(chorus as HTMLElement).queryByRole("slider", { name: "Rate" })).toBeNull();
+  expect(chorus?.querySelector(".pb-strip-vname")?.textContent).toBe("Chorus");
+  fireEvent.click(screen.getByRole("button", { name: "Expand Chorus" }));
+  expect(container.querySelector(".pb-strip.pb-collapsed")).toBeNull();
 });
 
 test("opening state matches the reference: trem bypassed, delay parked", () => {

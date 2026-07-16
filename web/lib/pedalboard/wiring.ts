@@ -89,3 +89,22 @@ export const SOFT_BYPASS_PARAMS: Record<string, string[]> = {
   comp: ["comp.amount", "comp.glue"],
   reverb: ["reverb.mix"],
 };
+
+/**
+ * Pedal-order id mapping for the reorderable FX chain. The order covers all six
+ * pedals; the engine stage id differs only for tremolo (UI "trem"). The daemon
+ * stores this order and pushes it to the DSP so reordering actually reorders
+ * the signal chain (GET/PATCH /api/chain "order", SSE chain {field:"order"}).
+ */
+export const ORDER_STAGE: Record<string, string> = {
+  drive: "drive",
+  chorus: "chorus",
+  trem: "tremolo",
+  delay: "delay",
+  comp: "comp",
+  reverb: "reverb",
+};
+/** Reverse of ORDER_STAGE: engine stage id -> UI pedal id. */
+export const ORDER_PEDAL: Record<string, string> = Object.fromEntries(
+  Object.entries(ORDER_STAGE).map(([pedal, stage]) => [stage, pedal]),
+);

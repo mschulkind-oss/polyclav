@@ -160,14 +160,32 @@ test("a patch switch cancels a knob edit queued just before it", () => {
   expect(mocked.patchChain).not.toHaveBeenCalled(); // the stale edit never lands
 });
 
-test("reorder persists to localStorage and syncs the chain-stage subset", () => {
+test("reorder writes the full FX order to the daemon (no localStorage)", () => {
   const { result } = renderHook(() => usePolyclav());
   const next = ["reverb", "drive", "chorus", "trem", "delay", "comp"];
   act(() => result.current.reorder(next));
   expect(result.current.state.order).toEqual(next);
-  expect(JSON.parse(window.localStorage.getItem("polyclav-pedal-order") ?? "[]")).toEqual(next);
-  // only the four engine stages, mapped (trem -> tremolo), in the new order
+  // all six pedals, engine stage ids (trem -> tremolo); nothing in localStorage.
   expect(mocked.patchChain).toHaveBeenCalledWith({
-    order: ["drive", "chorus", "tremolo", "delay"],
+    order: ["reverb", "drive", "chorus", "tremolo", "delay", "comp"],
   });
+  expect(window.localStorage.getItem("polyclav-pedal-order")).toBeNull();
+});
+
+test("a chain order SSE event reorders the board (engine ids -> pedal ids)", () => {
+  const { result } = renderHook(() => usePolyclav());
+  act(() =>
+    handlers.chain?.({
+      field: "order",
+      value: ["reverb", "tremolo", "drive", "chorus", "delay", "comp"],
+    } as unknown as Parameters<NonNullable<typeof handlers.chain>>[0]),
+  );
+  expect(result.current.state.order).toEqual([
+    "reverb",
+    "trem",
+    "drive",
+    "chorus",
+    "delay",
+    "comp",
+  ]);
 });

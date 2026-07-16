@@ -17,70 +17,93 @@ body:has(.pb-root) > .topnav {
   display: none;
 }
 
-/* ---------- reorder bar (ReorderBar) ----------
-   Draggable chips above the rail, one per pedal, in chain order. Each chip
-   carries its pedal's accent; the drop target shows an accent edge. */
-.pb-root .pb-reorder {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(var(--u) * 8);
-  margin-bottom: calc(var(--u) * 16);
-  list-style: none;
-}
-.pb-root .pb-reorder-slot {
-  display: inline-flex;
-}
-.pb-root .pb-reorder-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(var(--u) * 8);
-  padding: calc(var(--u) * 7) calc(var(--u) * 12);
-  border: 1px solid var(--pb-line);
-  border-left: 2px solid var(--pb-accent);
-  border-radius: calc(var(--u) * 6);
-  background: linear-gradient(180deg, var(--pb-card-hi) 0%, var(--pb-card) 60%);
-  font-size: calc(var(--u) * 11);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--pb-txt2);
+/* ---------- strip reorder + collapse ----------
+   The pedal tile's TOP BAR is the drag handle: grab it to reorder the FX
+   chain. A collapse toggle shrinks the tile to a narrow vertical strip. */
+.pb-root .pb-strip .pb-strip-top {
   cursor: grab;
-  user-select: none;
-  transition:
-    border-color 0.15s ease,
-    color 0.15s ease,
-    opacity 0.15s ease,
-    box-shadow 0.15s ease;
 }
-.pb-root .pb-reorder-chip:hover {
-  color: var(--pb-txt);
-  border-color: #33363e;
-  border-left-color: var(--pb-accent);
-}
-.pb-root .pb-reorder-chip.pb-dragging {
-  opacity: 0.4;
+.pb-root .pb-strip .pb-strip-top:active {
   cursor: grabbing;
 }
-.pb-root .pb-reorder-chip.pb-drop {
-  box-shadow: inset calc(var(--u) * 3) 0 0 var(--pb-accent);
+.pb-root .pb-strip.pb-dragging {
+  opacity: 0.4;
+}
+/* Drop target: an accent edge on the side the drag will land. */
+.pb-root .pb-strip.pb-drop {
   border-color: var(--pb-accent);
+  box-shadow: inset calc(var(--u) * 3) 0 0 var(--pb-accent);
 }
-.pb-root .pb-reorder-chip.pb-bypassed {
-  --pb-accent: var(--pb-off);
-  color: var(--pb-txt3);
-}
-.pb-root .pb-reorder-dot {
-  width: calc(var(--u) * 7);
-  height: calc(var(--u) * 7);
-  border-radius: 50%;
-  background: var(--pb-accent);
-  flex: none;
-}
-.pb-root .pb-reorder-grip {
-  margin-left: calc(var(--u) * 2);
+.pb-root .pb-strip-collapse {
+  margin-left: auto;
+  width: calc(var(--u) * 18);
+  height: calc(var(--u) * 18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--pb-line);
+  border-radius: calc(var(--u) * 4);
   color: var(--pb-txt3);
   font-size: calc(var(--u) * 12);
   line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.pb-root .pb-strip-collapse:hover {
+  color: var(--pb-txt);
+  border-color: #33363e;
+}
+/* The slot index sits after the collapse button (which took margin-left:auto). */
+.pb-root .pb-strip .pb-strip-top .pb-slot-ix {
+  margin-left: calc(var(--u) * 6);
+}
+
+/* Collapsed: a narrow vertical strip — LED + expand on top, the name turned on
+   its side, the stomp reduced to its dot at the foot. Overrides the shared
+   grid so it can stand next to the full-height tiles in the rail. */
+.pb-root .pb-strip.pb-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  grid-template-rows: none;
+  row-gap: calc(var(--u) * 10);
+  width: calc(var(--u) * 52);
+  padding: calc(var(--u) * 16) calc(var(--u) * 8);
+}
+.pb-root .pb-strip.pb-collapsed .pb-strip-top {
+  width: 100%;
+  justify-content: space-between;
+}
+.pb-root .pb-strip.pb-collapsed .pb-strip-collapse {
+  margin-left: 0;
+}
+.pb-root .pb-strip-vname {
+  flex: 1;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--u) * 12);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--pb-txt);
+}
+.pb-root .pb-strip.pb-bypassed .pb-strip-vname {
+  color: var(--pb-txt3);
+}
+/* Collapsed stomp: just the accent dot, no room for the label. */
+.pb-root .pb-strip.pb-collapsed .pb-stomp {
+  grid-row: auto;
+  width: 100%;
+  gap: 0;
+}
+.pb-root .pb-strip.pb-collapsed .pb-stomp > span:not(.pb-stomp-dot) {
+  display: none;
 }
 
 /* Editor tail viz for pedals that reuse a compact board signature module

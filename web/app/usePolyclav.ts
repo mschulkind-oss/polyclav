@@ -7,6 +7,8 @@ import { CHAIN, DEFAULT_PEDAL_ORDER, MASTER_PARAMS } from "@/lib/pedalboard/mode
 import { normalizeOrder } from "@/lib/pedalboard/order";
 import {
   type Endpoint,
+  ORDER_PEDAL,
+  ORDER_STAGE,
   PARAM_WIRING,
   SOFT_BYPASS_PARAMS,
   STAGE_ENABLE,
@@ -32,7 +34,6 @@ import type {
 } from "@/lib/types";
 import { useSSE } from "@/lib/useSSE";
 
-const ORDER_KEY = "polyclav-pedal-order";
 /** How long a locally-edited param ignores server echoes (drag guard). */
 const GUARD_MS = 500;
 /** Debounce window for batched param sends. */
@@ -83,8 +84,8 @@ const initialState: PolyclavState = {
 };
 
 type Action =
-  | { t: "snapshot"; s: Status }
-  | { t: "chainSnapshot"; c: ChainState }
+  | { t: "snapshot"; s: Status; skip: Set<string> }
+  | { t: "chainSnapshot"; c: ChainState; skip: Set<string> }
   | { t: "values"; patch: Record<string, number> }
   | { t: "enable"; pedalId: string; on: boolean }
   | { t: "order"; order: string[] }
@@ -96,17 +97,22 @@ type Action =
   | { t: "velocity"; label: string }
   | { t: "device"; d: DeviceEvent };
 
-/** Fold a map of backend "endpoint:field" values (engine units) into display values. */
+/**
+ * Fold a map of backend "endpoint:field" values (engine units) into display
+ * values. `skip` (params guarded by an in-progress local edit) are left as-is
+ * so a reconnect reseed never yanks a knob the user is dragging.
+ */
 function foldBackend(
   values: Record<string, number>,
   endpoint: Endpoint,
   fields: Record<string, number>,
+  skip: Set<string>,
 ): Record<string, number> {
   const next = { ...values };
   for (const [field, engine] of Object.entries(fields)) {
     const id = WIRE_BY_BACKEND[`${endpoint}:${field}`];
     const w = id ? PARAM_WIRING[id] : undefined;
-    if (id && w) next[id] = w.fromEngine(engine);
+    if (id && w && !skip.has(id)) next[id] = w.fromEngine(engine);
   }
   return next;
 }
@@ -123,8 +129,8 @@ function reducer(state: PolyclavState, a: Action): PolyclavState {
       if (typeof p.mastering_comp === "number") mastering.comp_amount = p.mastering_comp;
       if (typeof p.limiter_ceiling_db === "number")
         mastering.limiter_ceiling_db = p.limiter_ceiling_db;
-      let chainValues = foldBackend(state.chainValues, "params", params);
-      chainValues = foldBackend(chainValues, "mastering", mastering);
+      let chainValues = foldBackend(state.chainValues, "params", params, a.skip);
+      chainValues = foldBackend(chainValues, "mastering", mastering, a.skip);
       return {
         ...state,
         version: a.s.version,
@@ -149,10 +155,18 @@ function reducer(state: PolyclavState, a: Action): PolyclavState {
         for (const param of stage.params) {
           const id = WIRE_BY_BACKEND[`chain:${param.id}`];
           const w = id ? PARAM_WIRING[id] : undefined;
-          if (id && w) values[id] = w.fromEngine(param.value);
+          if (id && w && !a.skip.has(id)) values[id] = w.fromEngine(param.value);
         }
       }
-      return { ...state, chainValues: values, enabled };
+      // The daemon's stored FX order (engine stage ids) -> UI pedal ids.
+      const order =
+        Array.isArray(a.c.order) && a.c.order.length > 0
+          ? normalizeOrder(
+              a.c.order.map((s) => ORDER_PEDAL[s] ?? s),
+              DEFAULT_PEDAL_ORDER,
+            )
+          : state.order;
+      return { ...state, chainValues: values, enabled, order };
     }
     case "values":
       return { ...state, chainValues: { ...state.chainValues, ...a.patch } };
@@ -249,6 +263,15 @@ export function usePolyclav(): Polyclav {
     const pedalId = id.split(".")[0];
     return Boolean(SOFT_BYPASS_PARAMS[pedalId]) && !(enabledRef.current[pedalId] ?? true);
   };
+  // The model ids currently guarded by an in-progress local edit — a full
+  // snapshot reseed (e.g. on SSE reconnect) skips these so it can't yank a knob.
+  // Reads only refs/consts, so it is stable enough to be an effect dependency.
+  const guardedIds = useCallback((): Set<string> => {
+    const t = typeof performance !== "undefined" ? performance.now() : 0;
+    const s = new Set<string>();
+    for (const id of Object.keys(PARAM_WIRING)) if (t < (guard.current[id] ?? 0)) s.add(id);
+    return s;
+  }, []);
 
   const flush = useCallback(() => {
     const byEndpoint: Record<Endpoint, Record<string, number>> = {
@@ -290,7 +313,7 @@ export function usePolyclav(): Polyclav {
   useEffect(() => () => cancelPending(), [cancelPending]);
 
   const connected = useSSE("/api/events", {
-    snapshot: (d) => dispatch({ t: "snapshot", s: d as Status }),
+    snapshot: (d) => dispatch({ t: "snapshot", s: d as Status, skip: guardedIds() }),
     params: (d) => {
       const e = d as ParamsEvent;
       if (e.field === "cutoff") {
@@ -316,6 +339,13 @@ export function usePolyclav(): Polyclav {
     },
     chain: (d) => {
       const e = d as ChainEvent;
+      if (e.field === "order") {
+        const raw = (e as { value?: unknown }).value;
+        if (Array.isArray(raw)) {
+          dispatch({ t: "order", order: (raw as string[]).map((s) => ORDER_PEDAL[s] ?? s) });
+        }
+        return;
+      }
       if (e.field.endsWith(".enabled")) {
         const stage = e.field.slice(0, -".enabled".length);
         const pedalId = STAGE_TO_PEDAL[stage] ?? stage;
@@ -384,30 +414,19 @@ export function usePolyclav(): Polyclav {
     device: (d) => dispatch({ t: "device", d: d as DeviceEvent }),
   });
 
-  // Seed the chain registry once (schema + per-patch values + enables + order).
-  // Absent endpoint (older daemon) leaves the local defaults in place.
+  // Seed the chain registry once (schema + per-patch values + enables + FX
+  // order). The daemon is the source of truth for the order; an absent endpoint
+  // (older daemon) leaves the local defaults in place.
   useEffect(() => {
     if (!connected) return;
     let alive = true;
     api.chain().then((c) => {
-      if (alive && c) dispatch({ t: "chainSnapshot", c });
+      if (alive && c) dispatch({ t: "chainSnapshot", c, skip: guardedIds() });
     });
     return () => {
       alive = false;
     };
-  }, [connected]);
-
-  // Restore the display order from localStorage on mount.
-  useEffect(() => {
-    const raw = window.localStorage.getItem(ORDER_KEY);
-    if (!raw) return;
-    try {
-      const stored = JSON.parse(raw) as string[];
-      if (Array.isArray(stored)) dispatch({ t: "order", order: stored });
-    } catch {
-      // ignore a corrupt entry
-    }
-  }, []);
+  }, [connected, guardedIds]);
 
   // Clip list, fetched once the snapshot reports a player.
   useEffect(() => {
@@ -468,11 +487,10 @@ export function usePolyclav(): Polyclav {
 
   const reorder = useCallback((order: string[]) => {
     const next = normalizeOrder(order, DEFAULT_PEDAL_ORDER);
-    dispatch({ t: "order", order: next });
-    window.localStorage.setItem(ORDER_KEY, JSON.stringify(next));
-    // Best-effort: sync the chain-stage subset the daemon knows about.
-    const subset = next.filter((id) => STAGE_ENABLE[id]).map((id) => STAGE_ENABLE[id]);
-    if (subset.length) api.patchChain({ order: subset });
+    dispatch({ t: "order", order: next }); // optimistic; the daemon echoes it back
+    // The daemon persists the order and pushes it to the DSP, actually
+    // reordering the FX signal chain. Engine stage ids (trem -> tremolo).
+    api.patchChain({ order: next.map((id) => ORDER_STAGE[id] ?? id) });
   }, []);
 
   const setVelocityLabel = useCallback((label: string) => dispatch({ t: "velocity", label }), []);
