@@ -1,15 +1,23 @@
 # Pedalboard UI: Web + Launchkey Control for the Post-Synth Chain
 
-> **Status (2026-07-14):** proposal — design only, nothing here is
-> built. Companion mockups: `docs/mockups/pedalboard-ui.html` (open in
-> a browser; renders in light and dark). Builds directly on
-> `docs/LAUNCHKEY_NAVIGATION.md` (Categories × Pages — also still a
-> proposal) and the shipped web stack from `docs/WEB_UI.md`. Written
-> because three of the four pedals (`docs/VISION.md` §1b/1c/1d) shipped
-> with **zero interface**: chorus, tremolo, and the analog delay exist
-> in the Rust DSP chain with working FFI and Go wrappers
-> (`internal/audio/audio.go:421-474`), and nothing calls them — no
-> knob, no REST field, no persistence.
+> **Status (2026-07-15):** Phase 1 **shipped**, plus extras — the Flat
+> Modern pedalboard is now the daemon's main web UI (`web/app/page.tsx`,
+> replacing the card dashboard). Built: the chain registry +
+> plumbing for chorus/tremolo/delay params & per-pedal enables
+> (`internal/controls/chain.go`, Go-only — no Rust change), per-patch
+> persistence, `GET`/`PATCH /api/chain`, the SSE `chain` type, and the
+> web pedalboard + generic pedal editor consuming them
+> (`web/lib/pedalboard/wiring.ts`). Beyond the original Phase-1 scope:
+> the post-synth **compressor and reverb** graduated from the old bus
+> card into their own pedals, and pedals gained a drag/keyboard
+> **reorder** bar (display order only — the DSP path stays fixed in
+> Rust; `docs/mockups/pedalboard-style-b-flat-modern.html` is the
+> art-direction reference). Still open: Phase 2 (Launchkey Categories ×
+> Pages, `nav`/`hwmap` sync) and Phase 3 (macros). Original motivation:
+> three of the four pedals (`docs/VISION.md` §1b/1c/1d) had shipped with
+> **zero interface** — chorus, tremolo, and the analog delay existed in
+> the Rust DSP chain with working FFI and Go wrappers, and nothing
+> called them.
 
 ## The problem
 
