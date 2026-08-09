@@ -709,7 +709,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06e14c13e0d64ed27265d0cc41563b131cd8499cde811618b646dd309763906d"
 dependencies = [
  "lilv-sys",
- "lv2_raw",
+ "lv2_raw 0.2.0",
  "parking_lot",
  "pkg-config",
 ]
@@ -720,7 +720,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aee56a6fdb8db62d01819f171d579c65fb0e03bcd077e1ea4509e06b6d58f53c"
 dependencies = [
- "lv2_raw",
+ "lv2_raw 0.2.0",
 ]
 
 [[package]]
@@ -738,7 +738,7 @@ dependencies = [
  "lilv",
  "log",
  "lv2-sys",
- "lv2_raw",
+ "lv2_raw 0.2.0",
  "ringbuf",
 ]
 
@@ -768,6 +768,15 @@ name = "lv2_raw"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "573ce7231f64fe795ad80134913f88f2e7f7f550527f6bd54d690a56cabf6a48"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "lv2_raw"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6dd8e859491c39ac8b3f4f1306bad2458d467f3057a19ebb5a6b133df0caee8"
 dependencies = [
  "libc",
 ]
@@ -1146,7 +1155,7 @@ dependencies = [
  "fundsp",
  "libloading",
  "livi",
- "lv2_raw",
+ "lv2_raw 0.3.2",
  "oxisynth",
  "pipewire",
 ]
