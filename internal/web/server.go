@@ -43,13 +43,14 @@ type DeviceStates interface {
 // this; declared locally so this package only needs internal/midi (a
 // leaf package), not internal/supervisor — mirroring DeviceStates above.
 type MIDIDevices interface {
-	// Match is the configured [midi].port_match restriction (immutable
+	// Match is the configured [midi].port_match pre-filter (immutable
 	// for the process lifetime — there is no live setter for it).
 	Match() string
-	// Ignore is the currently-active ignore list (original case).
-	Ignore() []string
-	// SetIgnore replaces the live ignore list immediately.
-	SetIgnore(names []string)
+	// Allow is the currently-active allowlist (original case). Empty
+	// means no keyboard is selected, so nothing sends notes.
+	Allow() []string
+	// SetAllow replaces the live allowlist immediately.
+	SetAllow(names []string)
 }
 
 // Deps carries everything the server needs. Logger, Player, Devices,

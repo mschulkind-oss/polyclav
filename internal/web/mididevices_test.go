@@ -10,7 +10,7 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/config"
 )
 
-// fakeMIDIDevices implements MIDIDevices with an in-memory ignore list —
+// fakeMIDIDevices implements MIDIDevices with an in-memory allowlist —
 // no real rtmidi/hardware needed. GET's port enumeration is injected
 // separately via Deps.MIDIPortLister (see newFixture's mod callback in
 // each test below), so these tests never touch a real ALSA sequencer /
@@ -18,9 +18,9 @@ import (
 // GitHub Actions runner with no ALSA sequencer device at all (works in
 // a dev jail with real hardware access, 500s in plain CI).
 type fakeMIDIDevices struct {
-	mu     sync.Mutex
-	match  string
-	ignore []string
+	mu    sync.Mutex
+	match string
+	allow []string
 }
 
 func (f *fakeMIDIDevices) Match() string {
@@ -29,15 +29,15 @@ func (f *fakeMIDIDevices) Match() string {
 	return f.match
 }
 
-func (f *fakeMIDIDevices) Ignore() []string {
+func (f *fakeMIDIDevices) Allow() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.ignore...)
+	return append([]string(nil), f.allow...)
 }
 
-func (f *fakeMIDIDevices) SetIgnore(names []string) {
+func (f *fakeMIDIDevices) SetAllow(names []string) {
 	f.mu.Lock()
-	f.ignore = append([]string(nil), names...)
+	f.allow = append([]string(nil), names...)
 	f.mu.Unlock()
 }
 
@@ -56,13 +56,13 @@ func TestMIDIDevicesGetUnavailableWithoutDeps(t *testing.T) {
 	wantStatus(t, rec, http.StatusServiceUnavailable)
 }
 
-func TestMIDIDevicesGetReportsMatch(t *testing.T) {
-	// Empty Match (the default mode) is what actually exercises DAW-port
-	// exclusion -- an explicit Match (e.g. "yamaha") deliberately bypasses
-	// it (see classifyOne), so a non-matching DAW port there would show
-	// as "restricted", not "daw". Assert the match field is reported
-	// verbatim, and separately exercise DAW classification in default mode.
-	md := &fakeMIDIDevices{match: "yamaha"}
+func TestMIDIDevicesGetReportsMatchAndAllow(t *testing.T) {
+	// port_match filters candidates before the allowlist selects among
+	// them: the allowed-and-matching port sends notes, while an allowed
+	// port that port_match excludes reports "restricted" (selecting it
+	// would change nothing). Both fields are echoed verbatim so the panel
+	// can explain the state rather than just showing checkboxes.
+	md := &fakeMIDIDevices{match: "yamaha", allow: []string{"Yamaha", "Some Other Synth"}}
 	f := newFixture(t, func(d *Deps) {
 		d.MIDIDevices = md
 		d.MIDIPortLister = func() ([]string, error) {
@@ -74,6 +74,10 @@ func TestMIDIDevicesGetReportsMatch(t *testing.T) {
 	m := decodeBody(t, rec)
 	if m["match"] != "yamaha" {
 		t.Errorf("expected match=yamaha, got %v", m)
+	}
+	allow, ok := m["allow"].([]any)
+	if !ok || len(allow) != 2 || allow[0] != "Yamaha" {
+		t.Errorf("expected the allowlist echoed back verbatim, got %v", m["allow"])
 	}
 	devices, ok := m["devices"].([]any)
 	if !ok || len(devices) != 2 {
@@ -89,10 +93,10 @@ func TestMIDIDevicesGetReportsMatch(t *testing.T) {
 	}
 }
 
-// TestMIDIDevicesGetClassifiesDAWPortInDefaultMode covers the empty-Match
-// mode's DAW-port exclusion specifically, complementing the explicit-Match
-// case above.
-func TestMIDIDevicesGetClassifiesDAWPortInDefaultMode(t *testing.T) {
+// TestMIDIDevicesGetClassifiesUnselectedPorts pins the fresh-install
+// state the panel has to explain: ports are connected, none is selected,
+// and the DAW port carries its more specific advisory label.
+func TestMIDIDevicesGetClassifiesUnselectedPorts(t *testing.T) {
 	md := &fakeMIDIDevices{}
 	f := newFixture(t, func(d *Deps) {
 		d.MIDIDevices = md
@@ -103,10 +107,17 @@ func TestMIDIDevicesGetClassifiesDAWPortInDefaultMode(t *testing.T) {
 	rec := f.do(t, "GET", "/api/midi/devices", nil)
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
+	if allow, ok := m["allow"].([]any); !ok || len(allow) != 0 {
+		t.Errorf("expected allow to be an empty array (never null), got %v", m["allow"])
+	}
 	devices := m["devices"].([]any)
+	first := devices[0].(map[string]any)
+	if first["status"] != "unselected" {
+		t.Errorf("expected an unselected keyboard, got %v", first)
+	}
 	second := devices[1].(map[string]any)
 	if second["name"] != "Launchkey MK4 61 DAW In" || second["status"] != "daw" {
-		t.Errorf("expected the DAW port classified as daw in default mode, got %v", second)
+		t.Errorf("expected the DAW port classified as daw, got %v", second)
 	}
 }
 
@@ -136,7 +147,7 @@ func TestMIDIDevicesGetDegradesGracefullyOnEnumerationFailure(t *testing.T) {
 
 func TestMIDIDevicesPutUnavailableWithoutDeps(t *testing.T) {
 	f := newFixture(t, nil)
-	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{"ignore": []string{"x"}})
+	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{"allow": []string{"x"}})
 	wantStatus(t, rec, http.StatusServiceUnavailable)
 }
 
@@ -144,23 +155,23 @@ func TestMIDIDevicesPutSessionOnlyAppliesLiveNoSave(t *testing.T) {
 	md := &fakeMIDIDevices{}
 	f := newFixture(t, func(d *Deps) { d.MIDIDevices = md })
 
-	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{"ignore": []string{"Yamaha P-125"}})
+	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{"allow": []string{"Yamaha P-125"}})
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
 	if m["saved"] != false {
 		t.Errorf("expected saved=false for a session-only PUT, got %v", m)
 	}
-	if got := md.Ignore(); len(got) != 1 || got[0] != "Yamaha P-125" {
-		t.Errorf("SetIgnore must apply live regardless of save, got %v", got)
+	if got := md.Allow(); len(got) != 1 || got[0] != "Yamaha P-125" {
+		t.Errorf("SetAllow must apply live regardless of save, got %v", got)
 	}
 }
 
 func TestMIDIDevicesPutSaveNoConfigPath(t *testing.T) {
 	md := &fakeMIDIDevices{}
 	f := newFixture(t, func(d *Deps) { d.MIDIDevices = md })
-	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{"ignore": []string{"x"}, "save": true})
+	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{"allow": []string{"x"}, "save": true})
 	wantStatus(t, rec, http.StatusNotFound)
-	if got := md.Ignore(); len(got) != 0 {
+	if got := md.Allow(); len(got) != 0 {
 		t.Errorf("a failed save must not apply live either, got %v", got)
 	}
 }
@@ -170,7 +181,7 @@ func TestMIDIDevicesSaveAppendsNewMIDITable(t *testing.T) {
 	f, path, md := newMIDIConfigFixture(t, baseConfig)
 
 	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{
-		"ignore": []string{"Yamaha P-125"}, "save": true,
+		"allow": []string{"Yamaha P-125"}, "save": true,
 	})
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
@@ -182,7 +193,7 @@ func TestMIDIDevicesSaveAppendsNewMIDITable(t *testing.T) {
 	if !strings.HasPrefix(text, baseConfig) {
 		t.Errorf("original content must be preserved, got %q", text)
 	}
-	if strings.Count(text, ignoreDevicesBeginMarker) != 1 || strings.Count(text, ignoreDevicesEndMarker) != 1 {
+	if strings.Count(text, allowDevicesBeginMarker) != 1 || strings.Count(text, allowDevicesEndMarker) != 1 {
 		t.Fatalf("expected exactly one managed block, got:\n%s", text)
 	}
 	if !strings.Contains(text, "[midi]") {
@@ -193,11 +204,11 @@ func TestMIDIDevicesSaveAppendsNewMIDITable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("saved config must survive config.Load: %v", err)
 	}
-	if len(cfg.MIDI.IgnoreDevices) != 1 || cfg.MIDI.IgnoreDevices[0] != "Yamaha P-125" {
-		t.Errorf("loaded ignore_devices: unexpected %+v", cfg.MIDI.IgnoreDevices)
+	if len(cfg.MIDI.AllowDevices) != 1 || cfg.MIDI.AllowDevices[0] != "Yamaha P-125" {
+		t.Errorf("loaded allow_devices: unexpected %+v", cfg.MIDI.AllowDevices)
 	}
-	if got := md.Ignore(); len(got) != 1 || got[0] != "Yamaha P-125" {
-		t.Errorf("expected the live ignore list applied too, got %v", got)
+	if got := md.Allow(); len(got) != 1 || got[0] != "Yamaha P-125" {
+		t.Errorf("expected the live allowlist applied too, got %v", got)
 	}
 	assertNoTempLitter(t, path)
 }
@@ -207,7 +218,7 @@ func TestMIDIDevicesSaveSplicesIntoExistingMIDITable(t *testing.T) {
 	f, path, _ := newMIDIConfigFixture(t, base)
 
 	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{
-		"ignore": []string{"Yamaha P-125"}, "save": true,
+		"allow": []string{"Yamaha P-125"}, "save": true,
 	})
 	wantStatus(t, rec, http.StatusOK)
 
@@ -222,8 +233,8 @@ func TestMIDIDevicesSaveSplicesIntoExistingMIDITable(t *testing.T) {
 	if cfg.MIDI.PortMatch != "launchkey" {
 		t.Errorf("existing port_match must be preserved, got %q", cfg.MIDI.PortMatch)
 	}
-	if len(cfg.MIDI.IgnoreDevices) != 1 || cfg.MIDI.IgnoreDevices[0] != "Yamaha P-125" {
-		t.Errorf("loaded ignore_devices: unexpected %+v", cfg.MIDI.IgnoreDevices)
+	if len(cfg.MIDI.AllowDevices) != 1 || cfg.MIDI.AllowDevices[0] != "Yamaha P-125" {
+		t.Errorf("loaded allow_devices: unexpected %+v", cfg.MIDI.AllowDevices)
 	}
 	assertNoTempLitter(t, path)
 }
@@ -232,35 +243,35 @@ func TestMIDIDevicesSaveReplacesExistingManagedBlock(t *testing.T) {
 	f, path, _ := newMIDIConfigFixture(t, baseConfig)
 
 	wantStatus(t, f.do(t, "PUT", "/api/midi/devices", map[string]any{
-		"ignore": []string{"Yamaha P-125"}, "save": true,
+		"allow": []string{"Yamaha P-125"}, "save": true,
 	}), http.StatusOK)
 	wantStatus(t, f.do(t, "PUT", "/api/midi/devices", map[string]any{
-		"ignore": []string{"Other Synth", "Another One"}, "save": true,
+		"allow": []string{"Other Synth", "Another One"}, "save": true,
 	}), http.StatusOK)
 
 	text := readConfigFile(t, path)
-	if strings.Count(text, ignoreDevicesBeginMarker) != 1 || strings.Count(text, ignoreDevicesEndMarker) != 1 {
+	if strings.Count(text, allowDevicesBeginMarker) != 1 || strings.Count(text, allowDevicesEndMarker) != 1 {
 		t.Fatalf("expected the managed block to be replaced, not duplicated, got:\n%s", text)
 	}
 	if strings.Contains(text, "Yamaha P-125") {
-		t.Errorf("stale ignore entry left behind:\n%s", text)
+		t.Errorf("stale allow entry left behind:\n%s", text)
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("re-saved config must survive config.Load: %v", err)
 	}
-	if len(cfg.MIDI.IgnoreDevices) != 2 {
-		t.Errorf("loaded ignore_devices: unexpected %+v", cfg.MIDI.IgnoreDevices)
+	if len(cfg.MIDI.AllowDevices) != 2 {
+		t.Errorf("loaded allow_devices: unexpected %+v", cfg.MIDI.AllowDevices)
 	}
 	assertNoTempLitter(t, path)
 }
 
 func TestMIDIDevicesSaveRefusesUnmanagedSection(t *testing.T) {
-	handWritten := "[midi]\nignore_devices = [\"Manual Synth\"]\n"
+	handWritten := "[midi]\nallow_devices = [\"Manual Synth\"]\n"
 	f, path, md := newMIDIConfigFixture(t, handWritten)
 
 	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{
-		"ignore": []string{"Yamaha P-125"}, "save": true,
+		"allow": []string{"Yamaha P-125"}, "save": true,
 	})
 	wantStatus(t, rec, http.StatusConflict)
 	m := decodeBody(t, rec)
@@ -270,23 +281,23 @@ func TestMIDIDevicesSaveRefusesUnmanagedSection(t *testing.T) {
 	if got := readConfigFile(t, path); got != handWritten {
 		t.Errorf("hand-written config must never be rewritten, got %q", got)
 	}
-	if got := md.Ignore(); len(got) != 0 {
+	if got := md.Allow(); len(got) != 0 {
 		t.Errorf("a refused save must not apply live either, got %v", got)
 	}
 }
 
-func TestUpsertIgnoreDevicesCorruptMarkers(t *testing.T) {
-	_, err := upsertIgnoreDevices(ignoreDevicesBeginMarker+"\n[midi]\n", "block")
+func TestUpsertAllowDevicesCorruptMarkers(t *testing.T) {
+	_, err := upsertAllowDevices(allowDevicesBeginMarker+"\n[midi]\n", "block")
 	if err == nil || !strings.Contains(err.Error(), "corrupted") {
 		t.Errorf("expected corrupt-marker error, got %v", err)
 	}
 }
 
-func TestUpsertIgnoreDevicesUnmanagedOutsideFence(t *testing.T) {
-	orig := "[midi]\nignore_devices = [\"a\"]\n\n" +
-		ignoreDevicesBeginMarker + "\nignore_devices = [\"b\"]\n" + ignoreDevicesEndMarker + "\n"
-	if _, err := upsertIgnoreDevices(orig, "block"); err != errUnmanagedIgnoreDevices {
-		t.Errorf("expected errUnmanagedIgnoreDevices for a second, hand-written entry, got %v", err)
+func TestUpsertAllowDevicesUnmanagedOutsideFence(t *testing.T) {
+	orig := "[midi]\nallow_devices = [\"a\"]\n\n" +
+		allowDevicesBeginMarker + "\nallow_devices = [\"b\"]\n" + allowDevicesEndMarker + "\n"
+	if _, err := upsertAllowDevices(orig, "block"); err != errUnmanagedAllowDevices {
+		t.Errorf("expected errUnmanagedAllowDevices for a second, hand-written entry, got %v", err)
 	}
 }
 

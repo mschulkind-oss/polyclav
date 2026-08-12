@@ -124,9 +124,9 @@ export const api = {
   midiDevices: async (): Promise<MIDIDevicesResponse | null> =>
     json<MIDIDevicesResponse>(await request("GET", "/api/midi/devices")),
 
-  /** PUT /api/midi/devices {ignore, save} — returns the raw Response so callers can show 404/409/503 bodies. */
-  midiDevicesPut: (ignore: string[], save: boolean): Promise<Response | null> =>
-    request("PUT", "/api/midi/devices", { ignore, save }),
+  /** PUT /api/midi/devices {allow, save} — returns the raw Response so callers can show 404/409/503 bodies. */
+  midiDevicesPut: (allow: string[], save: boolean): Promise<Response | null> =>
+    request("PUT", "/api/midi/devices", { allow, save }),
 
   // ---- MIDI probe (docs/MIDI_PROBE.md) ----------------------------------
 

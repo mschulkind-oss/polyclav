@@ -1,8 +1,8 @@
 // mididevices.go holds the MIDI-devices panel endpoints
 // (docs/USER_GUIDE.md "[midi] — which keyboards send notes"):
 // GET/PUT /api/midi/devices, the web-UI counterpart to `polyclav midi
-// list` and [midi].ignore_devices. Follows the exact save/session-only
-// contract editor.go's velocity endpoint established — SetIgnore always
+// list` and [midi].allow_devices. Follows the exact save/session-only
+// contract editor.go's velocity endpoint established — SetAllow always
 // applies live; save additionally persists into polyclav.toml.
 package web
 
@@ -42,26 +42,33 @@ func (s *Server) handleMIDIDevicesGet(w http.ResponseWriter, _ *http.Request) {
 		s.deps.Logger.Warn("midi devices: enumerate ports failed, reporting none", "err", err)
 		names = nil
 	}
-	infos := midi.ClassifyPorts(names, s.deps.MIDIDevices.Match(), s.deps.MIDIDevices.Ignore())
+	allow := s.deps.MIDIDevices.Allow()
+	infos := midi.ClassifyPorts(names, s.deps.MIDIDevices.Match(), allow)
 	out := make([]midiDeviceJSON, len(infos))
 	for i, info := range infos {
 		out[i] = midiDeviceJSON{Name: info.Name, Status: string(info.Status)}
 	}
+	// allow is echoed back (not just the per-port statuses) so the panel
+	// can render entries that name a device which isn't plugged in right
+	// now — those have no port row to hang a checkbox off, but dropping
+	// them from the UI's working set would silently delete them on the
+	// next save.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"devices": out,
 		"match":   s.deps.MIDIDevices.Match(),
+		"allow":   emptySliceIfNil(allow),
 	})
 }
 
 type midiDevicesPutBody struct {
-	Ignore []string `json:"ignore"`
-	Save   bool     `json:"save"`
+	Allow []string `json:"allow"`
+	Save  bool     `json:"save"`
 }
 
-// handleMIDIDevicesPut applies an updated ignore list immediately (live,
+// handleMIDIDevicesPut applies an updated allowlist immediately (live,
 // regardless of save — the whole point of a running daemon exposing
 // this at all) and, when save is true, additionally persists it into
-// polyclav.toml's managed ignore_devices block. Save-then-apply order,
+// polyclav.toml's managed allow_devices block. Save-then-apply order,
 // same as velocity: a request that fails to save must not leave a
 // half-applied state.
 func (s *Server) handleMIDIDevicesPut(w http.ResponseWriter, r *http.Request) {
@@ -80,10 +87,10 @@ func (s *Server) handleMIDIDevicesPut(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "config file not available; cannot save")
 			return
 		}
-		if err := s.saveIgnoreDevicesBlock(body.Ignore); err != nil {
+		if err := s.saveAllowDevicesBlock(body.Allow); err != nil {
 			var ve *configValidationError
 			switch {
-			case errors.Is(err, errUnmanagedIgnoreDevices) || errors.Is(err, errCorruptIgnoreMarkers):
+			case errors.Is(err, errUnmanagedAllowDevices) || errors.Is(err, errCorruptAllowMarkers):
 				writeErr(w, http.StatusConflict, err.Error())
 			case errors.As(err, &ve):
 				writeErr(w, http.StatusConflict, "saving would produce an invalid config — edit polyclav.toml by hand: "+ve.msg)
@@ -94,14 +101,25 @@ func (s *Server) handleMIDIDevicesPut(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.deps.MIDIDevices.SetIgnore(body.Ignore)
-	writeJSON(w, http.StatusOK, map[string]any{"ignore": body.Ignore, "saved": body.Save})
+	s.deps.MIDIDevices.SetAllow(body.Allow)
+	writeJSON(w, http.StatusOK, map[string]any{"allow": emptySliceIfNil(body.Allow), "saved": body.Save})
 }
 
-// ---- managed ignore_devices line, inside the existing [midi] table ------
+// emptySliceIfNil keeps the JSON shape a `[]`, never `null` — the panel
+// treats the allowlist as an array it can map over unconditionally, and
+// "no devices selected" is a real, expected state here (it's the default
+// on a fresh install), not an error to be signalled with null.
+func emptySliceIfNil(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
+}
+
+// ---- managed allow_devices line, inside the existing [midi] table -------
 //
 // Unlike [midi.velocity] (a wholly separate table path velocity.go can
-// insert anywhere), ignore_devices is a key directly on MIDIConfig — it
+// insert anywhere), allow_devices is a key directly on MIDIConfig — it
 // must land INSIDE the file's [midi] table, not a new sub-table, or
 // config.Load would parse it into the wrong place. So this fences just
 // the one key-value line, splices it right after an existing bare
@@ -109,13 +127,13 @@ func (s *Server) handleMIDIDevicesPut(w http.ResponseWriter, r *http.Request) {
 // EOF if the file has none yet.
 
 const (
-	ignoreDevicesBeginMarker = "# BEGIN polyclav-managed ignore_devices (web UI — edits on this line are overwritten)"
-	ignoreDevicesEndMarker   = "# END polyclav-managed ignore_devices"
+	allowDevicesBeginMarker = "# BEGIN polyclav-managed allow_devices (web UI — edits on this line are overwritten)"
+	allowDevicesEndMarker   = "# END polyclav-managed allow_devices"
 )
 
 var (
-	errUnmanagedIgnoreDevices = errors.New("polyclav.toml already has a hand-written ignore_devices under [midi] — edit the config file by hand instead of saving from the web UI")
-	errCorruptIgnoreMarkers   = errors.New("the managed ignore_devices markers in polyclav.toml are corrupted (one of BEGIN/END is missing) — repair the config file by hand")
+	errUnmanagedAllowDevices = errors.New("polyclav.toml already has a hand-written allow_devices under [midi] — edit the config file by hand instead of saving from the web UI")
+	errCorruptAllowMarkers   = errors.New("the managed allow_devices markers in polyclav.toml are corrupted (one of BEGIN/END is missing) — repair the config file by hand")
 )
 
 // midiTableHeaderRe matches a bare `[midi]` table header line — NOT
@@ -123,44 +141,44 @@ var (
 // `midi` requires nothing but whitespace before the closing bracket).
 var midiTableHeaderRe = regexp.MustCompile(`(?m)^\[\s*midi\s*\][ \t]*(?:#.*)?$`)
 
-// unmanagedIgnoreDevicesRe matches a bare ignore_devices key anywhere in
+// unmanagedAllowDevicesRe matches a bare allow_devices key anywhere in
 // the file — used (against the text OUTSIDE our own markers) to refuse
 // clobbering a hand-written one, mirroring unmanagedVelocityRe.
-var unmanagedIgnoreDevicesRe = regexp.MustCompile(`(?m)^\s*ignore_devices\s*=`)
+var unmanagedAllowDevicesRe = regexp.MustCompile(`(?m)^\s*allow_devices\s*=`)
 
-// renderIgnoreDevicesBlock renders ignore as the marker-fenced line,
+// renderAllowDevicesBlock renders allow as the marker-fenced line,
 // without a trailing newline (callers add their own line breaks the
 // same way renderVelocityBlock's callers do).
-func renderIgnoreDevicesBlock(ignore []string) string {
-	quoted := make([]string, len(ignore))
-	for i, n := range ignore {
+func renderAllowDevicesBlock(allow []string) string {
+	quoted := make([]string, len(allow))
+	for i, n := range allow {
 		quoted[i] = fmt.Sprintf("%q", n)
 	}
 	var b strings.Builder
-	b.WriteString(ignoreDevicesBeginMarker + "\n")
-	fmt.Fprintf(&b, "ignore_devices = [%s]\n", strings.Join(quoted, ", "))
-	b.WriteString(ignoreDevicesEndMarker)
+	b.WriteString(allowDevicesBeginMarker + "\n")
+	fmt.Fprintf(&b, "allow_devices = [%s]\n", strings.Join(quoted, ", "))
+	b.WriteString(allowDevicesEndMarker)
 	return b.String()
 }
 
-// upsertIgnoreDevices replaces the existing managed line in orig with
+// upsertAllowDevices replaces the existing managed line in orig with
 // block, or splices it into an existing bare [midi] table, or appends a
 // brand-new [midi] table at EOF when the file has neither. A
-// hand-written ignore_devices outside the fence refuses with
-// errUnmanagedIgnoreDevices — never silently clobbered.
-func upsertIgnoreDevices(orig, block string) (string, error) {
-	bi := strings.Index(orig, ignoreDevicesBeginMarker)
-	ei := strings.Index(orig, ignoreDevicesEndMarker)
+// hand-written allow_devices outside the fence refuses with
+// errUnmanagedAllowDevices — never silently clobbered.
+func upsertAllowDevices(orig, block string) (string, error) {
+	bi := strings.Index(orig, allowDevicesBeginMarker)
+	ei := strings.Index(orig, allowDevicesEndMarker)
 	switch {
 	case bi >= 0 && ei > bi:
-		outside := orig[:bi] + orig[ei+len(ignoreDevicesEndMarker):]
-		if unmanagedIgnoreDevicesRe.MatchString(outside) {
-			return "", errUnmanagedIgnoreDevices
+		outside := orig[:bi] + orig[ei+len(allowDevicesEndMarker):]
+		if unmanagedAllowDevicesRe.MatchString(outside) {
+			return "", errUnmanagedAllowDevices
 		}
-		return orig[:bi] + block + orig[ei+len(ignoreDevicesEndMarker):], nil
+		return orig[:bi] + block + orig[ei+len(allowDevicesEndMarker):], nil
 	case bi < 0 && ei < 0:
-		if unmanagedIgnoreDevicesRe.MatchString(orig) {
-			return "", errUnmanagedIgnoreDevices
+		if unmanagedAllowDevicesRe.MatchString(orig) {
+			return "", errUnmanagedAllowDevices
 		}
 		loc := midiTableHeaderRe.FindStringIndex(orig)
 		if loc == nil {
@@ -176,26 +194,26 @@ func upsertIgnoreDevices(orig, block string) (string, error) {
 		}
 		return orig[:insertAt] + block + "\n" + orig[insertAt:], nil
 	default:
-		return "", errCorruptIgnoreMarkers
+		return "", errCorruptAllowMarkers
 	}
 }
 
-// saveIgnoreDevicesBlock persists ignore into ConfigPath's managed line,
+// saveAllowDevicesBlock persists allow into ConfigPath's managed line,
 // going through the same temp-validate-rename path as PUT /api/config
 // and the velocity save (saveValidatedConfig — see its comment for why
-// runValidate=false here too: an ignore-list edit never touches
+// runValidate=false here too: a device-selection edit never touches
 // [[patches]] and must not be blocked by an already-missing soundfont).
 // cfgMu is held across the whole read → merge → rename, same reason as
 // saveVelocityBlock: a concurrent PUT /api/config must not slip a write
 // in between our read and our rename.
-func (s *Server) saveIgnoreDevicesBlock(ignore []string) error {
+func (s *Server) saveAllowDevicesBlock(allow []string) error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	orig, err := os.ReadFile(s.deps.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
-	merged, err := upsertIgnoreDevices(string(orig), renderIgnoreDevicesBlock(ignore))
+	merged, err := upsertAllowDevices(string(orig), renderAllowDevicesBlock(allow))
 	if err != nil {
 		return err
 	}

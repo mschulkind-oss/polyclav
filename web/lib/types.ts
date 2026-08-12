@@ -203,10 +203,12 @@ export interface VelocityPutResponse {
 
 // ---- MIDI devices panel (internal/web/mididevices.go) -------------------
 
-/** "notes" (sending), "daw" (Launchkey control surface, never a note source),
- * "ignored" (in the ignore list), "restricted" (port_match set and this
- * port doesn't match it) -- mirrors internal/midi.PortStatus exactly. */
-export type MIDIDeviceStatus = "notes" | "daw" | "ignored" | "restricted";
+/** "notes" (selected, sending), "unselected" (not on the allowlist),
+ * "daw" / "loopback" (unselected, plus a hint about what the port is:
+ * a Launchkey control surface / ALSA's Midi Through), "restricted"
+ * (port_match set and this port doesn't match it, so selecting it would
+ * change nothing) -- mirrors internal/midi.PortStatus exactly. */
+export type MIDIDeviceStatus = "notes" | "unselected" | "daw" | "loopback" | "restricted";
 
 export interface MIDIDevice {
   name: string;
@@ -216,10 +218,14 @@ export interface MIDIDevice {
 export interface MIDIDevicesResponse {
   devices: MIDIDevice[];
   match: string;
+  /** The live [midi].allow_devices list — case-insensitive substrings.
+   * Echoed separately from `devices` because an entry may name hardware
+   * that isn't plugged in right now, which has no device row of its own. */
+  allow: string[];
 }
 
 export interface MIDIDevicesPutResponse {
-  ignore: string[];
+  allow: string[];
   saved: boolean;
 }
 
