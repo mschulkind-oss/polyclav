@@ -1,11 +1,17 @@
 # polyclav
 
 A self-contained **live piano host** for Linux. Plug in a MIDI keyboard
-and an audio interface, run `polyclav`, and you have a digital piano: keys
-make piano sound, effects are in the chain, and (optionally) a Novation
-Launchkey's knobs, pads, and screen drive the front panel. No DAW, no
-recording — just playing. Devices can come and go; polyclav reconnects
-automatically and idles at near-zero CPU when nothing is plugged in.
+and an audio interface, run `polyclav`, pick your keyboard, and you have a
+digital piano: keys make piano sound, effects are in the chain, and
+(optionally) a Novation Launchkey's knobs, pads, and screen drive the front
+panel. No DAW, no recording — just playing. Devices can come and go;
+polyclav reconnects automatically and idles at near-zero CPU when nothing
+is plugged in.
+
+> Picking your keyboard is a one-time step: `[midi].allow_devices` is an
+> allowlist, so nothing sends notes until you name it. Startup prints your
+> connected port names and the exact line to add — or tick a box in the web
+> UI. See `docs/USER_GUIDE.md`.
 
 > **Status:** Linux-only (PipeWire). Developed and tested against a
 > Novation Launchkey 61 MK4 + Behringer XR18 over OSC. Should work with

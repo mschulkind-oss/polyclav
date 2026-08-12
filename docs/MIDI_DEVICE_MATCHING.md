@@ -1,42 +1,55 @@
-# Handoff: make `[midi].ignore_devices` robust to the ALSA port address
+# Why MIDI device matching is by substring, not exact name
 
 ## Status: implemented
 
-`ignore_devices` entries now match as a case-insensitive substring of the
-port name, same as `port_match` — see `internal/midi/multiplexer.go`
-`classifyOne`/`containsAny`. Kept below as the original problem writeup.
+`[midi].allow_devices` entries match as a case-insensitive **substring** of
+the port name, same as `port_match` — see `internal/midi/multiplexer.go`
+`classifyOne` / `containsAny`. This note records why, because the reasoning
+is not obvious from the code and the naive alternative (exact names) looks
+more correct than it is.
+
+Originally written when the setting was a denylist (`ignore_devices`); the
+selection model flipped to an allowlist on 2026-08-11, but the matching
+rule and its rationale carried over unchanged.
 
 ## Problem
 
-`[midi].ignore_devices` is meant to exclude a specific keyboard from sending
-notes. Today it only matches the **exact, full** ALSA-seq port name — and that
-name ends in a volatile ` <client>:<port>` address (e.g. ` 36:0`) that ALSA
-reassigns on replug / reboot / device-order changes. So an exclusion that works
-today silently stops working the next time the address shifts. A user config
-should not have to name a hardware address that isn't stable.
+An entry identifies a keyboard. The obvious way to write one is to paste the
+port name `polyclav midi list` prints — but that name ends in a volatile
+` <client>:<port>` address (e.g. ` 36:0`) that ALSA reassigns on replug /
+reboot / device-order changes. Under exact matching, a config that works
+today silently stops working the next time the address shifts, and the
+symptom is a keyboard that just doesn't play. A user config should not have
+to name a hardware address that isn't stable.
 
-## Evidence (current behavior)
+## Evidence (the behavior that motivated this)
 
-Casio connected, enumerating as `CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0`:
+Casio connected, enumerating as `CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0`,
+back when matching was exact:
 
 ```
-# ignore_devices = ["CASIO USB-MIDI:CASIO USB-MIDI MIDI 1"]   (no address)
-  ok         CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0        <- NOT excluded
+# entry = "CASIO USB-MIDI:CASIO USB-MIDI MIDI 1"      (no address)
+  <no match>   CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0
 
-# ignore_devices = ["CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0"] (full string)
-  ignored    CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0        <- excluded
+# entry = "CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0" (full string)
+  match        CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0
 ```
 
-Exclusion only works when the fragile `36:0` is baked into the config.
+Matching only worked when the fragile `36:0` was baked into the config.
 
-## Desired function (not prescribing implementation)
+## The rule
 
-An `ignore_devices` entry should identify a device by its **stable** name,
-independent of the trailing ALSA `NN:NN` address. Matching an entry as a
-case-insensitive **substring** of the port name is the natural model — it's
-exactly how `port_match` already behaves, so the two knobs become symmetric
-(one substring allow-filter, one substring deny-filter). Any approach that
-makes a stable name match is fine; substring is the obvious one.
+An entry identifies a device by its **stable** name, independent of the
+trailing ALSA `NN:NN` address, by matching as a case-insensitive substring
+of the port name. That's exactly how `port_match` already behaved, so the
+two knobs are symmetric. An empty entry is skipped rather than treated as a
+match-everything wildcard — under an allowlist that would silently open
+every port on the machine.
+
+Both surfaces that *suggest* an entry trim the address before offering it,
+so a copy-pasted suggestion is stable by construction: `suggestAllowEntry`
+(`cmd/polyclav/main.go`, used by the startup banner) and `allowEntryFor`
+(`web/components/MIDIDevicesCard.tsx`, used when ticking a checkbox).
 
 ## Acceptance test
 
@@ -44,21 +57,14 @@ With the Casio connected and:
 
 ```toml
 [midi]
-ignore_devices = ["CASIO USB-MIDI"]
+allow_devices = ["CASIO USB-MIDI"]
 ```
 
-- `polyclav midi list` reports the Casio port as `ignored`.
-- It stays `ignored` if the address changes (e.g. the port re-enumerates as
+- `polyclav midi list` reports the Casio port as `ok`.
+- It stays `ok` if the address changes (e.g. the port re-enumerates as
   `… MIDI 1 37:0`).
-- The Launchkey and X18/XR18 ports remain `ok` (no accidental over-match).
-
-## Keep consistent while you're in there
-
-- `docs/USER_GUIDE.md` `ignore_devices` section and the `polyclav.example.toml`
-  `[midi]` comment currently imply "exact name" — update to reflect substring.
-- The `polyclav midi list` hint text says "use the exact names above" — soften
-  it (a stable substring now suffices).
-- The web-UI managed `ignore_devices` block round-trip must still work.
+- Unrelated ports (Launchkey, X18/XR18) stay `off` — no accidental
+  over-match.
 
 ## Where it lives (pointers, for orientation only)
 
@@ -66,5 +72,5 @@ ignore_devices = ["CASIO USB-MIDI"]
   substring list it builds (`lowerAll`). `port_match`'s substring path is
   right next to it as the model it mirrors.
 - Port names come from `in.String()` — `internal/midi/midi.go` `portNames`.
-- Config field + doc comment: `internal/config/config.go` (`IgnoreDevices`).
+- Config field + doc comment: `internal/config/config.go` (`AllowDevices`).
 - CLI hint: `cmd/polyclav/midi.go` (`runMIDIList`).

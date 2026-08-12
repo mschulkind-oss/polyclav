@@ -4,9 +4,9 @@
 #   cp polyclav.example.toml ~/.config/polyclav/polyclav.toml
 #
 # A missing config file is fine: polyclav falls back to compiled-in defaults
-# (no soundfont -> sine fallback; "launchkey" MIDI port match; OSC mixer
-# control OFF by default -> no XR18 host, so no OSC is sent until you set
-# [osc.xr18].host yourself).
+# (no soundfont -> sine fallback; no MIDI devices selected, so no notes until
+# you pick one — see [midi] below; OSC mixer control OFF by default -> no XR18
+# host, so no OSC is sent until you set [osc.xr18].host yourself).
 #
 # All soundfont paths below are EXAMPLES and use `~/.local/share/polyclav/soundfonts/`.
 # polyclav expands a leading `~` to your home directory. Drop your soundfonts
@@ -77,20 +77,40 @@ path = "~/.local/share/polyclav/soundfonts/YDP-GrandPiano-SF2-20160804/YDP-Grand
 latency_frames = 0
 
 [midi]
-# By default (empty), EVERY connected MIDI keyboard sends notes — no
-# config needed, plug in and play. A Launchkey's DAW control-surface
-# port is excluded automatically (it's not a source of notes); a
-# Launchkey's own MIDI port and any other keyboard's port are not.
+# ⚠ WHICH KEYBOARDS PLAY — this is an ALLOWLIST, and it starts EMPTY.
+# Until you name a device here, NOTHING sends notes and polyclav makes
+# no sound. (It says so loudly at startup, so you won't be guessing.)
 #
-# Set a case-insensitive substring here to restrict input to ports whose
-# name contains it instead — e.g. "yamaha" to only listen to a Yamaha
-# keyboard even with others plugged in. An explicit match also bypasses
-# the DAW-port exclusion: set port_match = "DAW" to bind OSC bindings
-# (see [[osc.xr18.bindings]] below) to a Launchkey's raw knob/fader CC
-# stream instead of note input.
+# List case-insensitive SUBSTRINGS of MIDI input port names. To see the
+# names of what's plugged in right now:
+#
+#     polyclav midi list
+#
+# then copy a short, STABLE fragment of one — not the whole string. ALSA
+# appends a volatile " <client>:<port>" address (e.g. " 36:0") that
+# changes on replug/reboot, so a fragment keeps matching and the full
+# name doesn't. Examples:
+#
+#     allow_devices = ["Launchkey MK4 61 MIDI"]
+#     allow_devices = ["CASIO USB-MIDI", "Yamaha"]
+#
+# Three equivalent ways to change it: edit this line, run
+# `polyclav --midi-allow "name one,name two"` for one session, or tick
+# the boxes in the web UI's MIDI devices panel (live, with a Save button
+# that writes back here).
+#
+# Naming a Launchkey's DAW control-surface port is allowed and means it:
+# that binds note input to its raw knob/fader CC stream, which is what
+# the OSC bindings below want. It just isn't the default guess.
 #
 # Launchkey knobs/pads/screen/transport are unaffected by this setting —
 # they're auto-detected whenever a Launchkey is plugged in, regardless.
+allow_devices = []
+
+# OPTIONAL extra filter on top of allow_devices: when non-empty, only
+# ports whose name contains this case-insensitive substring are eligible
+# at all. It never SELECTS anything by itself — with allow_devices empty,
+# setting port_match still gets you silence. Most setups leave it "".
 port_match = ""
 
 # [midi.velocity]

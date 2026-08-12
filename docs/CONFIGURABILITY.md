@@ -25,7 +25,7 @@ four hardware seams are at least partly configurable. The honest picture:
 | Seam | How coupled today | Configurable now? |
 |------|-------------------|-------------------|
 | **Audio out** (PipeWire sink) | Not coupled — uses the default sink | ✅ Fully generic (any PipeWire device) |
-| **MIDI keyboard in** | `internal/midi.Multiplexer` reads every connected keyboard by default; `port_match` is an optional restriction, no longer coupled to Launchkey detection | ✅ Fully generic — any class-compliant keyboard(s), simultaneously |
+| **MIDI keyboard in** | `internal/midi.Multiplexer` reads every keyboard named in `allow_devices`, an explicit allowlist; no longer coupled to Launchkey detection | ✅ Fully generic — any class-compliant keyboard(s), simultaneously |
 | **OSC mixer out** | Arbitrary `[[osc.xr18.bindings]]` (already generic mappings); **but** XR18 naming, default port, and `/xinfo` heartbeat are X-Air-specific | 🟡 Bindings generic; discovery/naming hardwired |
 | **Control surface** (knobs/pads/screen/transport) | A dedicated `internal/launchkey` driver speaking MK4 SysEx + fixed CC/note maps, plus hardcoded knob→function and pad→patch logic in `main.go` | 🔴 Effectively Launchkey-only |
 
@@ -59,41 +59,48 @@ constant separately.
 
 Configurable surface:
 
-- `internal/config/config.go` — `MIDIConfig.PortMatch` (`[midi].port_match`),
-  default `""`. Empty = every connected keyboard sends notes
-  (`internal/midi.Multiplexer` opens every present input port except ones
-  that look DAW-role); a non-empty substring restricts to matching port(s)
-  instead, bypassing the DAW-role exclusion (an explicit ask is trusted).
+- `internal/config/config.go` — `MIDIConfig.AllowDevices`
+  (`[midi].allow_devices`), default empty. A case-insensitive substring
+  allowlist: `internal/midi.Multiplexer` opens exactly the present input
+  ports it names, and empty means none at all.
+  `MIDIConfig.PortMatch` (`[midi].port_match`, default `""`) survives as an
+  optional pre-filter layered on top; it can only remove candidates, never
+  select one.
 
 Fixed as of 2026-07-09: note input and Launchkey detection used to be one
 coupled `port_match` string — a non-Launchkey keyboard produced zero notes
 until you retargeted `port_match`, and doing so lost Launchkey detection
 even if one was also plugged in. They're now fully independent:
 
-- `internal/midi.Multiplexer` (new) is a hotplug reconciler for *every*
-  currently-present port at once, each with its own listener goroutine —
+- `internal/midi.Multiplexer` (new) is a hotplug reconciler for every
+  *selected* port at once, each with its own listener goroutine —
   unplugging one keyboard doesn't affect others. `looksLikeDAWPort`
   (`internal/midi/midi.go`) is the only Launchkey-shaped assumption left in
-  this half, and it's just an exclusion heuristic for the default case, not
-  a requirement.
+  this half, and it is now purely a display hint on unselected ports, not
+  an exclusion.
 - `internal/launchkey.Reconciler` no longer opens `midi.Listen` at all — it
   owns only the DAW control-surface half (`driver.Open`), auto-detected on
   its own fixed, non-configurable `"launchkey"` match
   (`internal/launchkey/reconciler.go`'s `launchkeyMatch` constant).
 
-Added since: per-device exclusion, so `port_match`'s all-or-nothing
-substring restriction isn't the only knob. `MIDIConfig.IgnoreDevices`
-(`[midi].ignore_devices`) is a denylist of exact port names, layered on top
-of Match/the DAW exclusion — deliberately opt-out, not opt-in, so a newly
-plugged-in keyboard never needs to be added anywhere first. Three surfaces
-edit the same list: the config field itself, `--midi-ignore` (CLI, one-off,
-override-not-merge like `--web`), and the web UI's MIDI devices panel
-(`GET`/`PUT /api/midi/devices`, live via `Multiplexer.SetIgnore` +
-optional config-file save — same contract as the velocity editor).
-`polyclav midi list` prints every connected port with its live
-classification (`internal/midi.ClassifyPorts`, shared with the web GET
-handler so the two surfaces can't disagree) so there's never any guessing
-at exact names for either mechanism.
+Changed 2026-08-11: device selection is an ALLOWLIST
+(`MIDIConfig.AllowDevices` / `[midi].allow_devices`), replacing the earlier
+`ignore_devices` denylist outright — no migration, the old key is simply
+ignored. Opt-in beat opt-out here because the denylist's premise (a newly
+plugged-in keyboard should just work) also meant every loopback bus and
+control surface on the machine "just worked", and the failure was silent
+either way. The allowlist's own failure mode — an empty list makes no
+sound — is instead made impossible to miss: `cmd/polyclav`'s
+`printNoMIDIDevicesBanner` prints a boxed startup notice naming the
+connected ports and the exact line to paste, and `Multiplexer.SetAllow`
+warns whenever the live list is emptied. Three surfaces edit the same list:
+the config field itself, `--midi-allow` (CLI, one-off, override-not-merge
+like `--web`), and the web UI's MIDI devices panel (`GET`/`PUT
+/api/midi/devices`, live via `Multiplexer.SetAllow` + optional config-file
+save — same contract as the velocity editor). `polyclav midi list` prints
+every connected port with its live classification
+(`internal/midi.ClassifyPorts`, shared with the web GET handler so the two
+surfaces can't disagree) so there's never any guessing at exact names.
 
 One transport-level assumption, separate from any device: all MIDI I/O goes
 through **rtmidi/ALSA-seq** (`gitlab.com/gomidi/midi/v2/drivers/rtmididrv`).
