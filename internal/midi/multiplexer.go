@@ -12,34 +12,39 @@ import (
 
 // MultiplexerConfig configures the multi-device note-input reconciler.
 type MultiplexerConfig struct {
-	// Match, if non-empty, restricts note input to ports whose name
-	// contains this substring (case-insensitive) — an explicit,
-	// deliberate restriction (matching the pre-existing [midi].port_match
-	// behavior). When Match is set, DAW-role ports are NOT excluded
-	// automatically: docs/USER_GUIDE.md documents binding OSC to a
-	// Launchkey's raw DAW CC stream via port_match = "DAW", and an
-	// explicit substring is trusted as intentional.
-	//
-	// When Match is empty (the new default), every currently-present
-	// input port is opened EXCEPT ones that look like a Launchkey-style
-	// DAW control-surface port (see looksLikeDAWPort) — notes should
-	// come from actual keyboards, not a control surface's CC/SysEx
-	// stream, and the launchkey.Reconciler already owns that port
-	// independently via its own fixed detection string.
+	// Match, if non-empty, narrows the candidate set to ports whose name
+	// contains this substring (case-insensitive), matching the
+	// [midi].port_match config field. It is a FILTER, not a selection:
+	// Allow still decides what actually opens, so Match alone (with an
+	// empty Allow) opens nothing.
 	Match string
 
-	// Ignore lists case-insensitive SUBSTRINGS to exclude matching ports
-	// from note input on top of Match/the DAW exclusion — a denylist, not
-	// an allowlist: a device NOT matched by this list just works the
-	// moment it's plugged in, without needing to be added anywhere first.
+	// Allow is the ALLOWLIST of case-insensitive SUBSTRINGS naming the
+	// MIDI input ports that may send notes. A port opens only if its
+	// name contains at least one entry.
+	//
+	// EMPTY MEANS NOTHING OPENS — no keyboard sends notes until a device
+	// is explicitly selected. This is deliberately opt-in: a machine can
+	// enumerate loopback buses, control surfaces, and other people's
+	// hardware, and silently binding to all of them is worse than making
+	// the user name what they want. cmd/polyclav prints a loud startup
+	// banner when this list is empty (see printNoMIDIDevicesBanner) so
+	// the silence is never a mystery.
+	//
+	// An explicit entry WINS over the DAW/loopback name heuristics: a
+	// user who names a Launchkey's DAW port gets its raw CC stream
+	// (docs/USER_GUIDE.md's OSC-binding workflow), same as the old
+	// port_match = "DAW" escape hatch. The heuristics survive only as
+	// descriptive labels on unselected ports (see PortStatus).
+	//
 	// Substring (not exact) matching mirrors Match/port_match: a stable
 	// fragment of the name (e.g. "CASIO USB-MIDI") keeps matching across
 	// a replug/reboot even though ALSA appends a volatile " <client>:<port>"
-	// address to the full port name (docs/MIDI_IGNORE_MATCHING.md). This is
-	// only the INITIAL value seeded at construction; SetIgnore replaces it
+	// address to the full port name (docs/MIDI_DEVICE_MATCHING.md). This is
+	// only the INITIAL value seeded at construction; SetAllow replaces it
 	// live thereafter (the web UI's devices panel calls it on a running
 	// daemon — see internal/web's /api/midi/devices).
-	Ignore []string
+	Allow []string
 
 	PollInterval time.Duration
 
@@ -71,11 +76,11 @@ type MultiplexerConfig struct {
 }
 
 // Multiplexer is a hotplug reconciler for reading note input from every
-// currently-connected MIDI keyboard at once, instead of a single
-// user-picked device (that's now launchkey.Reconciler's job, and only
-// for the Launchkey's own DAW control-surface half). Each port gets its
-// own independent listener goroutine — one device disconnecting doesn't
-// affect the others.
+// SELECTED MIDI keyboard at once (see MultiplexerConfig.Allow) rather
+// than a single user-picked device. Each port gets its own independent
+// listener goroutine — one device disconnecting doesn't affect the
+// others, and a selected device that isn't plugged in yet simply opens
+// the moment it appears.
 //
 // Known limitation: if two ports enumerate with the IDENTICAL name (a
 // documented kernel bug affecting a single Launchkey's own MIDI/DAW
@@ -89,10 +94,10 @@ type Multiplexer struct {
 	logger *slog.Logger
 	cfg    MultiplexerConfig
 
-	mu     sync.Mutex
-	ports  map[string]*muxPort
-	ignore []string // as given (original case) — for display/persistence
-	lower  []string // lowercased mirror of ignore — substrings to match against a lowercased port name
+	mu    sync.Mutex
+	ports map[string]*muxPort
+	allow []string // as given (original case) — for display/persistence
+	lower []string // lowercased mirror of allow — substrings to match against a lowercased port name
 
 	// lastPortNames backs the port-list-changed debug log in tick() —
 	// only ever touched from the Run() goroutine, so no lock needed.
@@ -131,8 +136,8 @@ func NewMultiplexer(logger *slog.Logger, cfg MultiplexerConfig) *Multiplexer {
 		logger: logger,
 		cfg:    cfg,
 		ports:  make(map[string]*muxPort),
-		ignore: append([]string(nil), cfg.Ignore...),
-		lower:  lowerAll(cfg.Ignore),
+		allow:  append([]string(nil), cfg.Allow...),
+		lower:  lowerAll(cfg.Allow),
 	}
 }
 
@@ -144,28 +149,34 @@ func lowerAll(names []string) []string {
 	return out
 }
 
-// SetIgnore replaces the live ignore list (case-insensitive substrings —
-// see MultiplexerConfig.Ignore). Safe to call from any goroutine — the
+// SetAllow replaces the live allowlist (case-insensitive substrings —
+// see MultiplexerConfig.Allow). Safe to call from any goroutine — the
 // web UI's PUT /api/midi/devices handler calls it directly on a running
 // daemon. Takes effect on the next poll tick (at most PollInterval
 // away), same as any other hotplug change; it does not force an
 // immediate re-tick.
-func (m *Multiplexer) SetIgnore(names []string) {
+//
+// Emptying the list silences every keyboard, so it is logged at Warn —
+// the running-daemon counterpart to cmd/polyclav's startup banner.
+func (m *Multiplexer) SetAllow(names []string) {
 	m.mu.Lock()
-	m.ignore = append([]string(nil), names...)
+	m.allow = append([]string(nil), names...)
 	m.lower = lowerAll(names)
 	m.mu.Unlock()
+	if !hasNonEmpty(names) {
+		m.logger.Warn("midi: no input devices selected — no keyboard will send notes until one is (see [midi].allow_devices)")
+	}
 }
 
-// Ignore reports the currently-active ignore list, in the original case
-// it was set with.
-func (m *Multiplexer) Ignore() []string {
+// Allow reports the currently-active allowlist, in the original case it
+// was set with.
+func (m *Multiplexer) Allow() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]string(nil), m.ignore...)
+	return append([]string(nil), m.allow...)
 }
 
-// Match reports the configured restriction substring — immutable after
+// Match reports the configured pre-filter substring — immutable after
 // construction, so no lock is needed.
 func (m *Multiplexer) Match() string { return m.cfg.Match }
 
@@ -247,9 +258,9 @@ func (m *Multiplexer) tick(ctx context.Context) {
 	}
 }
 
-// wantedPorts applies Match (or, absent Match, the DAW-role exclusion),
-// then subtracts any name matching lower (a snapshot of the live ignore
-// substrings — see SetIgnore) from the currently-enumerated port names.
+// wantedPorts applies Match as a pre-filter, then keeps only names
+// matching lower (a snapshot of the live allowlist substrings — see
+// SetAllow). An empty allowlist wants nothing.
 func (m *Multiplexer) wantedPorts(names []string, lower []string) map[string]bool {
 	needle := strings.ToLower(m.cfg.Match)
 	wanted := make(map[string]bool, len(names))
@@ -268,21 +279,26 @@ func (m *Multiplexer) wantedPorts(names []string, lower []string) map[string]boo
 type PortStatus string
 
 const (
-	// PortSendingNotes: not excluded by Match, the DAW heuristic, or
-	// Ignore — this port is currently feeding the synth.
+	// PortSendingNotes: named by the allowlist (and not filtered out by
+	// Match) — this port is currently feeding the synth.
 	PortSendingNotes PortStatus = "notes"
-	// PortDAWOnly: excluded by the default DAW-role heuristic (only
-	// reachable when Match is empty) — a Launchkey control-surface
-	// port, never a note source regardless of Ignore.
+	// PortUnselected: absent from the allowlist. The default state of
+	// every port, including on a fresh install — nothing sends notes
+	// until it is explicitly selected.
+	PortUnselected PortStatus = "unselected"
+	// PortDAWOnly: unselected, AND shaped like a Launchkey-style DAW
+	// control-surface port (see looksLikeDAWPort) — a hint that this one
+	// carries knob/fader CC rather than keys, so it's usually not what
+	// you want to select. Advisory only: an explicit allowlist entry
+	// still opens it (that's how OSC bindings read the raw CC stream).
 	PortDAWOnly PortStatus = "daw"
-	// PortLoopback: excluded by the default loopback-port heuristic (only
-	// reachable when Match is empty) — ALSA's "Midi Through" virtual
-	// patchbay port, never a note source regardless of Ignore (see
-	// looksLikeLoopbackPort).
+	// PortLoopback: unselected, AND shaped like ALSA's "Midi Through"
+	// virtual patchbay port (see looksLikeLoopbackPort) — the same kind
+	// of advisory hint as PortDAWOnly. Selecting it echoes whatever else
+	// is on the bus back into the synth, which is almost never intended.
 	PortLoopback PortStatus = "loopback"
-	// PortIgnored: would otherwise send notes, but is in the Ignore list.
-	PortIgnored PortStatus = "ignored"
-	// PortRestricted: Match is set and this port's name doesn't contain it.
+	// PortRestricted: Match is set and this port's name doesn't contain
+	// it, so selecting it in the allowlist would have no effect.
 	PortRestricted PortStatus = "restricted"
 )
 
@@ -292,13 +308,13 @@ type PortInfo struct {
 	Status PortStatus
 }
 
-// ClassifyPorts classifies every name in names against match/ignore,
+// ClassifyPorts classifies every name in names against match/allow,
 // sharing classifyOne with wantedPorts so the CLI (`polyclav midi list`)
 // and the web devices panel can never disagree with what the
-// Multiplexer is actually doing. ignore entries are matched
-// case-insensitively as SUBSTRINGS, same as SetIgnore.
-func ClassifyPorts(names []string, match string, ignore []string) []PortInfo {
-	lower := lowerAll(ignore)
+// Multiplexer is actually doing. allow entries are matched
+// case-insensitively as SUBSTRINGS, same as SetAllow.
+func ClassifyPorts(names []string, match string, allow []string) []PortInfo {
+	lower := lowerAll(allow)
 	needle := strings.ToLower(match)
 	out := make([]PortInfo, len(names))
 	for i, n := range names {
@@ -309,34 +325,52 @@ func ClassifyPorts(names []string, match string, ignore []string) []PortInfo {
 
 // classifyOne is the single source of truth behind both wantedPorts'
 // pass/fail decision and ClassifyPorts' descriptive label. needle is
-// already lowercased (the caller's match, or "" for the default mode);
-// lower is a lowercased list of ignore substrings.
+// already lowercased (the caller's match, or "" for no pre-filter);
+// lower is a lowercased list of allowlist substrings.
+//
+// Only PortSendingNotes opens a port. The DAW/loopback labels are
+// reached solely on the unselected path — an explicit allowlist entry
+// deliberately outranks both heuristics (see MultiplexerConfig.Allow).
 func classifyOne(name, needle string, lower []string) PortStatus {
 	ln := strings.ToLower(name)
-	if needle != "" {
-		if !strings.Contains(ln, needle) {
-			return PortRestricted
-		}
-	} else if looksLikeDAWPort(name) {
-		return PortDAWOnly
-	} else if looksLikeLoopbackPort(name) {
-		return PortLoopback
+	if needle != "" && !strings.Contains(ln, needle) {
+		return PortRestricted
 	}
 	if containsAny(ln, lower) {
-		return PortIgnored
+		return PortSendingNotes
 	}
-	return PortSendingNotes
+	switch {
+	case looksLikeDAWPort(name):
+		return PortDAWOnly
+	case looksLikeLoopbackPort(name):
+		return PortLoopback
+	default:
+		return PortUnselected
+	}
 }
 
 // containsAny reports whether ln (an already-lowercased port name)
-// contains any of substrs (already-lowercased ignore entries) — mirrors
-// port_match's substring semantics so an ignore_devices entry survives a
-// replug/reboot ALSA-address change (docs/MIDI_IGNORE_MATCHING.md). An
-// empty entry is skipped rather than treated as a match-everything
-// wildcard.
+// contains any of substrs (already-lowercased allowlist entries) —
+// mirrors port_match's substring semantics so an allow_devices entry
+// survives a replug/reboot ALSA-address change
+// (docs/MIDI_DEVICE_MATCHING.md). An empty entry is skipped rather than
+// treated as a match-everything wildcard, so a stray "" can never
+// silently open every port on the machine.
 func containsAny(ln string, substrs []string) bool {
 	for _, s := range substrs {
 		if s != "" && strings.Contains(ln, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNonEmpty reports whether names holds at least one entry that could
+// ever match a port — the same "" skip containsAny applies, so a list of
+// nothing but empty strings counts as no selection at all.
+func hasNonEmpty(names []string) bool {
+	for _, n := range names {
+		if n != "" {
 			return true
 		}
 	}

@@ -54,34 +54,37 @@ type SoundfontConfig struct {
 }
 
 type MIDIConfig struct {
-	// PortMatch is an OPTIONAL restriction on note input. Empty (the
-	// default) means every connected MIDI keyboard sends notes — internal/midi.Multiplexer
-	// opens every currently-present input port except ones that look
-	// like a Launchkey-style DAW control-surface port (see
-	// looksLikeDAWPort). Set a case-insensitive substring here to
-	// restrict to only ports whose name contains it — e.g. to bind OSC
-	// to a Launchkey's raw DAW CC stream via `port_match = "DAW"`
-	// (docs/USER_GUIDE.md), a non-empty match is honored as-is and does
-	// NOT get the DAW-port exclusion. Launchkey extras (knobs/pads/
-	// screen/transport) are unaffected by this field — they're
-	// auto-detected by internal/launchkey.Reconciler independently.
-	PortMatch string `toml:"port_match"`
-	// IgnoreDevices lists case-insensitive SUBSTRINGS of MIDI input port
-	// names to exclude from note input, on top of PortMatch/the default
-	// DAW-port exclusion. Empty (the default) ignores nothing. Substring
-	// (not exact) matching mirrors PortMatch: a stable name fragment
-	// (e.g. "CASIO USB-MIDI") keeps matching even though ALSA appends a
-	// volatile " <client>:<port>" address to the full port name that
-	// shifts on replug/reboot (docs/MIDI_IGNORE_MATCHING.md).
+	// AllowDevices is the ALLOWLIST of case-insensitive SUBSTRINGS of
+	// MIDI input port names that may send notes. A connected keyboard
+	// plays only if its port name contains at least one entry.
 	//
-	// Deliberately a DENYLIST, not an allowlist: a fresh device plugged
-	// in later just works without needing to be added here first — the
-	// user opts specific ALREADY-CONNECTED devices out, not in. `polyclav
-	// midi list` shows names to copy in (a short stable fragment is
-	// enough, no need for the full string); the web UI's devices panel
-	// (GET/PUT /api/midi/devices) edits this same list live, optionally
-	// persisting it back into this field via a managed block.
-	IgnoreDevices []string `toml:"ignore_devices"`
+	// EMPTY (the default) MEANS NO MIDI INPUT AT ALL. Device selection is
+	// explicit and opt-in: cmd/polyclav prints a loud startup banner when
+	// this list is empty, so a silent keyboard is always explained rather
+	// than mysterious. An explicit entry outranks the DAW/loopback port
+	// heuristics — naming a Launchkey's DAW port binds note input to its
+	// raw knob/fader CC stream (docs/USER_GUIDE.md's OSC workflow).
+	//
+	// Substring (not exact) matching mirrors PortMatch: a stable name
+	// fragment (e.g. "CASIO USB-MIDI") keeps matching even though ALSA
+	// appends a volatile " <client>:<port>" address to the full port name
+	// that shifts on replug/reboot (docs/MIDI_DEVICE_MATCHING.md).
+	//
+	// `polyclav midi list` shows names to copy in (a short stable
+	// fragment is enough, no need for the full string); the web UI's
+	// devices panel (GET/PUT /api/midi/devices) edits this same list
+	// live, optionally persisting it back into this field via a managed
+	// block.
+	AllowDevices []string `toml:"allow_devices"`
+	// PortMatch is an OPTIONAL extra pre-filter on top of AllowDevices:
+	// when non-empty, only ports whose name contains this
+	// case-insensitive substring are candidates at all. It does NOT
+	// select anything on its own — with an empty AllowDevices, a set
+	// PortMatch still yields no note input. Launchkey extras
+	// (knobs/pads/screen/transport) are unaffected by this field —
+	// they're auto-detected by internal/launchkey.Reconciler
+	// independently.
+	PortMatch string `toml:"port_match"`
 	// Velocity is the global default velocity curve applied to incoming
 	// NoteOn velocities (see docs/VELOCITY_CURVES.md). The zero value
 	// (Curve == "") means linear passthrough. Per-patch overrides live on
