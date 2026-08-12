@@ -27,11 +27,11 @@ func runMIDI(args []string) int {
 }
 
 // runMIDIList prints every currently-connected MIDI input port with its
-// live classification (sends notes / DAW-only / ignored / restricted),
-// so there is zero guessing about what names/substrings to put in
-// [midi].ignore_devices, --midi-ignore, or [midi].port_match — the
-// single most common friction point before this existed (previously
-// `aconnect -l`, ALSA-specific and not obviously the right tool).
+// live classification (sends notes / unselected / DAW / loopback /
+// restricted), so there is zero guessing about what names/substrings to
+// put in [midi].allow_devices or --midi-allow — the single most common
+// friction point before this existed (previously `aconnect -l`,
+// ALSA-specific and not obviously the right tool).
 func runMIDIList(args []string) int {
 	fs := flag.NewFlagSet("midi list", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to polyclav.toml (default: XDG config dir)")
@@ -45,9 +45,10 @@ func runMIDIList(args []string) int {
 
 	// Best-effort: classify against the real config if one exists, so the
 	// report reflects what the running daemon would actually do. A
-	// missing/unparsable config just falls back to the "everything sends
-	// notes" default (match="", ignore=nil) rather than erroring — this
-	// is a read-only report, not a startup gate.
+	// missing/unparsable config falls back to the empty allowlist —
+	// which is also the real default, so the report stays honest: nothing
+	// sends notes until a device is selected. This is a read-only
+	// report, not a startup gate, so a bad config never errors here.
 	path := *configPath
 	if path == "" {
 		if cfgDir, cerr := os.UserConfigDir(); cerr == nil {
@@ -55,15 +56,15 @@ func runMIDIList(args []string) int {
 		}
 	}
 	var match string
-	var ignore []string
+	var allow []string
 	if path != "" {
 		if cfg, cerr := config.Load(path); cerr == nil {
 			match = cfg.MIDI.PortMatch
-			ignore = cfg.MIDI.IgnoreDevices
+			allow = cfg.MIDI.AllowDevices
 		}
 	}
 
-	infos := midi.ClassifyPorts(names, match, ignore)
+	infos := midi.ClassifyPorts(names, match, allow)
 	if len(infos) == 0 {
 		fmt.Println("No MIDI input ports found.")
 		return 0
@@ -73,23 +74,30 @@ func runMIDIList(args []string) int {
 		fmt.Printf("  %-10s %s\n", midiStatusLabel(info.Status), info.Name)
 	}
 	fmt.Println()
-	fmt.Println("Use a stable substring of the names above in polyclav.toml's")
-	fmt.Println(`[midi].ignore_devices, or --midi-ignore "name one,name two" for a`)
-	fmt.Println("one-off override. Matching ignores the trailing ALSA address, so it")
+	if len(allow) == 0 {
+		fmt.Println("NOTHING IS SELECTED: [midi].allow_devices is empty, so no keyboard")
+		fmt.Println("sends notes. It is an allowlist — name a device to hear it.")
+		fmt.Println()
+	}
+	fmt.Println("Put a stable substring of the names above in polyclav.toml's")
+	fmt.Println(`[midi].allow_devices, or --midi-allow "name one,name two" for a`)
+	fmt.Println("one-off override. Matching skips the trailing ALSA address, so it")
 	fmt.Println("survives a replug/reboot even if that address changes.")
 	return 0
 }
 
+// midiStatusLabel is padded to the %-10s column runMIDIList prints, so
+// every label must stay within 10 characters.
 func midiStatusLabel(s midi.PortStatus) string {
 	switch s {
 	case midi.PortSendingNotes:
 		return "ok"
+	case midi.PortUnselected:
+		return "off"
 	case midi.PortDAWOnly:
 		return "daw"
 	case midi.PortLoopback:
 		return "loopback"
-	case midi.PortIgnored:
-		return "ignored"
 	case midi.PortRestricted:
 		return "restricted"
 	default:

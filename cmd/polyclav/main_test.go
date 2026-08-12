@@ -16,6 +16,7 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
+	"github.com/mschulkind-oss/polyclav/internal/midi"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/web"
 )
@@ -112,11 +113,11 @@ func TestParseLogLevel(t *testing.T) {
 	}
 }
 
-// TestApplyMIDIIgnoreFlag mirrors TestApplyWebFlag: an empty flag leaves
-// the config's own [midi].ignore_devices untouched; a non-empty flag
+// TestApplyMIDIAllowFlag mirrors TestApplyWebFlag: an empty flag leaves
+// the config's own [midi].allow_devices untouched; a non-empty flag
 // REPLACES it (not merges), split on commas with surrounding whitespace
 // trimmed and empty entries dropped.
-func TestApplyMIDIIgnoreFlag(t *testing.T) {
+func TestApplyMIDIAllowFlag(t *testing.T) {
 	cases := []struct {
 		name    string
 		initial []string
@@ -132,18 +133,125 @@ func TestApplyMIDIIgnoreFlag(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Defaults()
-			cfg.MIDI.IgnoreDevices = tc.initial
-			applyMIDIIgnoreFlag(cfg, tc.flag)
-			got := cfg.MIDI.IgnoreDevices
+			cfg.MIDI.AllowDevices = tc.initial
+			applyMIDIAllowFlag(cfg, tc.flag)
+			got := cfg.MIDI.AllowDevices
 			if len(got) != len(tc.want) {
-				t.Fatalf("IgnoreDevices = %v, want %v", got, tc.want)
+				t.Fatalf("AllowDevices = %v, want %v", got, tc.want)
 			}
 			for i := range got {
 				if got[i] != tc.want[i] {
-					t.Errorf("IgnoreDevices[%d] = %q, want %q", i, got[i], tc.want[i])
+					t.Errorf("AllowDevices[%d] = %q, want %q", i, got[i], tc.want[i])
 				}
 			}
 		})
+	}
+}
+
+// TestPrintNoMIDIDevicesBanner pins the contract of the one message that
+// stands between a user and "polyclav is broken": it must name the
+// setting, say plainly that nothing will make sound, and — when ports
+// are connected — hand over a copy-pasteable line naming their actual
+// hardware.
+func TestPrintNoMIDIDevicesBanner(t *testing.T) {
+	// Classified the way main does it — with an empty allowlist, which is
+	// the state being reported.
+	classify := func(names ...string) []midi.PortInfo {
+		return midi.ClassifyPorts(names, "", nil)
+	}
+
+	t.Run("with connected ports", func(t *testing.T) {
+		var buf bytes.Buffer
+		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
+			classify("CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0", "Launchkey MK4 61 MIDI In"), "")
+		out := buf.String()
+		for _, want := range []string{
+			"NO MIDI INPUT DEVICES ARE SELECTED",
+			"allow_devices",
+			"/etc/polyclav.toml",
+			"CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0",                // listed verbatim...
+			`allow_devices = ["CASIO USB-MIDI:CASIO USB-MIDI MIDI 1"]`, // ...but suggested without the volatile ALSA address
+			"--midi-allow",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("banner missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	// The trap the suggestion logic exists for: "Midi Through" enumerates
+	// first on a typical Linux box, and telling someone to select the
+	// loopback bus is worse than saying nothing.
+	t.Run("never suggests a loopback or control-surface port", func(t *testing.T) {
+		var buf bytes.Buffer
+		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml", classify(
+			"Midi Through:Midi Through Port-0 14:0",
+			"Launchkey MK4 61:Launchkey MK4 61 DAW In 32:1",
+			"Launchkey MK4 61:Launchkey MK4 61 MIDI In 32:0",
+		), "")
+		out := buf.String()
+		if !strings.Contains(out, `allow_devices = ["Launchkey MK4 61:Launchkey MK4 61 MIDI In"]`) {
+			t.Errorf("banner should suggest the real keyboard port:\n%s", out)
+		}
+		// ...while still listing the others, labelled for what they are.
+		if !strings.Contains(out, "loopback, not a keyboard") ||
+			!strings.Contains(out, "control surface, not keys") {
+			t.Errorf("banner should label the non-keyboard ports:\n%s", out)
+		}
+	})
+
+	t.Run("falls back when every port is flagged", func(t *testing.T) {
+		var buf bytes.Buffer
+		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
+			classify("Midi Through:Midi Through Port-0 14:0"), "")
+		if out := buf.String(); !strings.Contains(out, `allow_devices = ["Midi Through:Midi Through Port-0"]`) {
+			t.Errorf("banner must still make a suggestion when nothing is plain:\n%s", out)
+		}
+	})
+
+	t.Run("with no ports connected", func(t *testing.T) {
+		var buf bytes.Buffer
+		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml", nil, "")
+		out := buf.String()
+		if !strings.Contains(out, "No MIDI input ports are connected") {
+			t.Errorf("banner should say nothing is plugged in:\n%s", out)
+		}
+		if !strings.Contains(out, "polyclav midi list") {
+			t.Errorf("banner should point at `polyclav midi list`:\n%s", out)
+		}
+	})
+
+	t.Run("calls out a port_match that cannot help", func(t *testing.T) {
+		// port_match set + nothing selected is the trap this note exists
+		// for: it looks like device selection but never selects anything.
+		var buf bytes.Buffer
+		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
+			midi.ClassifyPorts([]string{"Yamaha P-125"}, "yamaha", nil), "yamaha")
+		if out := buf.String(); !strings.Contains(out, "port_match") || !strings.Contains(out, "never selects") {
+			t.Errorf("banner should explain that port_match doesn't select:\n%s", out)
+		}
+	})
+}
+
+func TestSuggestAllowEntry(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// The volatile " <client>:<port>" ALSA address is dropped —
+		// pasting it in would give an entry that stops matching on the
+		// next replug (docs/MIDI_DEVICE_MATCHING.md).
+		{"CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0", "CASIO USB-MIDI:CASIO USB-MIDI MIDI 1"},
+		{"Midi Through:Midi Through Port-0 14:0", "Midi Through:Midi Through Port-0"},
+		// A name with no address suffix is already its own best
+		// substring, trailing digits and all.
+		{"Launchkey MK4 61 MIDI In", "Launchkey MK4 61 MIDI In"},
+		{"Yamaha P-125", "Yamaha P-125"},
+		// Degenerate: nothing but an address leaves us the whole name
+		// rather than an empty, match-nothing suggestion.
+		{"36:0", "36:0"},
+	}
+	for _, tc := range cases {
+		if got := suggestAllowEntry(tc.in); got != tc.want {
+			t.Errorf("suggestAllowEntry(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

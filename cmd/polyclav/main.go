@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -88,7 +89,7 @@ func main() {
 	playLoop := flag.Bool("loop", false, "loop the --play clip until shutdown")
 	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
 	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in polyclav.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
-	midiIgnoreFlag := flag.String("midi-ignore", "", "comma-separated MIDI device name substrings to exclude from note input, overriding [midi].ignore_devices in polyclav.toml for this run (see `polyclav midi list` for names)")
+	midiAllowFlag := flag.String("midi-allow", "", "comma-separated MIDI device name substrings allowed to send notes, overriding [midi].allow_devices in polyclav.toml for this run (see `polyclav midi list` for names)")
 	logLevelFlag := flag.String("log-level", "info", "log verbosity: debug, info, warn, or error. debug adds MIDI hotplug port-list-changed lines — cheap enough to leave on")
 	flag.Parse()
 
@@ -166,7 +167,7 @@ func main() {
 		xr18Host = "(disabled)"
 	}
 	applyWebFlag(cfg, *webFlag)
-	applyMIDIIgnoreFlag(cfg, *midiIgnoreFlag)
+	applyMIDIAllowFlag(cfg, *midiAllowFlag)
 	// Same treatment for the web UI (off by default) and the global
 	// velocity curve. The curve resolved here is the [midi.velocity]
 	// default only — per-patch overrides are re-resolved on every patch
@@ -186,6 +187,26 @@ func main() {
 		"xr18_host", xr18Host, "xr18_port", cfg.OSC.XR18.Port,
 		"soundfont", cfg.Soundfont.Path,
 		"web", webListen, "velocity", velLabel)
+
+	// MIDI input is opt-in (see config.MIDIConfig.AllowDevices). An empty
+	// allowlist is a fully valid config — it just makes no sound — so
+	// this is a banner, not a startup error. Enumeration is best-effort:
+	// a machine with no working MIDI subsystem still gets the banner,
+	// just without the copy-paste port names.
+	if len(cfg.MIDI.AllowDevices) == 0 {
+		names, perr := midi.PortNames()
+		if perr != nil {
+			logger.Warn("enumerate midi input ports", "err", perr)
+			names = nil
+		}
+		// Classified with an empty allowlist — exactly the state being
+		// reported — so the banner's per-port hints match what `polyclav
+		// midi list` would print for the same machine.
+		printNoMIDIDevicesBanner(os.Stdout, path,
+			midi.ClassifyPorts(names, cfg.MIDI.PortMatch, nil), cfg.MIDI.PortMatch)
+	} else {
+		logger.Info("midi input devices selected", "allow_devices", strings.Join(cfg.MIDI.AllowDevices, ", "))
+	}
 
 	// Graceful sfizz degradation: if libsfizz isn't available, .sfz patches
 	// can't play. Warn by name so it's obvious why those pads are silent —
@@ -504,14 +525,15 @@ func main() {
 			MissThreshold: 3,
 			OnStateChange: func(state string) { publishDeviceState("xr18", state) },
 		},
-		// Reads note input from every connected keyboard by default
-		// (cfg.MIDI.PortMatch empty) instead of one user-picked device —
-		// Launchkey extras (knobs/pads/screen/transport) are unaffected,
-		// handled independently above via the Launchkey-only
-		// ReconcilerConfig, which auto-detects on its own fixed string.
+		// Reads note input from every SELECTED keyboard
+		// (cfg.MIDI.AllowDevices — empty means none, and startup already
+		// said so loudly). Launchkey extras (knobs/pads/screen/transport)
+		// are unaffected, handled independently above via the
+		// Launchkey-only ReconcilerConfig, which auto-detects on its own
+		// fixed string.
 		MIDI: midi.MultiplexerConfig{
 			Match:         cfg.MIDI.PortMatch,
-			Ignore:        cfg.MIDI.IgnoreDevices,
+			Allow:         cfg.MIDI.AllowDevices,
 			PollInterval:  1 * time.Second,
 			IdleThreshold: idleWatchdogThreshold,
 			Sink:          onMIDIEvent,
@@ -822,13 +844,13 @@ func applyWebFlag(cfg *config.Config, val string) {
 	}
 }
 
-// applyMIDIIgnoreFlag overlays the --midi-ignore CLI flag onto the
-// loaded config, following the same override-not-merge convention as
-// applyWebFlag: an empty flag leaves cfg.MIDI.IgnoreDevices as loaded
+// applyMIDIAllowFlag overlays the --midi-allow CLI flag onto the loaded
+// config, following the same override-not-merge convention as
+// applyWebFlag: an empty flag leaves cfg.MIDI.AllowDevices as loaded
 // from the config file; a non-empty flag REPLACES it entirely for this
 // run (not merged with the file's list) — the CLI always wins, same as
 // --web replacing (not toggling) the listen address.
-func applyMIDIIgnoreFlag(cfg *config.Config, val string) {
+func applyMIDIAllowFlag(cfg *config.Config, val string) {
 	if val == "" {
 		return
 	}
@@ -838,7 +860,129 @@ func applyMIDIIgnoreFlag(cfg *config.Config, val string) {
 			names = append(names, n)
 		}
 	}
-	cfg.MIDI.IgnoreDevices = names
+	cfg.MIDI.AllowDevices = names
+}
+
+// printNoMIDIDevicesBanner explains the single most confusing state
+// polyclav can boot into: it starts fine, the audio engine runs, the
+// Launchkey's pads even light up — and pressing a key makes no sound,
+// because [midi].allow_devices is an ALLOWLIST and nothing is on it.
+//
+// Deliberately a loud, unmissable block rather than one more structured
+// log line: it is the difference between "polyclav is broken" and "I
+// haven't picked a keyboard yet", and it has to survive being skimmed in
+// a wall of startup logs. Written to the same stream as the logger
+// (stdout) so ordering is preserved under overmind/journald.
+//
+// ports is the currently-enumerated input port list, already classified
+// (empty if enumeration failed) — naming the user's actual hardware turns
+// the fix from a documentation lookup into a copy-paste.
+func printNoMIDIDevicesBanner(w io.Writer, configPath string, ports []midi.PortInfo, portMatch string) {
+	const rule = "════════════════════════════════════════════════════════════════════"
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, rule)
+	fmt.Fprintln(w, "  NO MIDI INPUT DEVICES ARE SELECTED — nothing will make sound.")
+	fmt.Fprintln(w, rule)
+	fmt.Fprintln(w, "  [midi].allow_devices is empty, and it is an ALLOWLIST: a keyboard")
+	fmt.Fprintln(w, "  sends notes only once you name it. Nothing is named right now, so")
+	fmt.Fprintln(w, "  every connected keyboard is being ignored.")
+	fmt.Fprintln(w)
+	if len(ports) == 0 {
+		fmt.Fprintln(w, "  No MIDI input ports are connected either. Plug a keyboard in, then")
+		fmt.Fprintln(w, "  run `polyclav midi list` to see its name.")
+	} else {
+		fmt.Fprintln(w, "  Connected MIDI input ports:")
+		width := bannerNameWidth(ports)
+		for _, p := range ports {
+			if hint := bannerPortHint(p.Status); hint != "" {
+				fmt.Fprintf(w, "      %-*s  (%s)\n", width, p.Name, hint)
+			} else {
+				fmt.Fprintf(w, "      %s\n", p.Name)
+			}
+		}
+		pick := suggestAllowEntry(bannerSuggestedPort(ports))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "  Pick one — a short, stable fragment of the name is enough.")
+		fmt.Fprintf(w, "  Add to %s:\n", configPath)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "      [midi]\n      allow_devices = [%q]\n", pick)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "  Or tick the box in the web UI's MIDI devices panel, or start")
+		fmt.Fprintln(w, "  polyclav with:")
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "      polyclav --midi-allow %q\n", pick)
+	}
+	if portMatch != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  Note: [midi].port_match = %q is set, but port_match only\n", portMatch)
+		fmt.Fprintln(w, "  filters candidates — it never selects a device on its own.")
+	}
+	fmt.Fprintln(w, rule)
+	fmt.Fprintln(w)
+}
+
+// bannerPortHint labels the ports that are enumerated but are not
+// keyboards, so the list doesn't read as "pick any of these" when two of
+// the three entries would be a mistake. "" for an ordinary port.
+func bannerPortHint(s midi.PortStatus) string {
+	switch s {
+	case midi.PortDAWOnly:
+		return "control surface, not keys"
+	case midi.PortLoopback:
+		return "loopback, not a keyboard"
+	case midi.PortRestricted:
+		return "excluded by port_match"
+	default:
+		return ""
+	}
+}
+
+// bannerNameWidth is the column width that aligns the hints above,
+// abandoned past 56 columns so one pathologically long port name can't
+// push every hint off an 80-column terminal.
+func bannerNameWidth(ports []midi.PortInfo) int {
+	width := 0
+	for _, p := range ports {
+		if n := len(p.Name); n > width {
+			width = n
+		}
+	}
+	if width > 56 {
+		return 0
+	}
+	return width
+}
+
+// bannerSuggestedPort picks which port to build the copy-paste line from:
+// the first plain, selectable one. Suggesting the Midi Through loopback
+// just because it enumerates first would be actively harmful advice —
+// it echoes the bus back into the synth. Falls back to the first port
+// when every candidate is flagged, so there is always a suggestion.
+func bannerSuggestedPort(ports []midi.PortInfo) string {
+	for _, p := range ports {
+		if bannerPortHint(p.Status) == "" {
+			return p.Name
+		}
+	}
+	return ports[0].Name
+}
+
+// alsaAddrSuffixRe matches the volatile " <client>:<port>" address ALSA
+// appends to an enumerated port name (e.g. the " 36:0" in
+// "CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0").
+var alsaAddrSuffixRe = regexp.MustCompile(`\s+\d+:\d+$`)
+
+// suggestAllowEntry trims an enumerated port name down to the stable
+// fragment worth pasting into allow_devices: that ALSA address shifts on
+// replug/reboot, so suggesting the full string would hand the user an
+// entry that quietly stops matching later
+// (docs/MIDI_DEVICE_MATCHING.md). Anything else is left alone — a name
+// that is already stable is its own best substring.
+func suggestAllowEntry(port string) string {
+	if trimmed := strings.TrimSpace(alsaAddrSuffixRe.ReplaceAllString(port, "")); trimmed != "" {
+		return trimmed
+	}
+	return port
 }
 
 // globalVelocity is a goroutine-safe holder for the daemon's global
