@@ -16,8 +16,8 @@ import (
 
 // launchkeyMatch is the fixed substring this package uses to
 // auto-detect a Launchkey's DAW control-surface ports. It's
-// intentionally NOT user-configurable: [midi].port_match now controls
-// the generic multi-keyboard note listener instead (see
+// intentionally NOT user-configurable: [midi].allow_devices controls the
+// generic multi-keyboard note listener instead (see
 // internal/midi.Multiplexer), and the whole point of that split is that
 // Launchkey extras (knobs/pads/screen/transport) just work whenever a
 // Launchkey is plugged in, without any config. Note input from the

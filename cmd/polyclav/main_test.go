@@ -157,13 +157,13 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 	// Classified the way main does it — with an empty allowlist, which is
 	// the state being reported.
 	classify := func(names ...string) []midi.PortInfo {
-		return midi.ClassifyPorts(names, "", nil)
+		return midi.ClassifyPorts(names, nil)
 	}
 
 	t.Run("with connected ports", func(t *testing.T) {
 		var buf bytes.Buffer
 		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
-			classify("CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0", "Launchkey MK4 61 MIDI In"), "")
+			classify("CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0", "Launchkey MK4 61 MIDI In"))
 		out := buf.String()
 		for _, want := range []string{
 			"NO MIDI INPUT DEVICES ARE SELECTED",
@@ -188,7 +188,7 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 			"Midi Through:Midi Through Port-0 14:0",
 			"Launchkey MK4 61:Launchkey MK4 61 DAW In 32:1",
 			"Launchkey MK4 61:Launchkey MK4 61 MIDI In 32:0",
-		), "")
+		))
 		out := buf.String()
 		if !strings.Contains(out, `allow_devices = ["Launchkey MK4 61:Launchkey MK4 61 MIDI In"]`) {
 			t.Errorf("banner should suggest the real keyboard port:\n%s", out)
@@ -203,7 +203,7 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 	t.Run("falls back when every port is flagged", func(t *testing.T) {
 		var buf bytes.Buffer
 		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
-			classify("Midi Through:Midi Through Port-0 14:0"), "")
+			classify("Midi Through:Midi Through Port-0 14:0"))
 		if out := buf.String(); !strings.Contains(out, `allow_devices = ["Midi Through:Midi Through Port-0"]`) {
 			t.Errorf("banner must still make a suggestion when nothing is plain:\n%s", out)
 		}
@@ -211,24 +211,13 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 
 	t.Run("with no ports connected", func(t *testing.T) {
 		var buf bytes.Buffer
-		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml", nil, "")
+		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml", nil)
 		out := buf.String()
 		if !strings.Contains(out, "No MIDI input ports are connected") {
 			t.Errorf("banner should say nothing is plugged in:\n%s", out)
 		}
 		if !strings.Contains(out, "polyclav midi list") {
 			t.Errorf("banner should point at `polyclav midi list`:\n%s", out)
-		}
-	})
-
-	t.Run("calls out a port_match that cannot help", func(t *testing.T) {
-		// port_match set + nothing selected is the trap this note exists
-		// for: it looks like device selection but never selects anything.
-		var buf bytes.Buffer
-		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
-			midi.ClassifyPorts([]string{"Yamaha P-125"}, "yamaha", nil), "yamaha")
-		if out := buf.String(); !strings.Contains(out, "port_match") || !strings.Contains(out, "never selects") {
-			t.Errorf("banner should explain that port_match doesn't select:\n%s", out)
 		}
 	})
 }

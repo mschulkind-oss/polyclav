@@ -282,9 +282,8 @@ polyclav midi list
 
 prints every currently-connected port with its live classification: `ok`
 sends notes, `off` is connected but not selected, `daw` is a control
-surface, `loopback` is ALSA's Midi Through, `restricted` means `port_match`
-excludes it. (`aconnect -l` also works if you just want a raw port list, no
-classification.)
+surface, `loopback` is ALSA's Midi Through. (`aconnect -l` also works if
+you just want a raw port list, no classification.)
 
 Then list case-insensitive **substrings** of the names you want:
 
@@ -336,13 +335,9 @@ which is useful for OSC bindings that want the knobs/faders as CC sources
 either way** — `internal/launchkey.Reconciler` auto-detects a Launchkey on
 its own fixed `"launchkey"` match, entirely independent of this config.
 
-#### `port_match` — an optional extra filter
-
-`port_match` is OPTIONAL and defaults to `""`. When set, it narrows the
-candidate set to ports whose name contains that case-insensitive substring,
-*before* `allow_devices` picks from what's left. It is a filter, never a
-selection: with `allow_devices` empty, setting `port_match` still gets you
-silence. Most setups leave it `""` and use `allow_devices` alone.
+`allow_devices` is the *only* device-selection knob. An earlier
+`port_match` filter was removed once the allowlist subsumed it; a
+`port_match` line left in an old config is silently ignored.
 
 ### `[web]` — the browser dashboard
 
@@ -864,7 +859,7 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 | Symptom | Fix |
 |---------|-----|
 | **No audio.** | Confirm your sink is visible (`pw-cli ls Node \| grep -i sink`) and that PipeWire is the running audio server. Note polyclav *refuses to boot* when a patch's soundfont is missing (it lists the files and exits 1) — so if the daemon is running, the problem is routing, not files. |
-| **No MIDI.** | Run `polyclav midi list` (or `aconnect -l`) and confirm your keyboard is listed and classified `ok`. `off` means it isn't in `[midi].allow_devices` — that list is an allowlist and starts empty, so this is the usual answer; add a substring of the name, or tick the box in the web UI's MIDI devices panel. `restricted` means `[midi].port_match` excludes it (clear it or fix the substring). |
+| **No MIDI.** | Run `polyclav midi list` (or `aconnect -l`) and confirm your keyboard is listed and classified `ok`. `off` means it isn't in `[midi].allow_devices` — that list is an allowlist and starts empty, so this is the usual answer; add a substring of the name, or tick the box in the web UI's MIDI devices panel. |
 | **Knobs/faders do nothing.** | These are the Launchkey's DAW-port CCs, auto-detected independently of `[midi].allow_devices` — unaffected by that setting either way. If they're still silent, confirm a Launchkey is actually connected: the startup log's "launchkey connected" line, or the web UI's device status chip if `[web]` is enabled. |
 | **Latency feels high.** | See `AGENTS.md` → "Latency tuning". For the XR18, the host-side WirePlumber rule pinning `period-size=128, period-num=3, headroom=0` is what gets you to ~8 ms round-trip. |
 | **Build fails on the Rust side.** | Check the env-var pins in `mise.toml` (`LIBCLANG_PATH`, `CPLUS_INCLUDE_PATH`, `CGO_LDFLAGS`, `PKG_CONFIG_PATH`, `C_INCLUDE_PATH`). See `AGENTS.md` → "Toolchain quirks pinned in mise.toml". |

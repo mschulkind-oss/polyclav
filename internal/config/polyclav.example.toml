@@ -107,12 +107,6 @@ latency_frames = 0
 # they're auto-detected whenever a Launchkey is plugged in, regardless.
 allow_devices = []
 
-# OPTIONAL extra filter on top of allow_devices: when non-empty, only
-# ports whose name contains this case-insensitive substring are eligible
-# at all. It never SELECTS anything by itself — with allow_devices empty,
-# setting port_match still gets you silence. Most setups leave it "".
-port_match = ""
-
 # [midi.velocity]
 # Global velocity curve — reshapes incoming NoteOn velocity before it reaches
 # the synth. Omit the whole block for a straight-through linear response.

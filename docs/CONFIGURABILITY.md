@@ -60,12 +60,10 @@ constant separately.
 Configurable surface:
 
 - `internal/config/config.go` — `MIDIConfig.AllowDevices`
-  (`[midi].allow_devices`), default empty. A case-insensitive substring
-  allowlist: `internal/midi.Multiplexer` opens exactly the present input
-  ports it names, and empty means none at all.
-  `MIDIConfig.PortMatch` (`[midi].port_match`, default `""`) survives as an
-  optional pre-filter layered on top; it can only remove candidates, never
-  select one.
+  (`[midi].allow_devices`), default empty, and the only device-selection
+  knob. A case-insensitive substring allowlist: `internal/midi.Multiplexer`
+  opens exactly the present input ports it names, and empty means none at
+  all.
 
 Fixed as of 2026-07-09: note input and Launchkey detection used to be one
 coupled `port_match` string — a non-Launchkey keyboard produced zero notes
@@ -84,9 +82,13 @@ even if one was also plugged in. They're now fully independent:
   (`internal/launchkey/reconciler.go`'s `launchkeyMatch` constant).
 
 Changed 2026-08-11: device selection is an ALLOWLIST
-(`MIDIConfig.AllowDevices` / `[midi].allow_devices`), replacing the earlier
-`ignore_devices` denylist outright — no migration, the old key is simply
-ignored. Opt-in beat opt-out here because the denylist's premise (a newly
+(`MIDIConfig.AllowDevices` / `[midi].allow_devices`), replacing BOTH the
+earlier `ignore_devices` denylist and `port_match` outright — no migration,
+the old keys are simply ignored. `port_match` went too because a substring
+allowlist strictly subsumes a single substring filter: keeping it would
+have left two overlapping selection knobs where the weaker one could only
+ever subtract, which is a footgun, not a feature. Opt-in beat opt-out
+because the denylist's premise (a newly
 plugged-in keyboard should just work) also meant every loopback bus and
 control surface on the machine "just worked", and the failure was silent
 either way. The allowlist's own failure mode — an empty list makes no

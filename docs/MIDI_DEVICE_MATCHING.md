@@ -3,14 +3,15 @@
 ## Status: implemented
 
 `[midi].allow_devices` entries match as a case-insensitive **substring** of
-the port name, same as `port_match` — see `internal/midi/multiplexer.go`
-`classifyOne` / `containsAny`. This note records why, because the reasoning
-is not obvious from the code and the naive alternative (exact names) looks
-more correct than it is.
+the port name — see `internal/midi/multiplexer.go` `classifyOne` /
+`containsAny`. This note records why, because the reasoning is not obvious
+from the code and the naive alternative (exact names) looks more correct
+than it is.
 
-Originally written when the setting was a denylist (`ignore_devices`); the
-selection model flipped to an allowlist on 2026-08-11, but the matching
-rule and its rationale carried over unchanged.
+Originally written when the setting was a denylist (`ignore_devices`) that
+sat alongside a `port_match` filter; on 2026-08-11 the selection model
+flipped to an allowlist and `port_match` was dropped, but the matching rule
+and its rationale carried over unchanged.
 
 ## Problem
 
@@ -41,8 +42,7 @@ Matching only worked when the fragile `36:0` was baked into the config.
 
 An entry identifies a device by its **stable** name, independent of the
 trailing ALSA `NN:NN` address, by matching as a case-insensitive substring
-of the port name. That's exactly how `port_match` already behaved, so the
-two knobs are symmetric. An empty entry is skipped rather than treated as a
+of the port name. An empty entry is skipped rather than treated as a
 match-everything wildcard — under an allowlist that would silently open
 every port on the machine.
 
@@ -69,8 +69,7 @@ allow_devices = ["CASIO USB-MIDI"]
 ## Where it lives (pointers, for orientation only)
 
 - Match logic: `internal/midi/multiplexer.go` `classifyOne` / the lowercased
-  substring list it builds (`lowerAll`). `port_match`'s substring path is
-  right next to it as the model it mirrors.
+  substring list it builds (`lowerAll`) / `containsAny`.
 - Port names come from `in.String()` — `internal/midi/midi.go` `portNames`.
 - Config field + doc comment: `internal/config/config.go` (`AllowDevices`).
 - CLI hint: `cmd/polyclav/midi.go` (`runMIDIList`).

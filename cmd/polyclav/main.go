@@ -202,8 +202,7 @@ func main() {
 		// Classified with an empty allowlist — exactly the state being
 		// reported — so the banner's per-port hints match what `polyclav
 		// midi list` would print for the same machine.
-		printNoMIDIDevicesBanner(os.Stdout, path,
-			midi.ClassifyPorts(names, cfg.MIDI.PortMatch, nil), cfg.MIDI.PortMatch)
+		printNoMIDIDevicesBanner(os.Stdout, path, midi.ClassifyPorts(names, nil))
 	} else {
 		logger.Info("midi input devices selected", "allow_devices", strings.Join(cfg.MIDI.AllowDevices, ", "))
 	}
@@ -532,7 +531,6 @@ func main() {
 		// Launchkey-only ReconcilerConfig, which auto-detects on its own
 		// fixed string.
 		MIDI: midi.MultiplexerConfig{
-			Match:         cfg.MIDI.PortMatch,
 			Allow:         cfg.MIDI.AllowDevices,
 			PollInterval:  1 * time.Second,
 			IdleThreshold: idleWatchdogThreshold,
@@ -877,7 +875,7 @@ func applyMIDIAllowFlag(cfg *config.Config, val string) {
 // ports is the currently-enumerated input port list, already classified
 // (empty if enumeration failed) — naming the user's actual hardware turns
 // the fix from a documentation lookup into a copy-paste.
-func printNoMIDIDevicesBanner(w io.Writer, configPath string, ports []midi.PortInfo, portMatch string) {
+func printNoMIDIDevicesBanner(w io.Writer, configPath string, ports []midi.PortInfo) {
 	const rule = "════════════════════════════════════════════════════════════════════"
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, rule)
@@ -912,11 +910,6 @@ func printNoMIDIDevicesBanner(w io.Writer, configPath string, ports []midi.PortI
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "      polyclav --midi-allow %q\n", pick)
 	}
-	if portMatch != "" {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  Note: [midi].port_match = %q is set, but port_match only\n", portMatch)
-		fmt.Fprintln(w, "  filters candidates — it never selects a device on its own.")
-	}
 	fmt.Fprintln(w, rule)
 	fmt.Fprintln(w)
 }
@@ -930,8 +923,6 @@ func bannerPortHint(s midi.PortStatus) string {
 		return "control surface, not keys"
 	case midi.PortLoopback:
 		return "loopback, not a keyboard"
-	case midi.PortRestricted:
-		return "excluded by port_match"
 	default:
 		return ""
 	}

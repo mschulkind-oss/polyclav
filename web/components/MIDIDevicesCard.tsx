@@ -12,11 +12,9 @@ import type { MIDIDevice } from "@/lib/types";
  * is the default on a fresh install, so the panel says so loudly rather
  * than looking like an ordinary empty list.
  *
- * `port_match`-restricted rows are shown but not checkable (selecting
- * one would change nothing until port_match is cleared). DAW-role and
- * loopback rows ARE checkable — the heuristics are advisory here, and
- * deliberately selecting a DAW port is a documented workflow — but they
- * carry a warning chip.
+ * Every row is checkable, DAW-role and loopback ports included — the
+ * name heuristics are advisory here, and deliberately selecting a DAW
+ * port is a documented workflow — but those rows carry a warning chip.
  *
  * Apply (session) hits SetAllow immediately without touching the file;
  * Save additionally persists allow_devices into polyclav.toml — the
@@ -45,7 +43,6 @@ export function allowMatches(entry: string, portName: string): boolean {
 
 export function MIDIDevicesCard() {
   const [devices, setDevices] = useState<MIDIDevice[] | null>(null);
-  const [match, setMatch] = useState("");
   const [allow, setAllow] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -57,7 +54,6 @@ export function MIDIDevicesCard() {
       return;
     }
     setDevices(r.devices);
-    setMatch(r.match);
     setAllow(r.allow ?? []);
     setError(null);
   }, []);
@@ -116,47 +112,31 @@ export function MIDIDevicesCard() {
           a keyboard below, then Apply or Save.
         </div>
       ) : null}
-      {match ? (
-        <p className="hint">
-          [midi].port_match is set to <b>{match}</b> — ports that don&apos;t contain it can never
-          send notes, whatever you check here.
-        </p>
-      ) : null}
       {devices.length === 0 ? (
         <p className="hint">No MIDI input ports found. Plug in a keyboard and hit Refresh.</p>
       ) : (
         <ul className="midi-device-list">
-          {devices.map((d) => {
-            const checkable = d.status !== "restricted";
-            return (
-              <li key={d.name} className="midi-device-row">
-                <label
-                  className={
-                    checkable ? "midi-device-label" : "midi-device-label midi-device-disabled"
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    checked={checkable && isSelected(d.name)}
-                    disabled={!checkable}
-                    onChange={() => checkable && toggle(d.name)}
-                  />
-                  {d.name}
-                </label>
-                <span className="chip">
-                  {d.status === "restricted"
-                    ? "restricted by port_match"
-                    : d.status === "daw"
-                      ? "DAW control surface — not keys"
-                      : d.status === "loopback"
-                        ? "loopback port — not a keyboard"
-                        : d.status === "notes"
-                          ? "sending notes"
-                          : "not selected"}
-                </span>
-              </li>
-            );
-          })}
+          {devices.map((d) => (
+            <li key={d.name} className="midi-device-row">
+              <label className="midi-device-label">
+                <input
+                  type="checkbox"
+                  checked={isSelected(d.name)}
+                  onChange={() => toggle(d.name)}
+                />
+                {d.name}
+              </label>
+              <span className="chip">
+                {d.status === "daw"
+                  ? "DAW control surface — not keys"
+                  : d.status === "loopback"
+                    ? "loopback port — not a keyboard"
+                    : d.status === "notes"
+                      ? "sending notes"
+                      : "not selected"}
+              </span>
+            </li>
+          ))}
         </ul>
       )}
       {offline.length > 0 ? (

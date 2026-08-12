@@ -19,14 +19,7 @@ import (
 // a dev jail with real hardware access, 500s in plain CI).
 type fakeMIDIDevices struct {
 	mu    sync.Mutex
-	match string
 	allow []string
-}
-
-func (f *fakeMIDIDevices) Match() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.match
 }
 
 func (f *fakeMIDIDevices) Allow() []string {
@@ -56,13 +49,12 @@ func TestMIDIDevicesGetUnavailableWithoutDeps(t *testing.T) {
 	wantStatus(t, rec, http.StatusServiceUnavailable)
 }
 
-func TestMIDIDevicesGetReportsMatchAndAllow(t *testing.T) {
-	// port_match filters candidates before the allowlist selects among
-	// them: the allowed-and-matching port sends notes, while an allowed
-	// port that port_match excludes reports "restricted" (selecting it
-	// would change nothing). Both fields are echoed verbatim so the panel
-	// can explain the state rather than just showing checkboxes.
-	md := &fakeMIDIDevices{match: "yamaha", allow: []string{"Yamaha", "Some Other Synth"}}
+func TestMIDIDevicesGetReportsAllow(t *testing.T) {
+	// The allowlist is echoed verbatim alongside the per-port statuses,
+	// so the panel can explain the state rather than just show checkboxes
+	// — including an entry ("CASIO") naming hardware that isn't plugged
+	// in and therefore has no device row of its own.
+	md := &fakeMIDIDevices{allow: []string{"Yamaha", "CASIO"}}
 	f := newFixture(t, func(d *Deps) {
 		d.MIDIDevices = md
 		d.MIDIPortLister = func() ([]string, error) {
@@ -72,11 +64,8 @@ func TestMIDIDevicesGetReportsMatchAndAllow(t *testing.T) {
 	rec := f.do(t, "GET", "/api/midi/devices", nil)
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
-	if m["match"] != "yamaha" {
-		t.Errorf("expected match=yamaha, got %v", m)
-	}
 	allow, ok := m["allow"].([]any)
-	if !ok || len(allow) != 2 || allow[0] != "Yamaha" {
+	if !ok || len(allow) != 2 || allow[0] != "Yamaha" || allow[1] != "CASIO" {
 		t.Errorf("expected the allowlist echoed back verbatim, got %v", m["allow"])
 	}
 	devices, ok := m["devices"].([]any)
@@ -88,8 +77,8 @@ func TestMIDIDevicesGetReportsMatchAndAllow(t *testing.T) {
 		t.Errorf("expected the Yamaha port classified as notes, got %v", first)
 	}
 	second := devices[1].(map[string]any)
-	if second["name"] != "Some Other Synth" || second["status"] != "restricted" {
-		t.Errorf("expected the non-matching port classified as restricted, got %v", second)
+	if second["name"] != "Some Other Synth" || second["status"] != "unselected" {
+		t.Errorf("expected the unnamed port classified as unselected, got %v", second)
 	}
 }
 
@@ -129,7 +118,7 @@ func TestMIDIDevicesGetClassifiesUnselectedPorts(t *testing.T) {
 // keeping the dashboard usable on a machine with no working MIDI
 // subsystem.
 func TestMIDIDevicesGetDegradesGracefullyOnEnumerationFailure(t *testing.T) {
-	md := &fakeMIDIDevices{match: ""}
+	md := &fakeMIDIDevices{}
 	f := newFixture(t, func(d *Deps) {
 		d.MIDIDevices = md
 		d.MIDIPortLister = func() ([]string, error) {
@@ -214,7 +203,10 @@ func TestMIDIDevicesSaveAppendsNewMIDITable(t *testing.T) {
 }
 
 func TestMIDIDevicesSaveSplicesIntoExistingMIDITable(t *testing.T) {
-	base := "[midi]\nport_match = \"launchkey\"\n\n[web]\nenabled = false\n"
+	// The managed line has to land INSIDE the existing bare [midi] table
+	// and above its [midi.velocity] sub-table — splicing it anywhere after
+	// the sub-table header would silently reparent the key.
+	base := "[midi]\n\n[midi.velocity]\ncurve = \"soft\"\n\n[web]\nenabled = false\n"
 	f, path, _ := newMIDIConfigFixture(t, base)
 
 	rec := f.do(t, "PUT", "/api/midi/devices", map[string]any{
@@ -230,8 +222,8 @@ func TestMIDIDevicesSaveSplicesIntoExistingMIDITable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("saved config must survive config.Load: %v", err)
 	}
-	if cfg.MIDI.PortMatch != "launchkey" {
-		t.Errorf("existing port_match must be preserved, got %q", cfg.MIDI.PortMatch)
+	if cfg.MIDI.Velocity.Curve != "soft" {
+		t.Errorf("the existing [midi.velocity] sub-table must be preserved, got %q", cfg.MIDI.Velocity.Curve)
 	}
 	if len(cfg.MIDI.AllowDevices) != 1 || cfg.MIDI.AllowDevices[0] != "Yamaha P-125" {
 		t.Errorf("loaded allow_devices: unexpected %+v", cfg.MIDI.AllowDevices)

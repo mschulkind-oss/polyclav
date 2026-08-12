@@ -18,7 +18,7 @@ const midiDevicesPut = vi.mocked(api.midiDevicesPut);
 const CASIO = "CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0";
 
 function respond(body: Partial<MIDIDevicesResponse>) {
-  midiDevices.mockResolvedValue({ devices: [], match: "", allow: [], ...body });
+  midiDevices.mockResolvedValue({ devices: [], allow: [], ...body });
 }
 
 beforeEach(() => {
@@ -110,16 +110,6 @@ describe("MIDIDevicesCard", () => {
     for (const box of screen.getAllByRole("checkbox")) {
       expect(box).toBeEnabled();
     }
-  });
-
-  it("shows port_match-restricted rows but refuses to let them be checked", async () => {
-    respond({
-      devices: [{ name: "Yamaha P-125", status: "restricted" }],
-      match: "launchkey",
-    });
-    render(<MIDIDevicesCard />);
-    expect(await screen.findByText("restricted by port_match")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox")).toBeDisabled();
   });
 
   it("surfaces selected-but-unplugged entries so Save can't silently drop them", async () => {

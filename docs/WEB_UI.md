@@ -147,7 +147,7 @@ should be built once.
 - **Live params** (knobs, patch selection, mastering, velocity curve
   tweaks): write through the existing `state.Store` — debounced, atomic,
   already the source of truth for restore-on-boot.
-- **Structural config** (`[[patches]]`, OSC bindings, MIDI port match):
+- **Structural config** (`[[patches]]`, OSC bindings, MIDI device selection):
   phase C only. `PUT /api/config` validates with the existing
   `config.Load`+`Validate` path against a temp file, then atomically
   replaces `polyclav.toml`. Hot-reload of structural config is **out of

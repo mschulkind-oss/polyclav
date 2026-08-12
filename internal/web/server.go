@@ -43,9 +43,6 @@ type DeviceStates interface {
 // this; declared locally so this package only needs internal/midi (a
 // leaf package), not internal/supervisor — mirroring DeviceStates above.
 type MIDIDevices interface {
-	// Match is the configured [midi].port_match pre-filter (immutable
-	// for the process lifetime — there is no live setter for it).
-	Match() string
 	// Allow is the currently-active allowlist (original case). Empty
 	// means no keyboard is selected, so nothing sends notes.
 	Allow() []string

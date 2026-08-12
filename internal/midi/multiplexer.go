@@ -12,16 +12,10 @@ import (
 
 // MultiplexerConfig configures the multi-device note-input reconciler.
 type MultiplexerConfig struct {
-	// Match, if non-empty, narrows the candidate set to ports whose name
-	// contains this substring (case-insensitive), matching the
-	// [midi].port_match config field. It is a FILTER, not a selection:
-	// Allow still decides what actually opens, so Match alone (with an
-	// empty Allow) opens nothing.
-	Match string
-
 	// Allow is the ALLOWLIST of case-insensitive SUBSTRINGS naming the
-	// MIDI input ports that may send notes. A port opens only if its
-	// name contains at least one entry.
+	// MIDI input ports that may send notes, and the ONLY thing that
+	// decides which ports open. A port opens only if its name contains
+	// at least one entry.
 	//
 	// EMPTY MEANS NOTHING OPENS — no keyboard sends notes until a device
 	// is explicitly selected. This is deliberately opt-in: a machine can
@@ -33,13 +27,12 @@ type MultiplexerConfig struct {
 	//
 	// An explicit entry WINS over the DAW/loopback name heuristics: a
 	// user who names a Launchkey's DAW port gets its raw CC stream
-	// (docs/USER_GUIDE.md's OSC-binding workflow), same as the old
-	// port_match = "DAW" escape hatch. The heuristics survive only as
-	// descriptive labels on unselected ports (see PortStatus).
+	// (docs/USER_GUIDE.md's OSC-binding workflow). The heuristics survive
+	// only as descriptive labels on unselected ports (see PortStatus).
 	//
-	// Substring (not exact) matching mirrors Match/port_match: a stable
-	// fragment of the name (e.g. "CASIO USB-MIDI") keeps matching across
-	// a replug/reboot even though ALSA appends a volatile " <client>:<port>"
+	// Substring (not exact) matching is deliberate: a stable fragment of
+	// the name (e.g. "CASIO USB-MIDI") keeps matching across a
+	// replug/reboot even though ALSA appends a volatile " <client>:<port>"
 	// address to the full port name (docs/MIDI_DEVICE_MATCHING.md). This is
 	// only the INITIAL value seeded at construction; SetAllow replaces it
 	// live thereafter (the web UI's devices panel calls it on a running
@@ -176,10 +169,6 @@ func (m *Multiplexer) Allow() []string {
 	return append([]string(nil), m.allow...)
 }
 
-// Match reports the configured pre-filter substring — immutable after
-// construction, so no lock is needed.
-func (m *Multiplexer) Match() string { return m.cfg.Match }
-
 // PortCount reports how many ports are currently open.
 func (m *Multiplexer) PortCount() int {
 	m.mu.Lock()
@@ -258,14 +247,13 @@ func (m *Multiplexer) tick(ctx context.Context) {
 	}
 }
 
-// wantedPorts applies Match as a pre-filter, then keeps only names
-// matching lower (a snapshot of the live allowlist substrings — see
-// SetAllow). An empty allowlist wants nothing.
+// wantedPorts keeps only the names matching lower (a snapshot of the
+// live allowlist substrings — see SetAllow). An empty allowlist wants
+// nothing.
 func (m *Multiplexer) wantedPorts(names []string, lower []string) map[string]bool {
-	needle := strings.ToLower(m.cfg.Match)
 	wanted := make(map[string]bool, len(names))
 	for _, n := range names {
-		if classifyOne(n, needle, lower) == PortSendingNotes {
+		if classifyOne(n, lower) == PortSendingNotes {
 			wanted[n] = true
 		}
 	}
@@ -279,8 +267,8 @@ func (m *Multiplexer) wantedPorts(names []string, lower []string) map[string]boo
 type PortStatus string
 
 const (
-	// PortSendingNotes: named by the allowlist (and not filtered out by
-	// Match) — this port is currently feeding the synth.
+	// PortSendingNotes: named by the allowlist — this port is currently
+	// feeding the synth.
 	PortSendingNotes PortStatus = "notes"
 	// PortUnselected: absent from the allowlist. The default state of
 	// every port, including on a fresh install — nothing sends notes
@@ -297,9 +285,6 @@ const (
 	// of advisory hint as PortDAWOnly. Selecting it echoes whatever else
 	// is on the bus back into the synth, which is almost never intended.
 	PortLoopback PortStatus = "loopback"
-	// PortRestricted: Match is set and this port's name doesn't contain
-	// it, so selecting it in the allowlist would have no effect.
-	PortRestricted PortStatus = "restricted"
 )
 
 // PortInfo is one classified port name, for display only.
@@ -308,35 +293,29 @@ type PortInfo struct {
 	Status PortStatus
 }
 
-// ClassifyPorts classifies every name in names against match/allow,
-// sharing classifyOne with wantedPorts so the CLI (`polyclav midi list`)
-// and the web devices panel can never disagree with what the
-// Multiplexer is actually doing. allow entries are matched
-// case-insensitively as SUBSTRINGS, same as SetAllow.
-func ClassifyPorts(names []string, match string, allow []string) []PortInfo {
+// ClassifyPorts classifies every name in names against allow, sharing
+// classifyOne with wantedPorts so the CLI (`polyclav midi list`) and the
+// web devices panel can never disagree with what the Multiplexer is
+// actually doing. allow entries are matched case-insensitively as
+// SUBSTRINGS, same as SetAllow.
+func ClassifyPorts(names []string, allow []string) []PortInfo {
 	lower := lowerAll(allow)
-	needle := strings.ToLower(match)
 	out := make([]PortInfo, len(names))
 	for i, n := range names {
-		out[i] = PortInfo{Name: n, Status: classifyOne(n, needle, lower)}
+		out[i] = PortInfo{Name: n, Status: classifyOne(n, lower)}
 	}
 	return out
 }
 
 // classifyOne is the single source of truth behind both wantedPorts'
-// pass/fail decision and ClassifyPorts' descriptive label. needle is
-// already lowercased (the caller's match, or "" for no pre-filter);
-// lower is a lowercased list of allowlist substrings.
+// pass/fail decision and ClassifyPorts' descriptive label. lower is a
+// lowercased list of allowlist substrings.
 //
 // Only PortSendingNotes opens a port. The DAW/loopback labels are
 // reached solely on the unselected path — an explicit allowlist entry
 // deliberately outranks both heuristics (see MultiplexerConfig.Allow).
-func classifyOne(name, needle string, lower []string) PortStatus {
-	ln := strings.ToLower(name)
-	if needle != "" && !strings.Contains(ln, needle) {
-		return PortRestricted
-	}
-	if containsAny(ln, lower) {
+func classifyOne(name string, lower []string) PortStatus {
+	if containsAny(strings.ToLower(name), lower) {
 		return PortSendingNotes
 	}
 	switch {
@@ -351,11 +330,11 @@ func classifyOne(name, needle string, lower []string) PortStatus {
 
 // containsAny reports whether ln (an already-lowercased port name)
 // contains any of substrs (already-lowercased allowlist entries) —
-// mirrors port_match's substring semantics so an allow_devices entry
-// survives a replug/reboot ALSA-address change
-// (docs/MIDI_DEVICE_MATCHING.md). An empty entry is skipped rather than
-// treated as a match-everything wildcard, so a stray "" can never
-// silently open every port on the machine.
+// substring, not exact, so an allow_devices entry survives a
+// replug/reboot ALSA-address change (docs/MIDI_DEVICE_MATCHING.md). An
+// empty entry is skipped rather than treated as a match-everything
+// wildcard, so a stray "" can never silently open every port on the
+// machine.
 func containsAny(ln string, substrs []string) bool {
 	for _, s := range substrs {
 		if s != "" && strings.Contains(ln, s) {

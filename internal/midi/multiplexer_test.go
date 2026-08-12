@@ -102,17 +102,16 @@ func stopMultiplexer(t *testing.T, cancel context.CancelFunc, done <-chan struct
 	}
 }
 
-// newTestMultiplexer builds a Multiplexer over rig with the given Match
-// pre-filter and allowlist. allow is explicit in every call because it is
-// the load-bearing knob now: an empty allowlist opens nothing at all.
-func newTestMultiplexer(rig *fakeMuxRig, match string, allow []string, sink Sink) *Multiplexer {
+// newTestMultiplexer builds a Multiplexer over rig with the given
+// allowlist. allow is explicit in every call because it is the only
+// selection knob: an empty allowlist opens nothing at all.
+func newTestMultiplexer(rig *fakeMuxRig, allow []string, sink Sink) *Multiplexer {
 	if sink == nil {
 		sink = func(Event) {}
 	}
 	return NewMultiplexer(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		MultiplexerConfig{
-			Match:        match,
 			Allow:        allow,
 			PollInterval: 5 * time.Millisecond,
 			Sink:         sink,
@@ -131,7 +130,7 @@ var allowKeyboards = []string{"Keyboard", "Synth"}
 func TestMultiplexerOpensAndClosesPerPort(t *testing.T) {
 	rig := newFakeMuxRig()
 	var noteCount atomic.Int32
-	m := newTestMultiplexer(rig, "", allowKeyboards, func(Event) { noteCount.Add(1) })
+	m := newTestMultiplexer(rig, allowKeyboards, func(Event) { noteCount.Add(1) })
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -147,7 +146,7 @@ func TestMultiplexerOpensAndClosesPerPort(t *testing.T) {
 
 func TestMultiplexerHandlesMultipleDevicesIndependently(t *testing.T) {
 	rig := newFakeMuxRig()
-	m := newTestMultiplexer(rig, "", allowKeyboards, nil)
+	m := newTestMultiplexer(rig, allowKeyboards, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -180,7 +179,7 @@ func TestMultiplexerHandlesMultipleDevicesIndependently(t *testing.T) {
 func TestMultiplexerOpensNothingWithAnEmptyAllowlist(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Keyboard A", "Keyboard B", "Yamaha P-125"})
-	m := newTestMultiplexer(rig, "", nil, nil)
+	m := newTestMultiplexer(rig, nil, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -193,7 +192,7 @@ func TestMultiplexerOpensNothingWithAnEmptyAllowlist(t *testing.T) {
 func TestMultiplexerAllowlistSelectsOnlyNamedPorts(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Yamaha P-125", "Some Other Synth"})
-	m := newTestMultiplexer(rig, "", []string{"yamaha"}, nil)
+	m := newTestMultiplexer(rig, []string{"yamaha"}, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -220,7 +219,7 @@ func TestMultiplexerLeavesDAWAndLoopbackPortsUnselected(t *testing.T) {
 		"Launchkey MK4 61 DAW In",
 		"Midi Through:Midi Through Port-0 14:0",
 	})
-	m := newTestMultiplexer(rig, "", []string{"Launchkey MK4 61 MIDI"}, nil)
+	m := newTestMultiplexer(rig, []string{"Launchkey MK4 61 MIDI"}, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -239,12 +238,11 @@ func TestMultiplexerLeavesDAWAndLoopbackPortsUnselected(t *testing.T) {
 
 func TestMultiplexerAllowlistOverridesTheDAWHeuristic(t *testing.T) {
 	// docs/USER_GUIDE.md documents binding OSC to a Launchkey's raw DAW
-	// CC stream -- naming that port explicitly must reach it, exactly as
-	// the old port_match = "DAW" escape hatch did. An explicit selection
-	// outranks the name heuristic.
+	// CC stream -- naming that port explicitly must reach it. An explicit
+	// selection outranks the name heuristic.
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Launchkey MK4 61 MIDI In", "Launchkey MK4 61 DAW In"})
-	m := newTestMultiplexer(rig, "", []string{"DAW"}, nil)
+	m := newTestMultiplexer(rig, []string{"DAW"}, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -257,40 +255,10 @@ func TestMultiplexerAllowlistOverridesTheDAWHeuristic(t *testing.T) {
 	}
 }
 
-func TestMultiplexerMatchFiltersButNeverSelects(t *testing.T) {
-	// port_match is a pre-filter layered on top of the allowlist, not a
-	// selection of its own: it can only ever REMOVE candidates.
-	rig := newFakeMuxRig()
-	rig.setNames([]string{"Yamaha P-125", "Casio Keyboard"})
-
-	// Set on its own, it selects nothing at all.
-	only := newTestMultiplexer(rig, "yamaha", nil, nil)
-	cancel, done := runMultiplexer(t, only)
-	time.Sleep(30 * time.Millisecond)
-	if got := only.PortCount(); got != 0 {
-		t.Errorf("PortCount with port_match set but an empty allowlist = %d, want 0", got)
-	}
-	stopMultiplexer(t, cancel, done)
-
-	// Combined with an allowlist, it subtracts from it.
-	both := newTestMultiplexer(rig, "yamaha", []string{"Yamaha", "Casio"}, nil)
-	cancel, done = runMultiplexer(t, both)
-	defer stopMultiplexer(t, cancel, done)
-
-	waitMuxCondition(t, func() bool { return rig.isActive("Yamaha P-125") }, "the allowed port that also matches opens")
-	time.Sleep(30 * time.Millisecond)
-	if rig.isActive("Casio Keyboard") {
-		t.Error("an allowed port filtered out by port_match must not open")
-	}
-	if got := both.PortCount(); got != 1 {
-		t.Errorf("PortCount = %d, want 1", got)
-	}
-}
-
 func TestMultiplexerOpenPortsSorted(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Zeta Synth", "Alpha Synth"})
-	m := newTestMultiplexer(rig, "", allowKeyboards, nil)
+	m := newTestMultiplexer(rig, allowKeyboards, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -305,7 +273,7 @@ func TestMultiplexerOpenPortsSorted(t *testing.T) {
 func TestMultiplexerRunShutsDownAllPortsOnCancel(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Keyboard A", "Keyboard B"})
-	m := newTestMultiplexer(rig, "", allowKeyboards, nil)
+	m := newTestMultiplexer(rig, allowKeyboards, nil)
 	cancel, done := runMultiplexer(t, m)
 
 	waitMuxCondition(t, func() bool { return m.PortCount() == 2 }, "both ports open")
@@ -347,7 +315,7 @@ func TestMultiplexerAllowSelectsAtConstruction(t *testing.T) {
 func TestMultiplexerSetAllowClosesAndOpensLive(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Keyboard A", "Keyboard B"})
-	m := newTestMultiplexer(rig, "", allowKeyboards, nil)
+	m := newTestMultiplexer(rig, allowKeyboards, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -380,12 +348,12 @@ func TestMultiplexerSetAllowClosesAndOpensLive(t *testing.T) {
 func TestMultiplexerSetAllowIsCaseInsensitiveSubstringMatch(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Keyboard A", "Keyboard B"})
-	m := newTestMultiplexer(rig, "", nil, nil)
+	m := newTestMultiplexer(rig, nil, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
-	// A substring shared by both names selects both -- substring match,
-	// same model as port_match (docs/MIDI_DEVICE_MATCHING.md).
+	// A substring shared by both names selects both -- substring, not
+	// exact, match (docs/MIDI_DEVICE_MATCHING.md).
 	m.SetAllow([]string{"Keyboard"})
 	waitMuxCondition(t, func() bool { return rig.isActive("Keyboard A") && rig.isActive("Keyboard B") }, "both open on shared substring")
 
@@ -397,7 +365,7 @@ func TestMultiplexerSetAllowIsCaseInsensitiveSubstringMatch(t *testing.T) {
 func TestMultiplexerSetAllowEmptyEntryDoesNotMatchEverything(t *testing.T) {
 	rig := newFakeMuxRig()
 	rig.setNames([]string{"Keyboard A"})
-	m := newTestMultiplexer(rig, "", nil, nil)
+	m := newTestMultiplexer(rig, nil, nil)
 	cancel, done := runMultiplexer(t, m)
 	defer stopMultiplexer(t, cancel, done)
 
@@ -536,16 +504,6 @@ func TestMultiplexerIdleWatchdogDisabledByDefault(t *testing.T) {
 	}
 }
 
-func TestMultiplexerMatch(t *testing.T) {
-	m := NewMultiplexer(slog.New(slog.NewTextHandler(io.Discard, nil)), MultiplexerConfig{
-		Match: "yamaha",
-		Sink:  func(Event) {},
-	})
-	if got := m.Match(); got != "yamaha" {
-		t.Errorf("Match() = %q, want %q", got, "yamaha")
-	}
-}
-
 // ---- ClassifyPorts / classifyOne -----------------------------------------
 
 func TestClassifyPortsLabelsSelectionAndHints(t *testing.T) {
@@ -558,7 +516,7 @@ func TestClassifyPortsLabelsSelectionAndHints(t *testing.T) {
 	// One device selected. The rest are unselected -- but the DAW and
 	// loopback ports carry their more specific advisory label so the CLI
 	// and the web panel can say "you probably don't want this one".
-	got := ClassifyPorts(names, "", []string{"Yamaha P-125"})
+	got := ClassifyPorts(names, []string{"Yamaha P-125"})
 	want := map[string]PortStatus{
 		"Launchkey MK4 61 MIDI In":              PortUnselected,
 		"Launchkey MK4 61 DAW In":               PortDAWOnly,
@@ -577,7 +535,7 @@ func TestClassifyPortsLabelsSelectionAndHints(t *testing.T) {
 
 func TestClassifyPortsEmptyAllowlistSelectsNothing(t *testing.T) {
 	// The fresh-install state: ports are connected, none is selected.
-	got := ClassifyPorts([]string{"Yamaha P-125", "Casio Keyboard"}, "", nil)
+	got := ClassifyPorts([]string{"Yamaha P-125", "Casio Keyboard"}, nil)
 	for _, info := range got {
 		if info.Status != PortUnselected {
 			t.Errorf("%s: status = %s, want %s with an empty allowlist", info.Name, info.Status, PortUnselected)
@@ -588,56 +546,39 @@ func TestClassifyPortsEmptyAllowlistSelectsNothing(t *testing.T) {
 func TestClassifyPortsAllowlistOverridesDAWAndLoopbackHints(t *testing.T) {
 	// Naming either port explicitly is trusted as intentional -- the
 	// heuristics are hints about UNSELECTED ports, never a veto.
-	got := ClassifyPorts([]string{"Launchkey MK4 61 DAW In"}, "", []string{"DAW"})
+	got := ClassifyPorts([]string{"Launchkey MK4 61 DAW In"}, []string{"DAW"})
 	if len(got) != 1 || got[0].Status != PortSendingNotes {
 		t.Errorf("ClassifyPorts with the DAW port explicitly allowed = %+v, want PortSendingNotes", got)
 	}
 
-	got = ClassifyPorts([]string{"Midi Through:Midi Through Port-0 14:0"}, "", []string{"Midi Through"})
+	got = ClassifyPorts([]string{"Midi Through:Midi Through Port-0 14:0"}, []string{"Midi Through"})
 	if len(got) != 1 || got[0].Status != PortSendingNotes {
 		t.Errorf("ClassifyPorts with the loopback port explicitly allowed = %+v, want PortSendingNotes", got)
 	}
 }
 
-func TestClassifyPortsMatchRestricts(t *testing.T) {
-	names := []string{"Launchkey MK4 61 MIDI In", "Yamaha P-125"}
-	// port_match filters the candidate set first: an allowed port that
-	// doesn't match is "restricted", i.e. selecting it changes nothing
-	// until port_match is cleared.
-	got := ClassifyPorts(names, "launchkey", []string{"Launchkey", "Yamaha"})
-	want := map[string]PortStatus{
-		"Launchkey MK4 61 MIDI In": PortSendingNotes,
-		"Yamaha P-125":             PortRestricted,
-	}
-	for _, info := range got {
-		if info.Status != want[info.Name] {
-			t.Errorf("%s: status = %s, want %s", info.Name, info.Status, want[info.Name])
-		}
-	}
-}
-
 func TestClassifyPortsAllowCaseInsensitiveSubstring(t *testing.T) {
-	got := ClassifyPorts([]string{"Some Synth"}, "", []string{"some synth"})
+	got := ClassifyPorts([]string{"Some Synth"}, []string{"some synth"})
 	if len(got) != 1 || got[0].Status != PortSendingNotes {
 		t.Errorf("ClassifyPorts with a different-case exact allow entry = %+v, want PortSendingNotes", got)
 	}
 
 	// A stable substring (not the full, address-suffixed name) must
 	// match -- this is the whole point: docs/MIDI_DEVICE_MATCHING.md.
-	got = ClassifyPorts([]string{"Some Synth"}, "", []string{"Some"})
+	got = ClassifyPorts([]string{"Some Synth"}, []string{"Some"})
 	if len(got) != 1 || got[0].Status != PortSendingNotes {
 		t.Errorf("ClassifyPorts with a substring allow entry = %+v, want PortSendingNotes", got)
 	}
 
 	// An ALSA-style trailing address doesn't defeat a substring that
 	// omits it -- the acceptance scenario from the handoff doc.
-	got = ClassifyPorts([]string{"CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0"}, "", []string{"CASIO USB-MIDI"})
+	got = ClassifyPorts([]string{"CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0"}, []string{"CASIO USB-MIDI"})
 	if len(got) != 1 || got[0].Status != PortSendingNotes {
 		t.Errorf("ClassifyPorts with a stable-name substring vs. an address-suffixed port = %+v, want PortSendingNotes", got)
 	}
 
 	// A non-matching substring must not select an unrelated port.
-	got = ClassifyPorts([]string{"Launchkey MK4 61 MIDI In"}, "", []string{"CASIO USB-MIDI"})
+	got = ClassifyPorts([]string{"Launchkey MK4 61 MIDI In"}, []string{"CASIO USB-MIDI"})
 	if len(got) != 1 || got[0].Status != PortUnselected {
 		t.Errorf("ClassifyPorts with a non-matching allow entry = %+v, want PortUnselected", got)
 	}

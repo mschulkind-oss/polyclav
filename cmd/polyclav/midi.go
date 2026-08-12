@@ -27,11 +27,11 @@ func runMIDI(args []string) int {
 }
 
 // runMIDIList prints every currently-connected MIDI input port with its
-// live classification (sends notes / unselected / DAW / loopback /
-// restricted), so there is zero guessing about what names/substrings to
-// put in [midi].allow_devices or --midi-allow — the single most common
-// friction point before this existed (previously `aconnect -l`,
-// ALSA-specific and not obviously the right tool).
+// live classification (sends notes / unselected / DAW / loopback), so
+// there is zero guessing about what names/substrings to put in
+// [midi].allow_devices or --midi-allow — the single most common friction
+// point before this existed (previously `aconnect -l`, ALSA-specific and
+// not obviously the right tool).
 func runMIDIList(args []string) int {
 	fs := flag.NewFlagSet("midi list", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to polyclav.toml (default: XDG config dir)")
@@ -55,16 +55,14 @@ func runMIDIList(args []string) int {
 			path = filepath.Join(cfgDir, "polyclav", "polyclav.toml")
 		}
 	}
-	var match string
 	var allow []string
 	if path != "" {
 		if cfg, cerr := config.Load(path); cerr == nil {
-			match = cfg.MIDI.PortMatch
 			allow = cfg.MIDI.AllowDevices
 		}
 	}
 
-	infos := midi.ClassifyPorts(names, match, allow)
+	infos := midi.ClassifyPorts(names, allow)
 	if len(infos) == 0 {
 		fmt.Println("No MIDI input ports found.")
 		return 0
@@ -98,8 +96,6 @@ func midiStatusLabel(s midi.PortStatus) string {
 		return "daw"
 	case midi.PortLoopback:
 		return "loopback"
-	case midi.PortRestricted:
-		return "restricted"
 	default:
 		return "?"
 	}

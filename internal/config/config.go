@@ -65,10 +65,16 @@ type MIDIConfig struct {
 	// heuristics — naming a Launchkey's DAW port binds note input to its
 	// raw knob/fader CC stream (docs/USER_GUIDE.md's OSC workflow).
 	//
-	// Substring (not exact) matching mirrors PortMatch: a stable name
+	// Substring (not exact) matching is deliberate: a stable name
 	// fragment (e.g. "CASIO USB-MIDI") keeps matching even though ALSA
 	// appends a volatile " <client>:<port>" address to the full port name
 	// that shifts on replug/reboot (docs/MIDI_DEVICE_MATCHING.md).
+	//
+	// This is the ONLY device-selection knob — an earlier `port_match`
+	// filter was removed once the allowlist subsumed it. Launchkey extras
+	// (knobs/pads/screen/transport) are unaffected by this field either
+	// way; they're auto-detected by internal/launchkey.Reconciler
+	// independently.
 	//
 	// `polyclav midi list` shows names to copy in (a short stable
 	// fragment is enough, no need for the full string); the web UI's
@@ -76,15 +82,6 @@ type MIDIConfig struct {
 	// live, optionally persisting it back into this field via a managed
 	// block.
 	AllowDevices []string `toml:"allow_devices"`
-	// PortMatch is an OPTIONAL extra pre-filter on top of AllowDevices:
-	// when non-empty, only ports whose name contains this
-	// case-insensitive substring are candidates at all. It does NOT
-	// select anything on its own — with an empty AllowDevices, a set
-	// PortMatch still yields no note input. Launchkey extras
-	// (knobs/pads/screen/transport) are unaffected by this field —
-	// they're auto-detected by internal/launchkey.Reconciler
-	// independently.
-	PortMatch string `toml:"port_match"`
 	// Velocity is the global default velocity curve applied to incoming
 	// NoteOn velocities (see docs/VELOCITY_CURVES.md). The zero value
 	// (Curve == "") means linear passthrough. Per-patch overrides live on
@@ -204,7 +201,7 @@ const (
 func Defaults() *Config {
 	return &Config{
 		Soundfont: SoundfontConfig{Path: ""},
-		MIDI:      MIDIConfig{}, // PortMatch "" = every connected keyboard sends notes
+		MIDI:      MIDIConfig{}, // no AllowDevices = no keyboard selected, so no notes
 		OSC: OSCConfig{
 			XR18: XR18Config{
 				// Empty host = OSC mixer control disabled by default. A

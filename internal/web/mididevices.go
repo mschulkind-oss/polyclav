@@ -43,7 +43,7 @@ func (s *Server) handleMIDIDevicesGet(w http.ResponseWriter, _ *http.Request) {
 		names = nil
 	}
 	allow := s.deps.MIDIDevices.Allow()
-	infos := midi.ClassifyPorts(names, s.deps.MIDIDevices.Match(), allow)
+	infos := midi.ClassifyPorts(names, allow)
 	out := make([]midiDeviceJSON, len(infos))
 	for i, info := range infos {
 		out[i] = midiDeviceJSON{Name: info.Name, Status: string(info.Status)}
@@ -55,7 +55,6 @@ func (s *Server) handleMIDIDevicesGet(w http.ResponseWriter, _ *http.Request) {
 	// next save.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"devices": out,
-		"match":   s.deps.MIDIDevices.Match(),
 		"allow":   emptySliceIfNil(allow),
 	})
 }
