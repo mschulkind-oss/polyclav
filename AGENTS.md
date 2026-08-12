@@ -8,8 +8,6 @@ that maps a MIDI keyboard through soundfont synthesis to a PipeWire sink.
 - **mise** for toolchains (Go + Rust here).
 - **just** for tasks — everything goes through this directory's `Justfile`.
 - **TDD** — red, green, refactor.
-- **Never `rm`** during a working session. `mv` to a local `trash/` dir
-  (gitignored) so accidental destructions are recoverable.
 
 ### Committing
 
