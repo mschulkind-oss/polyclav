@@ -29,7 +29,13 @@ const config = (phase: string): NextConfig => {
       ],
     };
   }
-  return { ...shared, output: "export" };
+  // Constant build id: `next build` generates a random one per run, which
+  // churns _next/static/<id>/ + the manifests + every HTML page on every
+  // rebuild — dirtying internal/web/static/app (a committed build
+  // artifact) even when the sources didn't change, and making CI's
+  // export-freshness gate impossible to satisfy. Asset cache-busting
+  // still comes from the content-hashed chunk filenames.
+  return { ...shared, output: "export", generateBuildId: () => "embedded" };
 };
 
 export default config;
