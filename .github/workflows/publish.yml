@@ -23,6 +23,22 @@ name: Publish to PyPI
 # frameworks — no Homebrew package required at all (see ci-macos.yml, which
 # proves this compiles clean with zero `brew install` steps), so the macOS
 # wheel is about as close to "just works" as a compiled binary gets.
+#
+# WHY NOT GORELEASER — this is a load-bearing constraint, not a gap to
+# close. Two independent reasons, either of which alone is sufficient:
+#
+# 1. The release unit is a PyPI wheel; goreleaser cannot build or publish
+#    one, so a custom workflow is required regardless of anything else.
+# 2. goreleaser creates the GitHub release with GITHUB_TOKEN, and GitHub
+#    deliberately raises NO workflow-triggering events for activity under
+#    that token. This workflow's `on: release: published` would never fire
+#    again — PyPI and the Homebrew tap would silently stop updating, with
+#    no error anywhere. (mavor hit the loud variant of this trap: a race
+#    for the same release, published with zero assets.) Releases here are
+#    cut by hand — `gh release create` under a PAT — precisely so this
+#    trigger fires. The tap formula is maintained by the
+#    update-homebrew-tap job below, which does by hand what a goreleaser
+#    `brews:` block would do.
 
 on:
   release:
@@ -43,6 +59,8 @@ jobs:
     # PipeWire (0.3.48) predates the spa_video_info_raw layout the pipewire-rs
     # 0.10 crate expects, so libspa fails to compile. Verified in a container.
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write # to attach the binary tarball to the release, on a real release
     env:
       # Stock pipewire-0.3.pc emits -fno-strict-aliasing / -fno-strict-overflow;
       # Go's cgo rejects unknown pkg-config flags unless allowlisted.
@@ -96,18 +114,50 @@ jobs:
           echo "dynamic dependencies:"; ldd dist/polyclav || true
 
       - name: Build wheel
+        # --exec-wrapper: the wheel's entry points become sh launchers that
+        # diagnose missing system libs (PipeWire/ALSA/lilv) instead of dying
+        # with an unactionable loader error. macOS needs no wrapper — its
+        # backends link nothing beyond system frameworks.
         run: |
           python3 scripts/build_wheel.py \
             --version "${{ steps.ver.outputs.version }}" \
             --platform-tag manylinux_2_39_x86_64 \
             --binary dist/polyclav --binary dist/polyclav-components \
-            --readme README.md --output-dir wheelhouse
+            --readme README.md --output-dir wheelhouse --exec-wrapper
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
           name: polyclav-wheel-linux
           path: wheelhouse/*.whl
+
+      - name: Archive raw binaries (for the Homebrew tap, not PyPI)
+        # Same shape as build-macos: a plain binary tarball, separate from
+        # the wheel. These are the already-verified portable builds (no
+        # /nix/store RUNPATH) — the bytes the wheel ships, unbundled.
+        run: tar czf dist/polyclav-linux-x86_64.tar.gz -C dist polyclav polyclav-components
+
+      - name: Upload binary archive as a release asset
+        # Only on a real release -- workflow_dispatch dry runs have no
+        # release to attach to. This is what the formula's on_linux url
+        # points at.
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/polyclav-linux-x86_64.tar.gz \
+            --repo "${{ github.repository }}" --clobber
+
+      - name: Upload binary archive as a build artifact
+        # For update-homebrew-tap below -- avoids re-fetching the asset it
+        # just uploaded (and needing the release to be fully consistent
+        # yet) when this job already has the exact bytes in hand.
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: polyclav-linux-tarball
+          path: dist/polyclav-linux-x86_64.tar.gz
 
   build-macos:
     # Apple Silicon only for now, matching the same scope call already made
@@ -209,29 +259,32 @@ jobs:
   update-homebrew-tap:
     # mschulkind-oss/homebrew-tap is one shared tap for the whole
     # portfolio (no per-project taps). HOMEBREW_TAP_TOKEN is an org-level
-    # secret with PUSH access to it -- polyclav doesn't use goreleaser
-    # (there's no .goreleaser.yml `brews:` section to write the formula
-    # for us), so this job does exactly what that section would do by
-    # hand: commit the updated Formula/polyclav.rb straight to the tap's
-    # main branch. No PR, no manual merge step -- the whole point of
-    # having a push-capable token already wired up is that this doesn't
-    # need a human in the loop for a plain version+sha256 bump.
-    needs: build-macos
+    # secret with PUSH access to it -- this job commits the updated
+    # Formula/polyclav.rb straight to the tap's main branch, doing by hand
+    # what a goreleaser `brews:` block would do (see the WHY NOT GORELEASER
+    # note in the header for why goreleaser itself must not be introduced).
+    # No PR, no manual merge step -- the whole point of having a
+    # push-capable token already wired up is that this doesn't need a human
+    # in the loop for a plain version+sha256 bump.
+    needs: [build-linux, build-macos]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
-      - name: Download macOS binary archive
+      - name: Download binary archives
+        # both release tarballs: polyclav-macos-tarball/, polyclav-linux-tarball/
         uses: actions/download-artifact@v4
         with:
-          name: polyclav-macos-tarball
+          pattern: polyclav-*-tarball
           path: dist
 
       - name: Compute release info
         id: info
         run: |
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(sha256sum dist/polyclav-macos-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "url=https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/polyclav-macos-arm64.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "macos_sha256=$(sha256sum dist/polyclav-macos-tarball/polyclav-macos-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "linux_sha256=$(sha256sum dist/polyclav-linux-tarball/polyclav-linux-x86_64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "macos_url=https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/polyclav-macos-arm64.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "linux_url=https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/polyclav-linux-x86_64.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
@@ -241,26 +294,29 @@ jobs:
           path: tap
 
       - name: Write Formula/polyclav.rb
-        # Apple Silicon only, matching the one macOS artifact build-macos
-        # actually produces -- an on_linux/Intel block pointing at a
-        # binary that doesn't exist would be worse than no formula at all.
+        # Both platforms the release actually produces: macOS Apple Silicon
+        # (build-macos) and x86_64 Linux (build-linux, the same portable
+        # bytes the wheel ships). Intel macOS still odie's -- no artifact
+        # exists for it, and a block pointing at a binary that doesn't
+        # exist would be worse than none.
         run: |
           cat > tap/Formula/polyclav.rb <<EOF
           # frozen_string_literal: true
 
           # Maintained by polyclav's .github/workflows/publish.yml -- not
           # hand-edited, and not GoReleaser-generated (polyclav doesn't use
-          # goreleaser). Regenerated on every release.
+          # goreleaser; see the workflow header for why it must stay that
+          # way). Regenerated on every release.
           class Polyclav < Formula
-            desc "Live-piano host: MIDI keyboard -> soundfont/plugin synthesis -> CoreAudio"
+            desc "Live-piano host: MIDI keyboard -> soundfont/plugin synthesis -> system audio"
             homepage "https://github.com/${{ github.repository }}"
             version "${{ steps.info.outputs.version }}"
             license "Apache-2.0"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "${{ steps.info.outputs.url }}"
-                sha256 "${{ steps.info.outputs.sha256 }}"
+                url "${{ steps.info.outputs.macos_url }}"
+                sha256 "${{ steps.info.outputs.macos_sha256 }}"
 
                 def install
                   bin.install "polyclav"
@@ -271,12 +327,40 @@ jobs:
               end
             end
 
+            on_linux do
+              if Hardware::CPU.intel?
+                url "${{ steps.info.outputs.linux_url }}"
+                sha256 "${{ steps.info.outputs.linux_sha256 }}"
+
+                def install
+                  bin.install "polyclav"
+                  bin.install "polyclav-components"
+                end
+              else
+                odie "polyclav's Homebrew formula only provides x86_64 Linux binaries for now."
+              end
+            end
+
             def caveats
-              <<~EOS
-                First run needs soundfonts (and SFZ support): run
-                  polyclav bootstrap
-                before starting polyclav for the first time.
-              EOS
+              if OS.mac?
+                <<~EOS
+                  First run needs soundfonts (and SFZ support): run
+                    polyclav bootstrap
+                  before starting polyclav for the first time.
+                EOS
+              else
+                <<~EOS
+                  polyclav plays audio through your Linux distro's libraries,
+                  which Homebrew does not provide. Without them the binary will
+                  not start. Install:
+                    Debian/Ubuntu: sudo apt install pipewire libasound2 liblilv-0-0
+                    Fedora:        sudo dnf install pipewire alsa-lib lilv
+                    Arch:          sudo pacman -S pipewire alsa-lib lilv
+                  The binary also needs glibc >= 2.39 -- on older Debian/Ubuntu
+                  releases, build from source instead.
+                  First run also needs soundfonts: run \`polyclav bootstrap\`.
+                EOS
+              end
             end
 
             test do

@@ -50,6 +50,7 @@ lint-ci: build-rust
 test *args: build-rust
     cargo test --manifest-path audio-core/Cargo.toml {{args}}
     go test ./... {{args}}
+    @if command -v python3 >/dev/null 2>&1; then python3 scripts/test_build_wheel.py; else echo "warning: python3 not found — skipping wheel-packaging tests"; fi
 
 # Local dev gate: format → lint → test → build everything.
 check: format lint test
