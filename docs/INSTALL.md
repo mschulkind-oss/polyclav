@@ -5,9 +5,14 @@ day-to-day "configure and play" side, see `USER_GUIDE.md` instead.
 
 ## Platform
 
-**Linux only.** polyclav talks to **PipeWire** for audio and ALSA-seq for
-MIDI; both are mandatory. PulseAudio-only systems and macOS/Windows are
-not supported.
+**Linux** (PipeWire for audio, ALSA-seq for MIDI) is the primary,
+hardware-tested platform. **macOS** (Apple Silicon) is supported: audio
+out via cpal/CoreAudio, MIDI in via CoreMIDI, and the build needs
+nothing beyond the system frameworks — no Homebrew packages (the
+known-good toolchain setup is `.github/workflows/ci-macos.yml`; see
+`docs/MACOS_PORT.md`). LV2/CLAP plugin hosting is Linux-only: macOS
+builds ship SF2/SF3/SFZ soundfonts and the native synth. Windows and
+PulseAudio-only systems are not supported.
 
 ## Toolchains
 

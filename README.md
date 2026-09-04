@@ -1,8 +1,8 @@
 # polyclav
 
-A self-contained **live piano host** for Linux. Plug in a MIDI keyboard
-and an audio interface, run `polyclav`, pick your keyboard, and you have a
-digital piano: keys make piano sound, effects are in the chain, and
+A self-contained **live piano host** for Linux and macOS. Plug in a MIDI
+keyboard and an audio interface, run `polyclav`, pick your keyboard, and you
+have a digital piano: keys make piano sound, effects are in the chain, and
 (optionally) a Novation Launchkey's knobs, pads, and screen drive the front
 panel. No DAW, no recording — just playing. Devices can come and go;
 polyclav reconnects automatically and idles at near-zero CPU when nothing
@@ -13,11 +13,13 @@ is plugged in.
 > connected port names and the exact line to add — or tick a box in the web
 > UI. See `docs/USER_GUIDE.md`.
 
-> **Status:** Linux-only (PipeWire). Developed and tested against a
-> Novation Launchkey 61 MK4 + Behringer XR18 over OSC. Should work with
-> any class-compliant MIDI keyboard and any PipeWire-supported audio
-> interface; Launchkey-specific bits gracefully degrade if the device
-> isn't present.
+> **Status:** Linux (PipeWire) is the primary platform — developed and
+> hardware-tested against a Novation Launchkey 61 MK4 + Behringer XR18
+> over OSC. macOS (Apple Silicon) is supported: releases ship a macOS
+> wheel and a Homebrew formula, though plugin hosting (LV2, CLAP) is
+> Linux-only in this build. Should work with any class-compliant MIDI
+> keyboard and any supported audio interface; Launchkey-specific bits
+> gracefully degrade if the device isn't present.
 
 polyclav is implemented in Go with a thin Rust `audio-core` for the
 real-time audio thread (PipeWire, oxisynth, sfizz). A `polyclav-components`
@@ -96,11 +98,14 @@ For the developer-facing rundown of every component, see `AGENTS.md`.
 
 ## Install
 
-**Linux only** (PipeWire). polyclav is a dynamically-linked binary that uses
-your system's audio libraries — install those from your distro, then install
-polyclav however you like.
+polyclav ships as prebuilt binaries: a wheel on PyPI (Linux x86_64 +
+macOS arm64) and a Homebrew formula (Linux x86_64 + macOS arm64). On
+Linux the binary is dynamically linked against your **system's** audio
+libraries — install those from your distro first. On macOS the binary
+links nothing beyond the system frameworks, so no prerequisites are
+needed.
 
-### 1. System libraries
+### 1. System libraries (Linux only)
 
 PipeWire, ALSA, and the LV2 host library (lilv):
 
@@ -122,18 +127,25 @@ Arch) or build it from source. Run `polyclav doctor` to see what's available.
 ### 2. polyclav
 
 ```sh
-uvx polyclav            # run without installing
+uvx polyclav            # run without installing (Linux + macOS)
 pipx install polyclav   # or install it persistently
 ```
 
-Both fetch a prebuilt Linux wheel from PyPI; the `polyclav-components` Launchkey
-SysEx CLI ships in the same wheel. For Go developers:
+Both fetch a prebuilt wheel from PyPI; the `polyclav-components` Launchkey
+SysEx CLI ships in the same wheel. Or, with Homebrew (Linux x86_64,
+macOS Apple Silicon):
 
 ```sh
-go install github.com/mschulkind-oss/polyclav/cmd/polyclav@latest
+brew install mschulkind-oss/tap/polyclav
 ```
 
-(or build from source — see [Build from source](#build-from-source) below.)
+On Linux, Homebrew does not provide the §1 system libraries — you still
+install those from your distro, and the binary needs glibc ≥ 2.39
+(Debian 12 / Ubuntu 22.04 are too old; build from source there).
+
+There is no `go install` path: the binary links a Rust staticlib that
+cargo builds next to the Go code, and the Go module proxy can't provide
+it — [build from source](#build-from-source) instead.
 
 ### 3. First run
 

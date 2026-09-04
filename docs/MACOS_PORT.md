@@ -1,8 +1,22 @@
 # Running polyclav on macOS (without a Mac)
 
-> Status: strategy / feasibility document. Scope: what it takes to build, automatically test, and (eventually) hand-verify the Linux-first polyclav live-piano host on macOS/Apple Silicon when the owner has no Mac.
+> Status: shipping. What began as a strategy/feasibility doc is now the
+> record of the shipped port — keep reading for the coupling map, the
+> latency model, and the remaining hardware bring-up plan.
 
-> **Implementation status — branch `macos-port` (2026-07-07):** most of the plan below is now built and Linux-verified: the portable audio-backend seam (`render_block`/`drain_midi`/`swap_pending_backend`), a config-driven buffer-size/latency knob (`[audio] latency_frames` → `polyclav_audio_set_latency_frames`), the cpal CoreAudio backend (`audio-core/src/backend_macos.rs`) behind `cfg(target_os = "macos")`, the per-OS Go cgo split (`audio_linux.go`/`audio_darwin.go`), and a pinned `macos-15` CI workflow (`.github/workflows/ci-macos.yml`). **The macOS build has not yet been compiled** — there is no Mac in the dev loop, so its first real proof is the `CI (macOS)` job. What remains: run that CI (open a PR from `macos-port`), then the hardware bring-up in §5. The cpal API was adversarially verified against cpal 0.18.1 source, but treat the first CI run as the compile gate.
+> **Implementation status (2026-09-04):** merged to `main` and releasing.
+> The plan below is built: the portable audio-backend seam
+> (`render_block`/`drain_midi`/`swap_pending_backend`), the cpal CoreAudio
+> backend (`audio-core/src/backend_macos.rs`), the per-OS Go cgo split
+> (`audio_linux.go`/`audio_darwin.go`), CI
+> (`.github/workflows/ci-macos.yml`), and polyclav's own arm64 sfizz build
+> (`.github/workflows/build-sfizz-macos.yml`, installed automatically by
+> `polyclav bootstrap`). Releases publish a macOS arm64 wheel to PyPI and
+> a `polyclav-macos-arm64.tar.gz` release asset, which the Homebrew tap
+> formula (`Formula/polyclav.rb`, written by `.github/workflows/publish.yml`)
+> installs. LV2/CLAP hosting is excluded on macOS (v1 scope — §3). The
+> one remaining gap is §5: real-hardware bring-up on a physical Mac —
+> nothing records it as done; update this paragraph when it is.
 
 ---
 
