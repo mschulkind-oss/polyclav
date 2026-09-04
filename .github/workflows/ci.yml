@@ -20,3 +20,44 @@ jobs:
 
       - name: just check-ci (inside nix dev shell)
         run: nix develop --command just check-ci
+
+  web-export:
+    # internal/web/static/app is a committed build artifact (so `go build`
+    # needs no Node). This gate fails when web/ sources change without a
+    # matching regen — the refresh for 518d700 sat uncommitted in a working
+    # tree for three weeks before this gate existed. Sound only because
+    # web/next.config.ts pins a constant build id: with next's random
+    # default, every rebuild churns the export and no rebuild could ever
+    # be a no-op.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Rebuild the embedded export
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Committed export must match the rebuild
+        # Same copy as the Justfile web-build recipe (rm+cp, so stale
+        # build-id dirs cannot linger), then the developer's own view of
+        # freshness: git diff on the artifact tree.
+        run: |
+          rm -rf internal/web/static/app
+          mkdir -p internal/web/static/app
+          cp -a web/out/. internal/web/static/app/
+          if ! git diff --exit-code -- internal/web/static; then
+            echo "::error::internal/web/static/app is stale — run \`just web-build\` and commit the refresh"
+            exit 1
+          fi
