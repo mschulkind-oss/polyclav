@@ -40,7 +40,7 @@ jobs:
       # flags is ever added — cgo otherwise rejects unknown pkg-config cflags.
       CGO_CFLAGS_ALLOW: "-fno-strict-aliasing|-fno-strict-overflow"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v5

@@ -70,7 +70,7 @@ jobs:
             ca-certificates git cmake build-essential pkg-config findutils file
 
       - name: Checkout sfztools/sfizz
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: sfztools/sfizz
           ref: ${{ inputs.sfizz_ref }}
