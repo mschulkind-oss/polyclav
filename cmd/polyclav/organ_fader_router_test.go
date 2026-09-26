@@ -53,7 +53,7 @@ func TestOrganFaderDisabledRoutesLaunchkeyDAWFaderToMixerOSC(t *testing.T) {
 func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testing.T) {
 	p := organPatch()
 	cache := clapcache.New()
-	cache.Replace([]audio.ClapParamInfo{{ClapID: 101, Name: "16 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 102, Name: "5 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 103, Name: "8 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 104, Name: "4 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 105, Name: "2 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 106, Name: "2 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 107, Name: "1 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 108, Name: "1 drawbar", MinValue: 0, MaxValue: 8}, {ClapID: 109, Name: "1 drawbar", MinValue: 0, MaxValue: 8}})
+	cache.Replace(drawbarParams())
 	setter, mapper, screen := &fakeSetter{}, &fakeMapper{}, &fakeScreen{}
 	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper, screen: screen}
 	r.HandleFader(driver.FaderEvent{Index: 1, Value: 127})
@@ -80,6 +80,37 @@ func TestOrganFaderMissingParamCapturesWithoutPartialMixerRoute(t *testing.T) {
 	}
 	if screen.line2 == "" {
 		t.Fatalf("screen missing unresolved feedback")
+	}
+}
+
+func TestOrganFaderRejectsWrongDrawbarPositionWithoutMixerRoute(t *testing.T) {
+	p := organPatch()
+	cache := clapcache.New()
+	params := drawbarParams()
+	params[1].Name = "16 drawbar"
+	cache.Replace(params)
+	setter, mapper, screen := &fakeSetter{}, &fakeMapper{}, &fakeScreen{}
+	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper, screen: screen}
+	r.HandleFader(driver.FaderEvent{Index: 2, Value: 127})
+	if setter.called || len(mapper.events) != 0 {
+		t.Fatalf("setter called=%v mixer=%v, want rejected capture without mixer route", setter.called, mapper.events)
+	}
+	if screen.line2 != "CHECK 102" {
+		t.Fatalf("screen = %q/%q, want CHECK 102", screen.line1, screen.line2)
+	}
+}
+
+func drawbarParams() []audio.ClapParamInfo {
+	return []audio.ClapParamInfo{
+		{ClapID: 101, Name: "16 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 102, Name: "5 1/3 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 103, Name: "8 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 104, Name: "4 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 105, Name: "2 2/3 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 106, Name: "2 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 107, Name: "1 3/5 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 108, Name: "1 1/3 drawbar", MinValue: 0, MaxValue: 8},
+		{ClapID: 109, Name: "1 drawbar", MinValue: 0, MaxValue: 8},
 	}
 }
 

@@ -154,6 +154,19 @@ fn backend_event_queue() -> &'static Arc<ArrayQueue<PolyclavBackendEvent>> {
     BACKEND_EVENT_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(128)))
 }
 
+static ACTIVE_CLAP_PARAMS: OnceLock<Mutex<Vec<PolyclavClapParamInfo>>> = OnceLock::new();
+fn active_clap_params() -> &'static Mutex<Vec<PolyclavClapParamInfo>> {
+    ACTIVE_CLAP_PARAMS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn set_active_clap_params(params: &[PolyclavClapParamInfo]) {
+    *active_clap_params().lock().unwrap() = params.to_vec();
+}
+
+fn clear_active_clap_params() {
+    active_clap_params().lock().unwrap().clear();
+}
+
 fn push_backend_event(generation: u64, kind: u32) {
     let q = backend_event_queue();
     if q.push(PolyclavBackendEvent { generation, kind }).is_err() {
@@ -1704,6 +1717,31 @@ pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     }
 }
 
+/// # Safety
+/// out_count must be writable when non-NULL; out may be NULL for a count-only query.
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_active_params(
+    out: *mut PolyclavClapParamInfoC,
+    capacity: usize,
+    out_count: *mut usize,
+) -> i32 {
+    let params = active_clap_params().lock().unwrap();
+    if !out_count.is_null() {
+        unsafe {
+            *out_count = params.len();
+        }
+    }
+    if !out.is_null() {
+        for (i, info) in params.iter().take(capacity).enumerate() {
+            unsafe {
+                *out.add(i) = param_info_to_c(info);
+            }
+        }
+    }
+    0
+}
+
 #[cfg(target_os = "linux")]
 #[no_mangle]
 pub extern "C" fn polyclav_audio_clap_set_param(clap_id: u32, value: f64) -> i32 {
@@ -1865,6 +1903,21 @@ pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     _out_count: *mut usize,
 ) -> i32 {
     1
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_active_params(
+    _out: *mut PolyclavClapParamInfoC,
+    _capacity: usize,
+    out_count: *mut usize,
+) -> i32 {
+    if !out_count.is_null() {
+        unsafe {
+            *out_count = 0;
+        }
+    }
+    0
 }
 
 #[cfg(target_os = "macos")]
@@ -3039,8 +3092,14 @@ pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
         #[cfg(target_os = "linux")]
         {
             let sender = match &new_backend {
-                SynthBackend::Clap(clap) => Some(clap.state_request_sender()),
-                _ => None,
+                SynthBackend::Clap(clap) => {
+                    set_active_clap_params(clap.params());
+                    Some(clap.state_request_sender())
+                }
+                _ => {
+                    clear_active_clap_params();
+                    None
+                }
             };
             *active_clap_state_request_sender().lock().unwrap() = sender;
         }

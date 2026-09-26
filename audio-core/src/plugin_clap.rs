@@ -419,6 +419,8 @@ pub struct ClapInstance {
     generation: u64,
     /// Discovered parameter ids for filtering host-global parameter writes.
     param_ids: Vec<u32>,
+    /// Parameter metadata/value snapshot queried after optional state restore.
+    params: Vec<PolyclavClapParamInfo>,
     /// Selected CLAP note input dialect and port.
     note_input: ClapNoteInput,
     input_event_count: u32,
@@ -435,6 +437,10 @@ unsafe impl Send for ClapInstance {}
 impl ClapInstance {
     pub(crate) fn state_request_sender(&self) -> ClapStateRequestSender {
         self.state_request_tx.clone()
+    }
+
+    pub(crate) fn params(&self) -> &[PolyclavClapParamInfo] {
+        &self.params
     }
 
     /// Load a CLAP bundle and instantiate the plugin with the given id.
@@ -523,6 +529,7 @@ impl ClapInstance {
 
                     drop(entry);
 
+                    let param_ids = params.iter().map(|p| p.clap_id).collect();
                     let (state_request_tx, state_request_rx) = mpsc::channel();
                     let clap = Self {
                         processor,
@@ -534,7 +541,8 @@ impl ClapInstance {
                         input_events: EventBuffer::with_capacity(64),
                         output_events: EventBuffer::with_capacity(64),
                         generation,
-                        param_ids: params.into_iter().map(|p| p.clap_id).collect(),
+                        param_ids,
+                        params,
                         note_input,
                         input_event_count: 0,
                         input_event_limit: 64,

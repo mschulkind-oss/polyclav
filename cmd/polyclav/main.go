@@ -681,8 +681,8 @@ func main() {
 							if cur := registry.Current(); cur != nil {
 								stateStore.SetCurrentPatch(cur.Name)
 								if patchType(cur.Type) == "clap" {
-									if ps, err := audio.DiscoverClapParams(cur.PluginPath, cur.PluginID); err != nil {
-										logger.Warn("discover active clap params", "err", err)
+									if ps, err := audio.ActiveClapParams(); err != nil {
+										logger.Warn("read active clap params", "err", err)
 										clapParams.Clear()
 									} else {
 										clapParams.Replace(ps)

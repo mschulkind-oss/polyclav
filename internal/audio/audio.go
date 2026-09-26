@@ -23,6 +23,7 @@ package audio
 // int32_t polyclav_audio_set_clap_plugin(const char *bundle_path, const char *plugin_id);
 // int32_t polyclav_audio_set_clap_plugin_with_state(const char *bundle_path, const char *plugin_id, const uint8_t *state_blob, uintptr_t state_len);
 // int32_t polyclav_audio_clap_discover_params(const char *bundle_path, const char *plugin_id, PolyclavClapParamInfoC *out, uintptr_t capacity, uintptr_t *out_count);
+// int32_t polyclav_audio_clap_active_params(PolyclavClapParamInfoC *out, uintptr_t capacity, uintptr_t *out_count);
 // int32_t polyclav_audio_clap_set_param(uint32_t clap_id, double value);
 // int32_t polyclav_audio_clap_poll_feedback(PolyclavClapFeedbackEvent *out);
 // int32_t polyclav_audio_poll_backend_event(PolyclavBackendEvent *out);
@@ -503,6 +504,30 @@ func DiscoverClapParams(bundlePath, pluginID string) ([]ClapParamInfo, error) {
 	if rc != 0 {
 		return nil, fmt.Errorf("audio-core discover clap params failed: %d", int(rc))
 	}
+	return clapParamsFromC(buf, count), nil
+}
+
+// ActiveClapParams returns metadata and current values captured from the active
+// CLAP instance after any restored state was loaded. It returns nil when no
+// CLAP backend is active or no snapshot has been published yet.
+func ActiveClapParams() ([]ClapParamInfo, error) {
+	var count C.uintptr_t
+	rc := C.polyclav_audio_clap_active_params(nil, 0, &count)
+	if rc != 0 {
+		return nil, fmt.Errorf("audio-core active clap params failed: %d", int(rc))
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	buf := make([]C.PolyclavClapParamInfoC, int(count))
+	rc = C.polyclav_audio_clap_active_params(&buf[0], count, &count)
+	if rc != 0 {
+		return nil, fmt.Errorf("audio-core active clap params failed: %d", int(rc))
+	}
+	return clapParamsFromC(buf, count), nil
+}
+
+func clapParamsFromC(buf []C.PolyclavClapParamInfoC, count C.uintptr_t) []ClapParamInfo {
 	out := make([]ClapParamInfo, 0, int(count))
 	for i := 0; i < int(count) && i < len(buf); i++ {
 		p := buf[i]
@@ -517,7 +542,7 @@ func DiscoverClapParams(bundlePath, pluginID string) ([]ClapParamInfo, error) {
 			Module:       C.GoString(&p.module[0]),
 		})
 	}
-	return out, nil
+	return out
 }
 
 func SetClapParam(clapID uint32, value float64) error {

@@ -497,6 +497,16 @@ func launchkeyOrganConfigErrors(cfg *Config) []string {
 		if len(p.LaunchkeyOrgan.DrawbarClapIDs) != 0 && len(p.LaunchkeyOrgan.DrawbarClapIDs) != 9 {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_clap_ids must list exactly 9 IDs", p.Name))
 		}
+		if len(p.LaunchkeyOrgan.DrawbarClapIDs) == 9 {
+			seen := map[uint32]struct{}{}
+			for _, id := range p.LaunchkeyOrgan.DrawbarClapIDs {
+				if _, ok := seen[id]; ok {
+					errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_clap_ids must be nine distinct CLAP IDs", p.Name))
+					break
+				}
+				seen[id] = struct{}{}
+			}
+		}
 	}
 	return errs
 }

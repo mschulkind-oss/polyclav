@@ -102,6 +102,8 @@ typedef struct {
 int32_t polyclav_audio_clap_discover_params(const char *bundle_path, const char *plugin_id,
                                             PolyclavClapParamInfoC *out, uintptr_t capacity,
                                             uintptr_t *out_count);
+int32_t polyclav_audio_clap_active_params(PolyclavClapParamInfoC *out, uintptr_t capacity,
+                                          uintptr_t *out_count);
 int32_t polyclav_audio_clap_set_param(uint32_t clap_id, double value);
 int32_t polyclav_audio_clap_poll_feedback(PolyclavClapFeedbackEvent *out);
 int32_t polyclav_audio_poll_backend_event(PolyclavBackendEvent *out);

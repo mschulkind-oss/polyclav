@@ -121,11 +121,44 @@ func looksLikeDrawbarParam(index int, p audio.ClapParamInfo) bool {
 		return false
 	}
 	name := strings.ToLower(p.Name + " " + p.Module)
-	if strings.Contains(name, "drawbar") {
-		return true
+	if !strings.Contains(name, "drawbar") {
+		return false
 	}
-	needles := []string{"16", "5", "8", "4", "2", "2", "1", "1", "1"}
-	return index >= 1 && index <= len(needles) && strings.Contains(name, needles[index-1])
+	return drawbarNameMatchesPosition(index, name)
+}
+
+func drawbarNameMatchesPosition(index int, name string) bool {
+	switch index {
+	case 1:
+		return strings.Contains(name, "16")
+	case 2:
+		return strings.Contains(name, "5") && containsAny(name, "1/3", "⅓", "1_3")
+	case 3:
+		return strings.Contains(name, "8")
+	case 4:
+		return strings.Contains(name, "4")
+	case 5:
+		return strings.Contains(name, "2") && containsAny(name, "2/3", "⅔", "2_3")
+	case 6:
+		return strings.Contains(name, "2") && !containsAny(name, "2/3", "⅔", "2_3")
+	case 7:
+		return strings.Contains(name, "1") && containsAny(name, "3/5", "⅗", "3_5")
+	case 8:
+		return strings.Contains(name, "1") && containsAny(name, "1/3", "⅓", "1_3")
+	case 9:
+		return strings.Contains(name, "1") && !containsAny(name, "1/3", "⅓", "1_3", "3/5", "⅗", "3_5")
+	default:
+		return false
+	}
+}
+
+func containsAny(s string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func formatParamValue(v, min, max float64) string {

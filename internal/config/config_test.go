@@ -324,6 +324,24 @@ ownership = "organ"
 	}
 }
 
+func TestLoadRejectsDuplicateDrawbarClapIDs(t *testing.T) {
+	_, err := loadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/Potato Keys.clap"
+plugin_id = "com.littlepotato.keys"
+
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+drawbar_clap_ids = [101, 101, 101, 101, 101, 101, 101, 101, 101]
+`)
+	if err == nil || !strings.Contains(err.Error(), "drawbar_clap_ids must be nine distinct") {
+		t.Fatalf("err = %v, want duplicate drawbar_clap_ids validation", err)
+	}
+}
+
 func TestLoadRejectsOrganOwnershipWithoutDrawbarIDs(t *testing.T) {
 	_, err := loadTOML(t, `
 [[patches]]
