@@ -486,6 +486,28 @@ func TestPatchFollowerLevelTriggered(t *testing.T) {
 	}
 }
 
+func TestPatchLoadFollowerRepaintsWhenSamePatchFinishesLoading(t *testing.T) {
+	cur := &patches.Patch{Name: "potato-keys", Display: "Potato Keys"}
+	status := patches.LoadStatus{Index: 0, Generation: 4, State: patches.LoadStateRequested}
+	var lines []string
+	follow := newPatchLoadFollower("", patches.LoadStatus{},
+		func() *patches.Patch { return cur },
+		func() patches.LoadStatus { return status },
+		func(p *patches.Patch, st patches.LoadStatus) bool {
+			lines = append(lines, patchLoadDisplayLine(st))
+			return true
+		})
+	follow()
+	status.State = patches.LoadStateLoading
+	follow()
+	status.State = patches.LoadStateActive
+	follow()
+	follow()
+	if want := []string{"", "Loading", ""}; !equalStrings(lines, want) {
+		t.Fatalf("display states %q, want %q", lines, want)
+	}
+}
+
 // TestPatchFollowerRetriesFailedApply pins the "resolved for" tracking:
 // a failed apply must NOT record the new name, so the next event of any
 // type retries instead of leaving stale state installed.

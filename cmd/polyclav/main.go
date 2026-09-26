@@ -639,19 +639,13 @@ func main() {
 		return ""
 	}
 	followVelocity := newPatchFollower(currentPatchName(), registry.Current, installVelocity)
-	followDisplay := newPatchFollower(currentPatchName(), registry.Current, func(cur *patches.Patch) bool {
+	followDisplay := newPatchLoadFollower(currentPatchName(), registry.Status(), registry.Current, registry.Status, func(cur *patches.Patch, st patches.LoadStatus) bool {
 		if cur == nil {
 			return true
 		}
-		line2 := ""
-		switch st := registry.Status(); {
-		case st.Index >= 0 && st.Index < len(registry.All()) && st.State == patches.LoadStateLoading:
-			line2 = "Loading"
-		case st.State == patches.LoadStateFailed:
-			line2 = "Load failed"
-		}
-		if err := sup.Launchkey().SetDisplayText(cur.Display, line2); err != nil {
+		if err := sup.Launchkey().SetDisplayText(cur.Display, patchLoadDisplayLine(st)); err != nil {
 			logger.Warn("launchkey set display text", "err", err)
+			return false
 		}
 		return true
 	})
@@ -993,6 +987,41 @@ func newPatchFollower(last string, current func() *patches.Patch, apply func(*pa
 			last = name
 		}
 	}
+}
+
+// newPatchLoadFollower tracks both patch identity and backend readiness.
+// The ordinary patch follower only tracks the name; after a backend finishes
+// loading, the patch name is unchanged, but the screen must clear "Loading".
+// The hub's drop-oldest policy is safe here: any later event re-reads state.
+func newPatchLoadFollower(lastName string, lastStatus patches.LoadStatus,
+	current func() *patches.Patch, status func() patches.LoadStatus,
+	apply func(*patches.Patch, patches.LoadStatus) bool) func() {
+	return func() {
+		cur := current()
+		name := ""
+		if cur != nil {
+			name = cur.Name
+		}
+		st := status()
+		if name == lastName && st == lastStatus {
+			return
+		}
+		if apply(cur, st) {
+			lastName, lastStatus = name, st
+		}
+	}
+}
+
+func patchLoadDisplayLine(st patches.LoadStatus) string {
+	switch st.State {
+	case patches.LoadStateLoading:
+		if st.Index >= 0 {
+			return "Loading"
+		}
+	case patches.LoadStateFailed:
+		return "Load failed"
+	}
+	return ""
 }
 
 // applyWebFlag overlays the --web CLI flag onto the loaded config. An
