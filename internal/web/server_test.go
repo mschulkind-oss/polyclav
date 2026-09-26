@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mschulkind-oss/polyclav/internal/audio"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
@@ -219,6 +220,56 @@ func (f *fakeAudio) getFxOrder() uint32 {
 	return f.fxOrder
 }
 
+type fakeDevPluginAudio struct {
+	mu          sync.Mutex
+	params      []audio.ClapParamInfo
+	metrics     audio.Metrics
+	discoverErr error
+	setErr      error
+	setCalls    []struct {
+		id    uint32
+		value float64
+	}
+}
+
+func (f *fakeDevPluginAudio) DiscoverClapParams(_, _ string) ([]audio.ClapParamInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.discoverErr != nil {
+		return nil, f.discoverErr
+	}
+	return append([]audio.ClapParamInfo(nil), f.params...), nil
+}
+
+func (f *fakeDevPluginAudio) SetClapParam(id uint32, value float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.setCalls = append(f.setCalls, struct {
+		id    uint32
+		value float64
+	}{id: id, value: value})
+	return nil
+}
+
+func (f *fakeDevPluginAudio) Metrics() audio.Metrics {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.metrics
+}
+
+func (f *fakeDevPluginAudio) lastSet() (uint32, float64, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.setCalls) == 0 {
+		return 0, 0, false
+	}
+	c := f.setCalls[len(f.setCalls)-1]
+	return c.id, c.value, true
+}
+
 func (f *fakeAudio) get(field string) float32 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -292,10 +343,12 @@ type fakeRegistry struct {
 	mu      sync.Mutex
 	patches []patches.Patch
 	current int
+	active  int
+	status  patches.LoadStatus
 }
 
 func newFakeRegistry(ps ...patches.Patch) *fakeRegistry {
-	return &fakeRegistry{patches: ps, current: -1}
+	return &fakeRegistry{patches: ps, current: -1, active: -1, status: patches.LoadStatus{Index: -1, State: patches.LoadStateIdle}}
 }
 
 func (f *fakeRegistry) All() []patches.Patch {
@@ -314,6 +367,22 @@ func (f *fakeRegistry) Current() *patches.Patch {
 	}
 	p := f.patches[f.current]
 	return &p
+}
+
+func (f *fakeRegistry) Active() *patches.Patch {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.active < 0 || f.active >= len(f.patches) {
+		return nil
+	}
+	p := f.patches[f.active]
+	return &p
+}
+
+func (f *fakeRegistry) Status() patches.LoadStatus {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.status
 }
 
 func (f *fakeRegistry) Select(name string) error {
@@ -497,6 +566,7 @@ func (f fakeDevices) XR18State() string      { return f.xr }
 var (
 	sfPatch     = patches.Patch{Name: "salamander", Display: "Salamander", Type: "soundfont", PadColor: 25, GainDB: -3}
 	nativePatch = patches.Patch{Name: "moog", Display: "Moog", Type: "native", Engine: "minimoog", PadColor: 41}
+	clapPatch   = patches.Patch{Name: "potato", Display: "Potato Keys", Type: "clap", PluginPath: "/tmp/Potato Keys.clap", PluginID: "com.littlepotato.keys", LaunchkeyOrgan: patches.LaunchkeyOrgan{Enabled: true, Ownership: "organ", DrawbarParamIDs: []string{"drawbar16", "drawbar5_1_3", "drawbar8", "drawbar4", "drawbar2_2_3", "drawbar2", "drawbar1_3_5", "drawbar1_1_3", "drawbar1"}}}
 )
 
 type fixture struct {
@@ -549,6 +619,7 @@ func (f *fixture) do(t *testing.T, method, path string, body any) *httptest.Resp
 		rd = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(method, path, rd)
+	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	f.srv.Handler().ServeHTTP(rec, req)
 	return rec
@@ -1990,4 +2061,93 @@ func TestSSEMacrosFrame(t *testing.T) {
 	if m0["slot"].(float64) != 2 || m0["target"] != "tremolo.depth" {
 		t.Errorf("macros frame element = %v", m0)
 	}
+}
+
+func TestDevPluginRoutesAbsentUnlessEnabled(t *testing.T) {
+	f := newFixture(t, nil)
+	wantStatus(t, f.do(t, "GET", "/api/dev/plugin/status", nil), http.StatusNotFound)
+	wantStatus(t, f.do(t, "GET", "/dev/plugin", nil), http.StatusNotFound)
+}
+
+func TestDevPluginStatusReportsClapPatchBindingLoadAndMetrics(t *testing.T) {
+	t.Setenv("POLYCLAV_DEV_WEB", "1")
+	devAudio := &fakeDevPluginAudio{metrics: audio.Metrics{BackendSwaps: 3, PluginRenderErrors: 4, ClapInputEventDrops: 5}}
+	f := newFixture(t, func(d *Deps) { d.DevPluginAudio = devAudio })
+	f.reg.mu.Lock()
+	f.reg.patches = []patches.Patch{sfPatch, clapPatch}
+	f.reg.current = 1
+	f.reg.active = 0
+	f.reg.status = patches.LoadStatus{Index: 1, Generation: 12, State: patches.LoadStateLoading, Err: ""}
+	f.reg.mu.Unlock()
+
+	rec := f.do(t, "GET", "/api/dev/plugin/status", nil)
+	wantStatus(t, rec, http.StatusOK)
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status JSON: %v", err)
+	}
+	if got["current_patch"] != "potato" || got["active_patch"] != "salamander" || got["patch_type"] != "clap" {
+		t.Fatalf("unexpected patch status: %v", got)
+	}
+	load := got["load"].(map[string]any)
+	if load["state"] != "loading" || load["generation"].(float64) != 12 {
+		t.Fatalf("load = %v", load)
+	}
+	binding := got["binding"].(map[string]any)
+	if binding["ownership"] != "organ" || !binding["enabled"].(bool) {
+		t.Fatalf("binding = %v", binding)
+	}
+	metrics := got["metrics"].(map[string]any)
+	if metrics["backend_swaps"].(float64) != 3 || metrics["plugin_render_errors"].(float64) != 4 || metrics["clap_input_event_drops"].(float64) != 5 {
+		t.Fatalf("metrics = %v", metrics)
+	}
+	organ := got["organ_params"].([]any)
+	if len(organ) == 0 {
+		t.Fatalf("missing organ param labels")
+	}
+}
+
+func TestDevPluginParamPatchValidatesAndPublishes(t *testing.T) {
+	t.Setenv("POLYCLAV_DEV_WEB", "1")
+	devAudio := &fakeDevPluginAudio{params: []audio.ClapParamInfo{{ClapID: 42, Name: "16′", MinValue: 0, MaxValue: 1, DefaultValue: 0.5, CurrentValue: 0.25}}}
+	f := newFixture(t, func(d *Deps) { d.DevPluginAudio = devAudio })
+	f.reg.mu.Lock()
+	f.reg.patches = []patches.Patch{clapPatch}
+	f.reg.current = 0
+	f.reg.active = 0
+	f.reg.status = patches.LoadStatus{Index: 0, Generation: 1, State: patches.LoadStateActive}
+	f.reg.mu.Unlock()
+
+	wantStatus(t, f.do(t, "PATCH", "/api/dev/plugin/params", "{"), http.StatusBadRequest)
+	wantStatus(t, f.do(t, "PATCH", "/api/dev/plugin/params", map[string]any{"value": 0.5}), http.StatusBadRequest)
+	wantStatus(t, f.do(t, "PATCH", "/api/dev/plugin/params", `{"id":"42","value":1e999}`), http.StatusBadRequest)
+	wantStatus(t, f.do(t, "PATCH", "/api/dev/plugin/params", map[string]any{"id": "99", "value": 0.5}), http.StatusBadRequest)
+	wantStatus(t, f.do(t, "PATCH", "/api/dev/plugin/params", map[string]any{"id": "42", "value": 2}), http.StatusBadRequest)
+
+	ch, cancel := f.hub.Subscribe(4)
+	defer cancel()
+	rec := f.do(t, "PATCH", "/api/dev/plugin/params", map[string]any{"id": "42", "value": 0.75})
+	wantStatus(t, rec, http.StatusOK)
+	id, value, ok := devAudio.lastSet()
+	if !ok || id != 42 || value != 0.75 {
+		t.Fatalf("last SetClapParam = (%d, %v, %v)", id, value, ok)
+	}
+	select {
+	case ev := <-ch:
+		if ev.Type != "plugin-param" || ev.Data["id"] != "42" || ev.Data["value"].(float64) != 0.75 {
+			t.Fatalf("plugin-param event = %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for plugin-param event")
+	}
+}
+
+func TestDevPluginRejectsNonLoopback(t *testing.T) {
+	t.Setenv("POLYCLAV_DEV_WEB", "1")
+	f := newFixture(t, func(d *Deps) { d.DevPluginAudio = &fakeDevPluginAudio{} })
+	req := httptest.NewRequest("GET", "/api/dev/plugin/status", nil)
+	req.RemoteAddr = "203.0.113.10:4567"
+	rec := httptest.NewRecorder()
+	f.srv.Handler().ServeHTTP(rec, req)
+	wantStatus(t, rec, http.StatusForbidden)
 }

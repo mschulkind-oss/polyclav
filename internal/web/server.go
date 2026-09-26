@@ -67,6 +67,7 @@ type Deps struct {
 	// sequencer / CoreMIDI client.
 	MIDIPortLister func() ([]string, error)
 	Probe          *midiprobe.Session     // may be nil → probe endpoints return 503
+	DevPluginAudio DevPluginAudio         // dev-only CLAP poke surface; nil uses real audio when POLYCLAV_DEV_WEB=1
 	ConfigTOML     func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
 	ConfigPath     string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
 	// SetGlobalVelocity (may be nil) tells the daemon its global
@@ -146,7 +147,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/player", s.handlePlayerPlay)
 	s.mux.HandleFunc("POST /api/player/stop", s.handlePlayerStop)
 	s.mux.HandleFunc("POST /api/player/tempo", s.handlePlayerTempo)
-	s.routesProbe() // probe.go: /api/probe/* (generic MIDI device reverse-engineering tool)
+	s.routesProbe()     // probe.go: /api/probe/* (generic MIDI device reverse-engineering tool)
+	s.routesDevPlugin() // dev_plugin.go: /api/dev/plugin/* + /dev/plugin when POLYCLAV_DEV_WEB=1
 }
 
 // Handler returns the routed handler, for tests and for callers that

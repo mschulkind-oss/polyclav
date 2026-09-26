@@ -667,14 +667,17 @@ func main() {
 					case audio.BackendEventActive:
 						if registry.MarkActive(ev.Generation) {
 							hub.Publish(controls.Change{Type: "patch"})
+							hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "active"}})
 						}
 					case audio.BackendEventFailed:
 						if registry.MarkFailed(ev.Generation, "audio-core loader failed") {
 							logger.Warn("patch load failed", "generation", ev.Generation)
 							hub.Publish(controls.Change{Type: "patch"})
+							hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "failed", "last_error": "audio-core loader failed"}})
 						}
 					case audio.BackendEventStale:
 						logger.Debug("stale patch load discarded", "generation", ev.Generation)
+						hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "stale"}})
 					}
 				}
 			}
