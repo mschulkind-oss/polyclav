@@ -1498,7 +1498,7 @@ func TestMasteringPatchClamps(t *testing.T) {
 // ---- config ----------------------------------------------------------------
 
 func TestConfigVerbatim(t *testing.T) {
-	raw := []byte("# polyclav.toml\n[osc.xr18]\nhost = \"192.168.1.50\"\n")
+	raw := []byte("# config.toml\n[osc.xr18]\nhost = \"192.168.1.50\"\n")
 	f := newFixture(t, func(d *Deps) {
 		d.ConfigTOML = func() ([]byte, error) { return raw, nil }
 	})

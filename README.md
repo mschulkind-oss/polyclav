@@ -84,10 +84,10 @@ over SysEx.
   oversampling, and up to **8-voice polyphony** with live-switchable
   voice modes. Every tweak persists per patch in `state.toml`. See
   `docs/NATIVE_SYNTH.md`.
-- **Mixer OSC bindings** — faders and pads drive mixer faders and mute
-  toggles over UDP. Bindings live in `[osc.mixer]` (preferred name;
-  `[osc.xr18]` still works), with a configurable presence-check
-  `heartbeat` for non-X-Air OSC targets.
+- **Optional mixer OSC bindings** — faders and pads can drive mixer faders
+  and mute toggles over UDP once explicitly configured. Bindings live in
+  `[osc.mixer]` (preferred name; `[osc.xr18]` still works), with a
+  configurable presence-check `heartbeat` for non-X-Air OSC targets.
 - **Launchkey MK4 DAW driver** — handshake, knob/pad/screen control,
   per-patch knob-value persistence. The `polyclav-components` CLI also
   encodes and uploads Custom modes over SysEx.
@@ -164,8 +164,8 @@ mise install                                     # Go + Rust toolchains
 just build                                       # Rust audio-core + Go binary
 just install                                     # or: install both binaries to ~/.local/bin
 mkdir -p ~/.config/polyclav
-cp polyclav.example.toml ~/.config/polyclav/polyclav.toml
-$EDITOR ~/.config/polyclav/polyclav.toml             # edit soundfont paths
+cp polyclav.example.toml ~/.config/polyclav/config.toml
+$EDITOR ~/.config/polyclav/config.toml             # edit soundfont paths
 overmind start -D                                # run as daemon via Procfile
 ```
 
@@ -218,5 +218,5 @@ anything — it gates on `cargo build --release`, `cargo clippy -D warnings`,
 `go vet`, `cargo test`, `go test`, and `go build ./...`.
 
 Bug reports: please include `polyclav --version`, the contents of your
-`polyclav.toml` (redact paths if you like), and the relevant slice of
+`config.toml` (redact paths if you like), and the relevant slice of
 `/tmp/polyclav.log` (overmind tees there by default).

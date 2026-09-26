@@ -2,10 +2,10 @@ package config
 
 import _ "embed"
 
-// exampleConfig is the canonical default polyclav.toml — polyclav.example.toml
+// exampleConfig is the canonical default config.toml — polyclav.example.toml
 // baked into the binary at build time via go:embed. ExampleConfig()
 // returns these bytes; the daemon writes them to
-// ~/.config/polyclav/polyclav.toml on first run when no config exists yet
+// ~/.config/polyclav/config.toml on first run when no config exists yet
 // (see cmd/polyclav/main.go).
 //
 // The canonical copy lives next to this file in internal/config/. The

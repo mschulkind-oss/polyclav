@@ -33,7 +33,7 @@ needed to write a real driver.
    ```
    web ui starting url=http://127.0.0.1:8666/
    ```
-   (If you have an old `polyclav.toml` from before with `enabled = false`
+   (If you have an old `config.toml` from before with `enabled = false`
    written explicitly, delete that line, or run `polyclav --web on`.)
 3. Open that URL **in a browser on the same machine** — it only listens
    on `127.0.0.1`, so that's the whole security model: no login, no

@@ -154,7 +154,7 @@ Phase C of `docs/WEB_UI.md` adds the editor page:
   the layers sit right. This turns minutes of TOML-edit-and-restart into
   seconds.
 - **Persistence:** edits apply in-memory immediately (atomic pointer
-  swap); an explicit **Save** writes the value back to `polyclav.toml`
+  swap); an explicit **Save** writes the value back to `config.toml`
   via the phase-C config write path. No silent config mutation.
 
 Until the web UI exists, the config file is the interface — which is why

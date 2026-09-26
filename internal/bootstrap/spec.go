@@ -1,5 +1,5 @@
 // Package bootstrap implements `polyclav bootstrap`: download the example
-// soundfonts referenced by the default polyclav.toml into
+// soundfonts referenced by the default config.toml into
 // ~/.local/share/polyclav/soundfonts/ so the daemon can start without the
 // user manually wrangling free-soundfont archives.
 //

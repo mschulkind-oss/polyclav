@@ -156,12 +156,12 @@ func TestValidateNilCfg(t *testing.T) {
 	}
 }
 
-// loadTOML writes body to a throwaway polyclav.toml and runs Load on it.
+// loadTOML writes body to a throwaway config.toml and runs Load on it.
 // Central helper for the decode/validation tests below (velocity, web,
 // mixer alias, heartbeat) so each case is just TOML-in, assertions-out.
 func loadTOML(t *testing.T, body string) (*Config, error) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "polyclav.toml")
+	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -762,6 +762,9 @@ func TestExampleConfigLoadsCleanly(t *testing.T) {
 	}
 	if cfg.OSC.XR18.Heartbeat != nil {
 		t.Errorf("example must leave heartbeat commented (nil), got %q", *cfg.OSC.XR18.Heartbeat)
+	}
+	if len(cfg.OSC.XR18.Bindings) != 0 {
+		t.Errorf("example must not activate XR18 bindings by default, got %d", len(cfg.OSC.XR18.Bindings))
 	}
 	if cfg.MIDI.Velocity.Curve != "" {
 		t.Errorf("example must leave [midi.velocity] commented, got %+v", cfg.MIDI.Velocity)

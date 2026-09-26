@@ -12,7 +12,7 @@ import (
 )
 
 // Package patches owns a registry of selectable soundfont patches (entries
-// pulled from polyclav.toml and displayed across the top-row Launchkey pads).
+// pulled from config.toml and displayed across the top-row Launchkey pads).
 // Selecting a patch tells internal/audio to load the soundfont and reloads
 // the engine. The package does NOT manage pad LEDs or MIDI dispatch — those
 // live in driver/launchkey code that consumes Registry.All() and

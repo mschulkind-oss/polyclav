@@ -17,7 +17,7 @@ import type { MIDIDevice } from "@/lib/types";
  * port is a documented workflow — but those rows carry a warning chip.
  *
  * Apply (session) hits SetAllow immediately without touching the file;
- * Save additionally persists allow_devices into polyclav.toml — the
+ * Save additionally persists allow_devices into config.toml — the
  * exact Apply/Save split VelocityCard already established for the global
  * velocity curve.
  */

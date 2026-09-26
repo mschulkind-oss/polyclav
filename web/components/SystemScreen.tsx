@@ -64,7 +64,7 @@ export function SystemScreen({
         <div className="pb-panel pb-panel-wide">
           <div className="pb-panel-head">
             <h3>Config</h3>
-            <span className="pb-panel-sub">polyclav.toml</span>
+            <span className="pb-panel-sub">config.toml</span>
           </div>
           <ConfigCard />
         </div>

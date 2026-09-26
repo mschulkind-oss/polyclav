@@ -150,7 +150,7 @@ should be built once.
 - **Structural config** (`[[patches]]`, OSC bindings, MIDI device selection):
   phase C only. `PUT /api/config` validates with the existing
   `config.Load`+`Validate` path against a temp file, then atomically
-  replaces `polyclav.toml`. Hot-reload of structural config is **out of
+  replaces `config.toml`. Hot-reload of structural config is **out of
   scope** — the UI shows a "restart to apply" banner. (Live patch-list
   reload is a possible later increment; it touches the registry, pads, and
   state keys.)
@@ -158,7 +158,7 @@ should be built once.
 ## Security model
 
 - `[web]` config block: `enabled = true` **by default**, `listen = "127.0.0.1:8666"`.
-  Set `enabled = false` in `polyclav.toml` to opt out.
+  Set `enabled = false` in `config.toml` to opt out.
 - **No auth, ever-for-now (decided):** localhost binding is the security
   boundary. Setting `listen = "0.0.0.0:8666"` is the documented LAN
   opt-in — the user is explicitly allowed to make that call for their own

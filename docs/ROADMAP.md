@@ -314,7 +314,7 @@ The MK4 hardware available to us (validated from the existing driver code
 in `internal/launchkey/driver/`):
 
 - **8 encoders** (relative mode, ch16 CC 0x55–0x5C) with `KnobEvent{Delta}`.
-- **9 faders + 8 fader buttons** on 49/61 SKU. Currently assigned to XR18.
+- **9 faders + 8 fader buttons** on 49/61 SKU. Currently available for explicit OSC mixer bindings and organ drawbar ownership.
 - **16 RGB pads** (top row notes 96–103, bottom row 112–119, ch1).
 - **Transport row**: Play, Stop, Record, Loop, Rewind, FF, Track L/R,
   Scene Up/Down, Shift.
@@ -483,7 +483,7 @@ phase.
 | **Stop** | Panic — all notes off, kill voices, reset envelopes | screen flash "PANIC" |
 | **Record** | Toggle "save mode" — next knob twist commits the new value to disk immediately rather than after the usual 2 s debounce | bottom row dims, record-button pulses red until released |
 | **Loop** | (reserved) | — |
-| **Rewind / FF** | Reserved for XR18 control (keep existing) | — |
+| **Rewind / FF** | Reserved for future explicit OSC mixer control | — |
 | **Track ←** | Previous page (MOD → LFO → AMP → FILTER → MIX → MOD ...) | top row briefly flashes; page name shows |
 | **Track →** | Next page (MIX → FILTER → ... → MOD → MIX ...) | same as above |
 | **Scene ↑** | Octave +1 (keyboard) | screen flash "OCT +1" |
@@ -648,7 +648,7 @@ even on first boot. Two options:
 
 | Option | Description | Verdict |
 |---|---|---|
-| A | Bake factory defaults into polyclav source. `[[patches]]` in `polyclav.toml` just declares `type = "native"`, `engine = "minimoog"` (or `"mother32"`, etc.), and `display = "Minimoog"`; the synth itself seeds the voice from a hardcoded patch struct keyed by `engine`. User edits go to `state.toml`. | **Lean A.** Simpler. Adding new factory patches = adding new Rust constants. |
+| A | Bake factory defaults into polyclav source. `[[patches]]` in `config.toml` just declares `type = "native"`, `engine = "minimoog"` (or `"mother32"`, etc.), and `display = "Minimoog"`; the synth itself seeds the voice from a hardcoded patch struct keyed by `engine`. User edits go to `state.toml`. | **Lean A.** Simpler. Adding new factory patches = adding new Rust constants. |
 | B | Ship factory defaults as `polyclav.example.toml` `[[patches]]` entries with full inline `[patches.X.synth]` tables. User-state still overrides via `state.toml`. | More flexible (user can swap factory defaults) but bloats `polyclav.example.toml` to thousands of lines for 5+ patches. Reject for v1. |
 
 `type = "native"` joins the existing `"soundfont"`, `"lv2"`, `"clap"` —

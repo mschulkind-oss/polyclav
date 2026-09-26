@@ -1,12 +1,12 @@
-# polyclav example config — copy to ~/.config/polyclav/polyclav.toml and edit.
+# polyclav example config — copy to ~/.config/polyclav/config.toml and edit.
 #
 #   mkdir -p ~/.config/polyclav
-#   cp polyclav.example.toml ~/.config/polyclav/polyclav.toml
+#   cp polyclav.example.toml ~/.config/polyclav/config.toml
 #
-# A missing config file is fine: polyclav falls back to compiled-in defaults
-# (no soundfont -> sine fallback; no MIDI devices selected, so no notes until
-# you pick one — see [midi] below; OSC mixer control OFF by default -> no XR18
-# host, so no OSC is sent until you set [osc.xr18].host yourself).
+# A missing config file is fine: polyclav writes this embedded example to
+# ~/.config/polyclav/config.toml on first run. OSC mixer control is OFF by
+# default: no host and no active bindings, so no OSC is sent until you set a
+# host and uncomment or add bindings yourself.
 #
 # All soundfont paths below are EXAMPLES and use `~/.local/share/polyclav/soundfonts/`.
 # polyclav expands a leading `~` to your home directory. Drop your soundfonts
@@ -166,11 +166,10 @@ allow_devices = []
 # That exposes an unauthenticated control surface to everyone on your
 # network — an explicit opt-in, on your own network, at your own risk.
 
-[osc.xr18]
-# `[osc.mixer]` is the preferred new name for this block — same fields, and
-# it wins if both are present. `[osc.xr18]` remains supported as the legacy
-# spelling (the binding model was never really XR18-specific; it can drive
-# any OSC target).
+[osc.mixer]
+# `[osc.mixer]` is the preferred name for this block. `[osc.xr18]` remains
+# supported as the legacy spelling (the binding model was never really
+# XR18-specific; it can drive any OSC target).
 #
 # Behringer X-Air OSC speaks UDP. XR18 default port is 10024.
 # OSC mixer control is OFF until you set a host. Uncomment and set this to
@@ -205,32 +204,35 @@ port = 10024
 #   pads, top:      notes 96..103, ch1
 #   pads, bottom:   notes 112..119, ch1
 
+# Example bindings are intentionally commented out: a fresh install has no
+# active mixer host and no fader/pad OSC mappings. Uncomment bindings only
+# after setting a real host above.
 # Fader 9 → main L/R fader (the "room volume" pattern). CLAP organ
 # patches can opt in to capture DAW faders 1-9 with
 # [patches.launchkey_organ] enabled=true, ownership="organ". Potato Keys
 # drawbars are resolved from exact labels on the active plugin; other CLAP
 # plugins need explicit drawbar_clap_ids. Captured faders never send mixer OSC.
-[[osc.xr18.bindings]]
-source_kind = "cc"
-channel     = 16
-controller  = 13          # Fader 9
-osc         = "/lr/mix/fader"
-transform   = "scalar"
+# [[osc.mixer.bindings]]
+# source_kind = "cc"
+# channel     = 16
+# controller  = 13          # Fader 9
+# osc         = "/lr/mix/fader"
+# transform   = "scalar"
 
 # Faders 1–8 → XR18 input channel faders 1–8.
-[[osc.xr18.bindings]]
-source_kind = "cc"
-channel     = 16
-controller  = 5           # Fader 1
-osc         = "/ch/01/mix/fader"
-transform   = "scalar"
+# [[osc.mixer.bindings]]
+# source_kind = "cc"
+# channel     = 16
+# controller  = 5           # Fader 1
+# osc         = "/ch/01/mix/fader"
+# transform   = "scalar"
 
-[[osc.xr18.bindings]]
-source_kind = "cc"
-channel     = 16
-controller  = 6           # Fader 2
-osc         = "/ch/02/mix/fader"
-transform   = "scalar"
+# [[osc.mixer.bindings]]
+# source_kind = "cc"
+# channel     = 16
+# controller  = 6           # Fader 2
+# osc         = "/ch/02/mix/fader"
+# transform   = "scalar"
 
 # (...add fader 3–8 if you actually use them — same pattern, controller += 1,
 # channel address += 1.)
@@ -244,19 +246,20 @@ transform   = "scalar"
 # 0-4, notes 112-116) as knob-page indicator LEDs — see "Launchkey knob
 # pages" in docs/USER_GUIDE.md. Bind only columns 5-7 (notes 117-119),
 # or a pad will both mute a mixer channel AND light as a page indicator.
-[[osc.xr18.bindings]]
-source_kind = "note"
-channel     = 1
-controller  = 118         # Pad bottom-row position 6
-osc         = "/ch/01/mix/on"
-transform   = "press"
+# [[osc.mixer.bindings]]
+# source_kind = "note"
+# channel     = 1
+# controller  = 118         # Pad bottom-row position 6
+# osc         = "/ch/01/mix/on"
+# transform   = "press"
 
-[[osc.xr18.bindings]]
-source_kind = "note"
-channel     = 1
-controller  = 119         # Pad bottom-row position 7
-osc         = "/ch/02/mix/on"
-transform   = "press"
+# [[osc.mixer.bindings]]
+# source_kind = "note"
+# channel     = 1
+# controller  = 119         # Pad bottom-row position 7
+# osc         = "/ch/02/mix/on"
+# transform   = "press"
+
 
 # ---------------------------------------------------------------------------
 # Patches — selectable soundfonts, surfaced on the Launchkey's top-row pads.

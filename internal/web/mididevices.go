@@ -3,7 +3,7 @@
 // GET/PUT /api/midi/devices, the web-UI counterpart to `polyclav midi
 // list` and [midi].allow_devices. Follows the exact save/session-only
 // contract editor.go's velocity endpoint established — SetAllow always
-// applies live; save additionally persists into polyclav.toml.
+// applies live; save additionally persists into config.toml.
 package web
 
 import (
@@ -67,7 +67,7 @@ type midiDevicesPutBody struct {
 // handleMIDIDevicesPut applies an updated allowlist immediately (live,
 // regardless of save — the whole point of a running daemon exposing
 // this at all) and, when save is true, additionally persists it into
-// polyclav.toml's managed allow_devices block. Save-then-apply order,
+// config.toml's managed allow_devices block. Save-then-apply order,
 // same as velocity: a request that fails to save must not leave a
 // half-applied state.
 func (s *Server) handleMIDIDevicesPut(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +92,7 @@ func (s *Server) handleMIDIDevicesPut(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, errUnmanagedAllowDevices) || errors.Is(err, errCorruptAllowMarkers):
 				writeErr(w, http.StatusConflict, err.Error())
 			case errors.As(err, &ve):
-				writeErr(w, http.StatusConflict, "saving would produce an invalid config — edit polyclav.toml by hand: "+ve.msg)
+				writeErr(w, http.StatusConflict, "saving would produce an invalid config — edit config.toml by hand: "+ve.msg)
 			default:
 				writeErr(w, http.StatusInternalServerError, err.Error())
 			}
@@ -131,8 +131,8 @@ const (
 )
 
 var (
-	errUnmanagedAllowDevices = errors.New("polyclav.toml already has a hand-written allow_devices under [midi] — edit the config file by hand instead of saving from the web UI")
-	errCorruptAllowMarkers   = errors.New("the managed allow_devices markers in polyclav.toml are corrupted (one of BEGIN/END is missing) — repair the config file by hand")
+	errUnmanagedAllowDevices = errors.New("config.toml already has a hand-written allow_devices under [midi] — edit the config file by hand instead of saving from the web UI")
+	errCorruptAllowMarkers   = errors.New("the managed allow_devices markers in config.toml are corrupted (one of BEGIN/END is missing) — repair the config file by hand")
 )
 
 // midiTableHeaderRe matches a bare `[midi]` table header line — NOT

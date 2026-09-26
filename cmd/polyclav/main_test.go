@@ -162,13 +162,13 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 
 	t.Run("with connected ports", func(t *testing.T) {
 		var buf bytes.Buffer
-		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
+		printNoMIDIDevicesBanner(&buf, "/etc/config.toml",
 			classify("CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0", "Launchkey MK4 61 MIDI In"))
 		out := buf.String()
 		for _, want := range []string{
 			"NO MIDI INPUT DEVICES ARE SELECTED",
 			"allow_devices",
-			"/etc/polyclav.toml",
+			"/etc/config.toml",
 			"CASIO USB-MIDI:CASIO USB-MIDI MIDI 1 36:0",                // listed verbatim...
 			`allow_devices = ["CASIO USB-MIDI:CASIO USB-MIDI MIDI 1"]`, // ...but suggested without the volatile ALSA address
 			"--midi-allow",
@@ -184,7 +184,7 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 	// loopback bus is worse than saying nothing.
 	t.Run("never suggests a loopback or control-surface port", func(t *testing.T) {
 		var buf bytes.Buffer
-		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml", classify(
+		printNoMIDIDevicesBanner(&buf, "/etc/config.toml", classify(
 			"Midi Through:Midi Through Port-0 14:0",
 			"Launchkey MK4 61:Launchkey MK4 61 DAW In 32:1",
 			"Launchkey MK4 61:Launchkey MK4 61 MIDI In 32:0",
@@ -202,7 +202,7 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 
 	t.Run("falls back when every port is flagged", func(t *testing.T) {
 		var buf bytes.Buffer
-		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml",
+		printNoMIDIDevicesBanner(&buf, "/etc/config.toml",
 			classify("Midi Through:Midi Through Port-0 14:0"))
 		if out := buf.String(); !strings.Contains(out, `allow_devices = ["Midi Through:Midi Through Port-0"]`) {
 			t.Errorf("banner must still make a suggestion when nothing is plain:\n%s", out)
@@ -211,7 +211,7 @@ func TestPrintNoMIDIDevicesBanner(t *testing.T) {
 
 	t.Run("with no ports connected", func(t *testing.T) {
 		var buf bytes.Buffer
-		printNoMIDIDevicesBanner(&buf, "/etc/polyclav.toml", nil)
+		printNoMIDIDevicesBanner(&buf, "/etc/config.toml", nil)
 		out := buf.String()
 		if !strings.Contains(out, "No MIDI input ports are connected") {
 			t.Errorf("banner should say nothing is plugged in:\n%s", out)
@@ -679,7 +679,7 @@ func TestVelocitySaveSurvivesPatchChange(t *testing.T) {
 
 	// A web server over the same controls + holder, like main's Deps.
 	dir := t.TempDir()
-	path := filepath.Join(dir, "polyclav.toml")
+	path := filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(path, []byte("[web]\nenabled = false\n"), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -732,10 +732,19 @@ func TestVelocitySaveSurvivesPatchChange(t *testing.T) {
 // only when this call actually wrote the file, false when a config was
 // already there (whether valid or not) — printStartupError's message
 // choice depends on this being accurate.
+func TestDefaultConfigPathUsesConfigTOML(t *testing.T) {
+	dir := t.TempDir()
+	got := defaultConfigPath(dir)
+	want := filepath.Join(dir, "polyclav", "config.toml")
+	if got != want {
+		t.Fatalf("defaultConfigPath(%q) = %q, want %q", dir, got, want)
+	}
+}
+
 func TestEnsureConfigExistsReportsFirstRun(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	path := filepath.Join(dir, "polyclav.toml")
+	path := filepath.Join(dir, "config.toml")
 
 	justCreated, err := ensureConfigExists(path, logger)
 	if err != nil {
@@ -765,7 +774,7 @@ func TestEnsureConfigExistsReportsFirstRun(t *testing.T) {
 // offer needs to fire anyway. Only an actual edit should turn it off.
 func TestIsStockExampleConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "polyclav.toml")
+	path := filepath.Join(dir, "config.toml")
 
 	if isStockExampleConfig(path) {
 		t.Error("a missing file must not report as the stock example config")
@@ -796,7 +805,7 @@ func TestPrintStartupErrorLeadsWithBootstrapOnFirstRun(t *testing.T) {
 		{PatchName: "grand", PatchType: config.PatchTypeSoundfont, Path: "/x/grand.sf2"},
 	}}
 	var buf bytes.Buffer
-	printStartupError(&buf, "/x/polyclav.toml", mde, true)
+	printStartupError(&buf, "/x/config.toml", mde, true)
 	got := buf.String()
 
 	if !strings.Contains(got, "first run") {
@@ -823,7 +832,7 @@ func TestPrintStartupErrorListsAlternativesOtherwise(t *testing.T) {
 		{PatchName: "grand", PatchType: config.PatchTypeSoundfont, Path: "/x/grand.sf2"},
 	}}
 	var buf bytes.Buffer
-	printStartupError(&buf, "/x/polyclav.toml", mde, false)
+	printStartupError(&buf, "/x/config.toml", mde, false)
 	got := buf.String()
 
 	if !strings.Contains(got, "choose one") {

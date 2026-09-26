@@ -166,4 +166,4 @@ fetch-soundfont:
         curl -fL --retry 3 -o soundfonts/{{SOUNDFONT_FILE}} {{SOUNDFONT_URL}} \
             || { echo "fetch failed — drop any SF2 at soundfonts/{{SOUNDFONT_FILE}} and re-run"; exit 1; }; \
     fi
-    @echo "to use: in polyclav.toml set [soundfont] path = \"$PWD/soundfonts/{{SOUNDFONT_FILE}}\""
+    @echo "to use: in config.toml set [soundfont] path = \"$PWD/soundfonts/{{SOUNDFONT_FILE}}\""

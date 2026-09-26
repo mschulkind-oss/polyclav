@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -35,7 +34,7 @@ func sfzPatchNames(cfg *config.Config) []string {
 // at a glance what works and what would be silent.
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
-	configPath := fs.String("config", "", "path to polyclav.toml (default: XDG config dir)")
+	configPath := fs.String("config", "", "path to config.toml (default: XDG config dir)")
 	_ = fs.Parse(args)
 
 	out := os.Stdout
@@ -68,7 +67,7 @@ func runDoctor(args []string) int {
 	path := *configPath
 	if path == "" {
 		if cfgDir, err := os.UserConfigDir(); err == nil {
-			path = filepath.Join(cfgDir, "polyclav", "polyclav.toml")
+			path = defaultConfigPath(cfgDir)
 		}
 	}
 	switch {

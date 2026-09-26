@@ -19,7 +19,7 @@
 
 ## TL;DR
 
-polyclav already has a real config file (`polyclav.toml`) and three of its
+polyclav already has a real config file (`config.toml`) and three of its
 four hardware seams are at least partly configurable. The honest picture:
 
 | Seam | How coupled today | Configurable now? |

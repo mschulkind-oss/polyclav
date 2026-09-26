@@ -55,7 +55,7 @@ been observed on this particular unit:
 | 61 keys, pitch and mod wheels, sustain input | Performance MIDI to synth/plugin | Verify which port carries each CC; organ expression expects CC11, not ordinary CC64 sustain. |
 | 16 pads (two rows of eight) | Top row selects eight patch slots per bank; bottom row indicates knob pages | Check pad notes 96–103 / 112–119 on the DAW port. |
 | 8 endless encoders | Five synth/chain pages | Check relative CC85–92 on channel 16. |
-| 9 faders | Mixer by default; opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
+| 9 faders | Unmapped by default; optional mixer OSC or opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
 | 9 fader buttons | Decoded, no application action yet | Check CC37–45 on channel 16. |
 | Scene ↑/↓ and Track ←/→ | Knob-page navigation and patch-bank navigation, respectively | Check which printed arrow pair produces each event; button note numbers 104–105 and 102–103. |
 | Play, Stop, Record, Loop, Rewind, Fast-forward, Shift | Play toggles audition; the rest are decoded but unused | Check button note numbers 115, 116, 117, 118, 113, 114, 106 respectively. |
@@ -78,7 +78,7 @@ SysEx encoding is the gap -- flag it.
 
 Everything above needs the bench; this doesn't. The audition player plus
 the web API exercise the full config → boot → audio → live-control →
-shutdown path with no Launchkey, no XR18, and no keyboard.
+shutdown path with no Launchkey, no explicitly configured XR18, and no keyboard.
 
 1. Write a minimal config — one native patch, zero files needed:
 

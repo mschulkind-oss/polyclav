@@ -158,14 +158,14 @@ type XR18Config struct {
 }
 
 // MasteringConfig configures the final-stage DSP applied after the
-// per-patch chain. Optional in polyclav.toml; defaults applied at startup
+// per-patch chain. Optional in config.toml; defaults applied at startup
 // when the [mastering] block is absent.
 type MasteringConfig struct {
 	CompAmount       float32 `toml:"comp_amount"`        // 0..1, 0 = bypass
 	LimiterCeilingDB float32 `toml:"limiter_ceiling_db"` // dBFS, default -0.3
 }
 
-// PatchConfig is one [[patches]] entry in polyclav.toml. The patches package
+// PatchConfig is one [[patches]] entry in config.toml. The patches package
 // converts these into runtime patches.Patch values via patches.FromConfig.
 // Type selects the backend: "soundfont" (default), "lv2", "clap", or
 // "native" (pure-Rust analog-style synth; see docs/ROADMAP.md).
@@ -218,7 +218,7 @@ func Defaults() *Config {
 			XR18: XR18Config{
 				// Empty host = OSC mixer control disabled by default. A
 				// fresh install must opt in by setting osc.xr18.host in
-				// polyclav.toml; otherwise the reconciler does no network
+				// config.toml; otherwise the reconciler does no network
 				// polling (see internal/osc/reconciler.go Run).
 				Host: "",
 				Port: 10024,
@@ -538,7 +538,7 @@ func heartbeatConfigErrors(cfg *Config, block string) []string {
 // Validate collects all failures into a MissingDepsError so the user
 // sees the full set in one pass instead of fixing them one at a time.
 type MissingDep struct {
-	PatchName string // [[patches]].name from polyclav.toml
+	PatchName string // [[patches]].name from config.toml
 	PatchType string // "soundfont" | "clap" | "native" (other types currently never fail Validate)
 	Path      string // failing filesystem path (empty for non-filesystem checks)
 	Reason    string // short human reason — used in the formatted error

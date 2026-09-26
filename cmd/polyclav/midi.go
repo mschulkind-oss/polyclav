@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/midi"
@@ -34,7 +33,7 @@ func runMIDI(args []string) int {
 // not obviously the right tool).
 func runMIDIList(args []string) int {
 	fs := flag.NewFlagSet("midi list", flag.ExitOnError)
-	configPath := fs.String("config", "", "path to polyclav.toml (default: XDG config dir)")
+	configPath := fs.String("config", "", "path to config.toml (default: XDG config dir)")
 	_ = fs.Parse(args)
 
 	names, err := midi.PortNames()
@@ -52,7 +51,7 @@ func runMIDIList(args []string) int {
 	path := *configPath
 	if path == "" {
 		if cfgDir, cerr := os.UserConfigDir(); cerr == nil {
-			path = filepath.Join(cfgDir, "polyclav", "polyclav.toml")
+			path = defaultConfigPath(cfgDir)
 		}
 	}
 	var allow []string
@@ -77,7 +76,7 @@ func runMIDIList(args []string) int {
 		fmt.Println("sends notes. It is an allowlist — name a device to hear it.")
 		fmt.Println()
 	}
-	fmt.Println("Put a stable substring of the names above in polyclav.toml's")
+	fmt.Println("Put a stable substring of the names above in config.toml's")
 	fmt.Println(`[midi].allow_devices, or --midi-allow "name one,name two" for a`)
 	fmt.Println("one-off override. Matching skips the trailing ALSA address, so it")
 	fmt.Println("survives a replug/reboot even if that address changes.")

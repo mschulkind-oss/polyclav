@@ -70,9 +70,9 @@ panel; see "Web dashboard" below.
 - Per-patch gain matching via `gain_db` on each `[[patches]]` entry — line
   up the perceived loudness of wildly different soundfonts (Salamander vs
   DX7 vs analog bass) so switching patches doesn't blow your ears off.
-- XR18 OSC bindings: faders and pads on the keyboard drive mixer faders and
-  mute toggles over UDP. Bindings live in `[osc.mixer]` (preferred name;
-  the legacy `[osc.xr18]` still works).
+- Optional OSC mixer bindings: once explicitly configured, faders and pads
+  on the keyboard can drive mixer faders and mute toggles over UDP. Bindings
+  live in `[osc.mixer]` (preferred name; the legacy `[osc.xr18]` still works).
 - `polyclav-components` standalone CLI: encode and upload Launchkey MK4 Custom
   modes (Pots / Pads / Faders) over SysEx. Independent of the daemon.
 
@@ -125,7 +125,7 @@ sound is one config block and one command:
 
 ```sh
 mkdir -p ~/.config/polyclav
-cat > ~/.config/polyclav/polyclav.toml <<'EOF'
+cat > ~/.config/polyclav/config.toml <<'EOF'
 [[patches]]
 name    = "moog"
 display = "Moog"
@@ -203,7 +203,7 @@ Chords are one setting away:
 3. Want full control? Switch to points mode and drag the curve — e.g.
    pull the middle down but pin `[127,127]` so ff stays available.
 4. **Apply** installs it immediately for this session; **Save** writes
-   it into `polyclav.toml` (a tool-managed block), making it permanent
+   it into `config.toml` (a tool-managed block), making it permanent
    across patch changes and restarts.
 5. No keyboard handy? `polyclav --play vel-ramp --loop` sweeps velocity
    1→127→1 through whatever curve is active — you'll hear layer
@@ -245,7 +245,7 @@ patch you'll perform it on, and tweak the patch while it plays.
 
 ## Configuration
 
-The config lives at `~/.config/polyclav/polyclav.toml`. On the first run with
+The config lives at `~/.config/polyclav/config.toml`. On the first run with
 no config present, polyclav writes the embedded default there and exits with a
 list of the soundfont files it can't find; run `polyclav bootstrap` to fetch
 them, then run `polyclav` again. `docs/INSTALL.md` walks through this. The
@@ -306,13 +306,13 @@ starts working the moment it's plugged back in.
 
 Three equivalent ways to change the list:
 
-- Edit `polyclav.toml` directly (above) — takes effect on restart.
+- Edit `config.toml` directly (above) — takes effect on restart.
 - `polyclav --midi-allow "name one,name two"` — a one-off CLI override for
   this run only, replacing (not merging with) the config file's list.
 - The web UI's **MIDI devices** panel (`[web]` must be enabled): a live
   checkbox per connected port, backed by `GET`/`PUT /api/midi/devices`.
   Ticking a box calls `Multiplexer.SetAllow` immediately (no restart);
-  **Save** additionally writes `allow_devices` back into `polyclav.toml`,
+  **Save** additionally writes `allow_devices` back into `config.toml`,
   in a clearly marked `# BEGIN/END polyclav-managed allow_devices` block —
   same explicit-save contract as the velocity curve editor. Entries naming
   hardware that isn't plugged in right now are listed too, so a Save can't
@@ -386,7 +386,7 @@ The Launchkey 61 MK4 in DAW mode (from its Programmer's Reference) lays out:
 8 knobs CC 21..28 ch16, 9 faders CC 5..13 ch16, fader buttons CC 37..45 ch16,
 top pads notes 96..103 ch1, bottom pads notes 112..119 ch1.
 
-See `polyclav.example.toml` for a full set of fader and pad bindings.
+See `polyclav.example.toml` for commented fader and pad binding examples; fresh installs leave them inactive until you uncomment and configure a host.
 
 ### `[[patches]]` — schema
 
@@ -471,7 +471,7 @@ You can also run the binary directly: `./bin/polyclav`.
    configured PipeWire sink.
 4. Tap a top-row pad to switch patches live; the screen and the lit pad
    follow the selection. To make a permanent change, edit
-   `~/.config/polyclav/polyclav.toml` (by hand, or in the dashboard's
+   `~/.config/polyclav/config.toml` (by hand, or in the dashboard's
    Config card, which validates before writing) and
    `overmind restart polyclav` — the daemon reads config only at startup.
 
@@ -539,12 +539,12 @@ offer the same cards:
 - **Velocity** — a curve editor (presets, custom gamma, or draggable
   control points on a canvas) with a **live note monitor**: play and
   watch each note appear as an (in, out) dot on the curve. Apply for
-  the session, or Save to write the curve into `polyclav.toml` (see
+  the session, or Save to write the curve into `config.toml` (see
   "Velocity curves" below).
 - **Mastering** — comp amount and limiter ceiling, live.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
   (see "Audition mode" below).
-- **Config** — view and edit `polyclav.toml` in the browser. Saving
+- **Config** — view and edit `config.toml` in the browser. Saving
   validates the whole file first (a config the daemon would refuse to
   boot from is never written) and shows a restart banner on success —
   config edits still apply at the next restart, not live.
@@ -567,10 +567,10 @@ The page is a thin client over a JSON API you can also drive with curl:
 | `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` (each 0..1, all fields optional). |
 | `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
 | `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db`. |
-| `GET /api/config` | Your `polyclav.toml`, verbatim. |
-| `PUT /api/config` | Replace `polyclav.toml` (full TOML text). Validated before write; 422 on a config the daemon would refuse. Restart to apply. |
+| `GET /api/config` | Your `config.toml`, verbatim. |
+| `PUT /api/config` | Replace `config.toml` (full TOML text). Validated before write; 422 on a config the daemon would refuse. Restart to apply. |
 | `GET /api/velocity` | The active velocity curve and whether it came from config or a session edit. |
-| `PUT /api/velocity` | Apply a velocity curve live (`curve`/`gamma` or `points`); `"save": true` also persists it to a managed `[midi.velocity]` block in `polyclav.toml`. |
+| `PUT /api/velocity` | Apply a velocity curve live (`curve`/`gamma` or `points`); `"save": true` also persists it to a managed `[midi.velocity]` block in `config.toml`. |
 | `GET /api/clips` | The audition clip library. |
 | `POST /api/player` | Start a clip: `{"clip": "arp", "loop": true, "tempo": 1.0}`. |
 | `POST /api/player/stop` | Stop playback. |
@@ -693,7 +693,7 @@ the canvas; **Apply** installs the curve for the session immediately
 monitor** plots every note you strike as an (in, out) dot on the curve,
 so you can see exactly where your keybed lands. When it feels right,
 **Save** writes the curve into a clearly-marked, tool-managed
-`[midi.velocity]` block in `polyclav.toml` (a hand-written
+`[midi.velocity]` block in `config.toml` (a hand-written
 `[midi.velocity]` section is never overwritten — saving refuses
 instead). The difference matters on patch changes: an **Apply**-only
 (session) curve is replaced the next time a patch change re-resolves
@@ -842,7 +842,8 @@ Any generic SysEx tool works too (e.g. `amidi -p <port> -s my-mode.syx`).
 
 `[[osc.mixer.bindings]]` entries (legacy spelling: `[[osc.xr18.bindings]]`)
 tell `polyclav` to forward MIDI events from the keyboard out to the XR18
-as OSC messages. Examples:
+as OSC messages. Fresh installs do not include active bindings or a mixer host;
+copy/uncomment examples only for a mixer you explicitly want to control. Examples:
 
 - Move fader 9 on the Launchkey (CC 13 on channel 16) → `/lr/mix/fader`
   on the XR18 → main L/R fader moves.
@@ -856,7 +857,7 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 
 ### Launchkey organ drawbars
 
-Launchkey DAW faders stay mixer-owned by default. For Potato Keys, opt in
+Launchkey DAW faders are not mapped to the mixer unless you configure OSC bindings. For Potato Keys, opt in
 to drawbars 1–9 without copying numeric CLAP IDs. Polyclav resolves the
 nine exact footage labels (16′ through 1′) from the active plugin and checks
 that each has a distinct ID and a 0–8 range:

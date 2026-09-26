@@ -84,13 +84,13 @@ func main() {
 		return
 	}
 
-	configPath := flag.String("config", "", "path to polyclav.toml (default: $XDG_CONFIG_HOME/polyclav/polyclav.toml)")
+	configPath := flag.String("config", "", "path to config.toml (default: $XDG_CONFIG_HOME/polyclav/config.toml)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	playClip := flag.String("play", "", "audition clip id to play at startup (see docs/AUDITION.md; empty = none)")
 	playLoop := flag.Bool("loop", false, "loop the --play clip until shutdown")
 	playTempo := flag.Float64("tempo", 1.0, "tempo multiplier for --play (0.25..2.0; 0 = 1.0)")
-	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in polyclav.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
-	midiAllowFlag := flag.String("midi-allow", "", "comma-separated MIDI device name substrings allowed to send notes, overriding [midi].allow_devices in polyclav.toml for this run (see `polyclav midi list` for names)")
+	webFlag := flag.String("web", "", "enable the web UI, overriding [web] in config.toml: a listen address (e.g. 127.0.0.1:8666 or :8666), or \"on\" for the configured/default address")
+	midiAllowFlag := flag.String("midi-allow", "", "comma-separated MIDI device name substrings allowed to send notes, overriding [midi].allow_devices in config.toml for this run (see `polyclav midi list` for names)")
 	logLevelFlag := flag.String("log-level", "info", "log verbosity: debug, info, warn, or error. debug adds MIDI hotplug port-list-changed lines — cheap enough to leave on")
 	flag.Parse()
 
@@ -114,10 +114,10 @@ func main() {
 			logger.Error("resolve user config dir", "err", err)
 			os.Exit(1)
 		}
-		path = filepath.Join(cfgDir, "polyclav", "polyclav.toml")
+		path = defaultConfigPath(cfgDir)
 	}
 
-	// First-run config write: if no polyclav.toml exists at the
+	// First-run config write: if no config.toml exists at the
 	// resolved path, drop the embedded example there so the user has
 	// a sane starting point (rather than the previous Defaults()
 	// fallback which had zero patches and silently produced an unlit
@@ -316,7 +316,7 @@ func main() {
 		}
 		// If state.toml recorded a previously active patch and it still exists,
 		// switch to it. Falls through silently on no-match — the user's
-		// polyclav.toml ordering wins for unknown names.
+		// config.toml ordering wins for unknown names.
 		if initialState.CurrentPatch != "" {
 			found := false
 			for _, p := range registry.All() {
@@ -985,7 +985,7 @@ func newPatchFollower(last string, current func() *patches.Patch, apply func(*pa
 // applyWebFlag overlays the --web CLI flag onto the loaded config. An
 // empty value leaves the config untouched. "on" (or "true") enables the
 // server on the config's listen address; anything else is taken as the
-// listen address itself. The CLI always wins over [web] in polyclav.toml
+// listen address itself. The CLI always wins over [web] in config.toml
 // so `polyclav --web :8666` works without editing the config.
 func applyWebFlag(cfg *config.Config, val string) {
 	if val == "" {
@@ -1136,7 +1136,7 @@ func suggestAllowEntry(port string) string {
 
 // globalVelocity is a goroutine-safe holder for the daemon's global
 // [midi.velocity] spec. It is seeded from the boot-time config and
-// REPLACED when the web UI saves a velocity curve into polyclav.toml
+// REPLACED when the web UI saves a velocity curve into config.toml
 // (web.Deps.SetGlobalVelocity), so the file on disk and the spec the
 // patch follower re-resolves from can never disagree. atomic.Pointer
 // because Set runs on web request goroutines while Get runs on the hub
@@ -1255,7 +1255,7 @@ func buildVersion() string {
 }
 
 // ensureConfigExists is the first-run config bootstrap: if the user has
-// no polyclav.toml at the resolved path, mkdir -p the parent and drop
+// no config.toml at the resolved path, mkdir -p the parent and drop
 // the embedded polyclav.example.toml there. Never overwrites an
 // existing file — only the absent case is handled. Errors from
 // permission / disk-full bubble up; on success we log an INFO line so

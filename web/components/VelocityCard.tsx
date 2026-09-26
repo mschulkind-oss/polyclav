@@ -435,7 +435,7 @@ export function VelocityCard({ active, onActive, noteSink }: VelocityCardProps) 
         fading dots at (in, out).
       </p>
       <p className="hint">
-        Per-patch velocity overrides in polyclav.toml still win: switching patches re-resolves the
+        Per-patch velocity overrides in config.toml still win: switching patches re-resolves the
         curve from config, replacing session edits.
       </p>
     </>

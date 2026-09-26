@@ -290,7 +290,7 @@
     <div id="vel-error" class="errbox" hidden></div>
     <p class="hint">Points mode: click to add, drag to move, double-click to
       remove. Played notes appear as fading dots at (in, out).</p>
-    <p class="hint">Per-patch velocity overrides in polyclav.toml still win:
+    <p class="hint">Per-patch velocity overrides in config.toml still win:
       switching patches re-resolves the curve from config, replacing session
       edits.</p>
   </section>
@@ -312,11 +312,11 @@
   <section id="config-section" class="wide">
     <h2>Config</h2>
     <details id="config-details">
-      <summary>polyclav.toml &mdash; edit &amp; save (validated before write)</summary>
+      <summary>config.toml &mdash; edit &amp; save (validated before write)</summary>
       <div id="config-banner" class="warn" hidden>Saved. Restart polyclav to
         apply the new config.</div>
       <textarea id="config-text" spellcheck="false"
-        placeholder="loading polyclav.toml&hellip;"></textarea>
+        placeholder="loading config.toml&hellip;"></textarea>
       <div class="btnrow">
         <button type="button" id="config-save">Save</button>
         <button type="button" id="config-reload">Reload</button>
@@ -1009,7 +1009,7 @@ velSetMode("gamma"); // initial draw with the linear preset active
 
 // --- config editor (docs/WEB_UI.md phase C) ----------------------------
 // Loaded lazily on first expand; Save PUTs the full TOML text. The daemon
-// validates against a temp file and atomically replaces polyclav.toml —
+// validates against a temp file and atomically replaces config.toml —
 // hot reload is out of scope, hence the persistent restart banner.
 let configLoaded = false;
 async function loadConfig() {

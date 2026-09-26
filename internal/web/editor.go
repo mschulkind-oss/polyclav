@@ -2,7 +2,7 @@
 // docs/VELOCITY_CURVES.md "Live tweaking"): validated TOML write-back on
 // PUT /api/config, and the live velocity-curve editor behind
 // GET/PUT /api/velocity — including its explicit-save path that writes a
-// clearly-marked managed [midi.velocity] block into polyclav.toml.
+// clearly-marked managed [midi.velocity] block into config.toml.
 package web
 
 import (
@@ -29,7 +29,7 @@ type configValidationError struct{ msg string }
 
 func (e *configValidationError) Error() string { return e.msg }
 
-// handleConfigPut is PUT /api/config: the body is the FULL polyclav.toml
+// handleConfigPut is PUT /api/config: the body is the FULL config.toml
 // text (text/plain). It is validated (config.Load + config.Validate)
 // against a temp file in the config's directory and atomically renamed
 // over the real file only when valid, so the file on disk can never be
@@ -109,7 +109,7 @@ func (s *Server) saveValidatedConfig(data []byte, runValidate bool) error {
 // velocityPutBody is the PUT /api/velocity request. Exactly one curve
 // shape may be present — points, or curve/gamma — mirroring the config
 // file's same-scope mutual-exclusion rule (both is a 400, never a silent
-// pick). save=true additionally persists the curve to polyclav.toml's
+// pick). save=true additionally persists the curve to config.toml's
 // managed [midi.velocity] block.
 type velocityPutBody struct {
 	Curve  *string  `json:"curve"`
@@ -235,7 +235,7 @@ func (s *Server) handleVelocityGet(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleVelocityPut builds the requested curve, optionally persists it
-// to polyclav.toml (save=true — the explicit-save contract from
+// to config.toml (save=true — the explicit-save contract from
 // docs/VELOCITY_CURVES.md: no silent config mutation), and installs it
 // live at the MIDI funnel via the controls layer. Save-then-apply order:
 // a request that fails to save must not leave a half-applied state.
@@ -280,7 +280,7 @@ func (s *Server) handleVelocityPut(w http.ResponseWriter, r *http.Request) {
 			case errors.Is(err, errUnmanagedVelocity) || errors.Is(err, errCorruptMarkers):
 				writeErr(w, http.StatusConflict, err.Error())
 			case errors.As(err, &ve):
-				writeErr(w, http.StatusConflict, "saving would produce an invalid config — edit polyclav.toml by hand: "+ve.msg)
+				writeErr(w, http.StatusConflict, "saving would produce an invalid config — edit config.toml by hand: "+ve.msg)
 			default:
 				writeErr(w, http.StatusInternalServerError, err.Error())
 			}
@@ -305,7 +305,7 @@ func (s *Server) handleVelocityPut(w http.ResponseWriter, r *http.Request) {
 // ---- managed [midi.velocity] block ----------------------------------------
 
 // Marker lines fencing the web-UI-owned [midi.velocity] block in
-// polyclav.toml. Everything between them is regenerated wholesale on
+// config.toml. Everything between them is regenerated wholesale on
 // every save — the BEGIN line says so, so a hand edit inside the fence
 // is a documented loss, while a hand-written section OUTSIDE the fence
 // is never touched (errUnmanagedVelocity).
@@ -315,8 +315,8 @@ const (
 )
 
 var (
-	errUnmanagedVelocity = errors.New("polyclav.toml already has a hand-written [midi.velocity] section — edit the config file by hand instead of saving from the web UI")
-	errCorruptMarkers    = errors.New("the managed [midi.velocity] markers in polyclav.toml are corrupted (one of BEGIN/END is missing) — repair the config file by hand")
+	errUnmanagedVelocity = errors.New("config.toml already has a hand-written [midi.velocity] section — edit the config file by hand instead of saving from the web UI")
+	errCorruptMarkers    = errors.New("the managed [midi.velocity] markers in config.toml are corrupted (one of BEGIN/END is missing) — repair the config file by hand")
 )
 
 // unmanagedVelocityRe matches a [midi.velocity] table header line with

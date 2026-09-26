@@ -17,7 +17,7 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/velocity"
 )
 
-// newConfigFixture is newFixture plus a real polyclav.toml on disk in a
+// newConfigFixture is newFixture plus a real config.toml on disk in a
 // temp dir, wired through both ConfigPath (write path) and ConfigTOML
 // (read path) like main does.
 func newConfigFixture(t *testing.T, content string) (*fixture, string) {
@@ -31,7 +31,7 @@ func newConfigFixture(t *testing.T, content string) (*fixture, string) {
 // mididevices_test.go) don't need to duplicate the temp-file setup.
 func newConfigFixtureWith(t *testing.T, content string, extra func(*Deps)) (*fixture, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "polyclav.toml")
+	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestVelocitySaveNoConfigPath(t *testing.T) {
 // curve), while session-only applies and FAILED saves never touch it.
 func TestVelocitySaveUpdatesGlobalSpec(t *testing.T) {
 	var got []config.VelocityConfig
-	path := filepath.Join(t.TempDir(), "polyclav.toml")
+	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(baseConfig), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestVelocitySaveUpdatesGlobalSpec(t *testing.T) {
 func TestVelocitySaveFailureLeavesGlobalSpecAlone(t *testing.T) {
 	calls := 0
 	handWritten := "[midi.velocity]\ncurve = \"soft\"\n"
-	path := filepath.Join(t.TempDir(), "polyclav.toml")
+	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(handWritten), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}

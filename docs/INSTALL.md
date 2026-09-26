@@ -208,7 +208,7 @@ sine on missing soundfonts.
 Two-step first run:
 
 ```sh
-polyclav                          # writes ~/.config/polyclav/polyclav.toml from
+polyclav                          # writes ~/.config/polyclav/config.toml from
                                   # the embedded default, then refuses to
                                   # start with a list of missing soundfonts
 polyclav bootstrap                # downloads the ~500 MB of free packs
@@ -217,7 +217,7 @@ polyclav                          # now starts cleanly (or: overmind start -D)
 ```
 
 If you want to skip the download (e.g. you'll wire your own soundfonts),
-edit `~/.config/polyclav/polyclav.toml` and trim or replace the `[[patches]]`
+edit `~/.config/polyclav/config.toml` and trim or replace the `[[patches]]`
 entries. The pure-Rust `moog-bass-native` entry validates with zero
 dependencies — a config with only that patch will start without
 bootstrap.

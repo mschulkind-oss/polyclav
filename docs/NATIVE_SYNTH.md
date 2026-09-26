@@ -187,7 +187,7 @@ select (footnote above).
 
 ### 1. Add a native patch to your config
 
-In `~/.config/polyclav/polyclav.toml`, a native patch is a `[[patches]]`
+In `~/.config/polyclav/config.toml`, a native patch is a `[[patches]]`
 entry with `type = "native"` and `engine = "minimoog"` — **no `soundfont`
 path required**:
 

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api, errorMessage } from "@/lib/api";
 
 /**
- * polyclav.toml viewer/editor (docs/WEB_UI.md phase C). Loaded lazily on
+ * config.toml viewer/editor (docs/WEB_UI.md phase C). Loaded lazily on
  * first expand; Save PUTs the full TOML text. The daemon validates
  * against a temp file and atomically replaces the config — hot reload is
  * out of scope, hence the persistent restart banner. Validation failures
@@ -45,13 +45,13 @@ export function ConfigCard() {
         if (e.currentTarget.open && !loaded) load();
       }}
     >
-      <summary>polyclav.toml — edit &amp; save (validated before write)</summary>
+      <summary>config.toml — edit &amp; save (validated before write)</summary>
       {banner ? <div className="warn">Saved. Restart polyclav to apply the new config.</div> : null}
       <textarea
         className="config-text"
         name="config"
         spellCheck={false}
-        placeholder="loading polyclav.toml…"
+        placeholder="loading config.toml…"
         value={text}
         onChange={(e) => setText(e.currentTarget.value)}
       />
