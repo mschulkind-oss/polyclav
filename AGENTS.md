@@ -27,14 +27,6 @@ that maps a MIDI keyboard through soundfont synthesis to a PipeWire sink.
 - The Rust `audio-core` is built first (cgo links its staticlib); never edit
   Go cgo bindings without rebuilding the Rust side.
 
-### Tool routing
-
-For code modifications in this subproject, use `mcp__cerebras-mcp__write` on
-real source files (`.go`, `.rs`, `.h`). For trivial config glue
-(`.gitignore`, `Justfile`, `mise.toml`, `go.mod`, `Cargo.toml`) use the
-normal Write tool — these files are short, exact, and gain nothing from
-generation.
-
 ### Where things live
 
 - **API surface** (audio DSP knobs, patch registry): read `internal/audio`
