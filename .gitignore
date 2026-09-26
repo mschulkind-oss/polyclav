@@ -40,5 +40,6 @@ result-*
 # internal/web/static/app/ instead (see Justfile web-build)
 web/node_modules/
 web/.next/
+web/.next-build/
 web/out/
 web/.pnpm-store/

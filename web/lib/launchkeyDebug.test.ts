@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { controlForMessage, decodeMessage, flattenInventory } from "./launchkeyDebug";
+import {
+  controlForMessage,
+  decodeBackendRaw,
+  decodeMessage,
+  encoderStep,
+  flattenInventory,
+} from "./launchkeyDebug";
 
 describe("Launchkey debug decoding", () => {
   it("distinguishes DAW button CCs from mode and fader messages", () => {
@@ -7,6 +13,7 @@ describe("Launchkey debug decoding", () => {
     expect(controlForMessage(decodeMessage([0xb0, 37, 127], "DAW"))).toBe("fader-button-1");
     expect(controlForMessage(decodeMessage([0xb6, 29, 4], "DAW"))).toBe("pad-layout");
     expect(controlForMessage(decodeMessage([0xbf, 5, 62], "DAW"))).toBe("fader-1");
+    expect(controlForMessage(decodeMessage([0xbf, 45, 127], "DAW"))).toBe("fader-button-9");
     expect(controlForMessage(decodeMessage([0xb0, 103, 127], "MIDI"))).toBeNull();
   });
 
@@ -16,6 +23,49 @@ describe("Launchkey debug decoding", () => {
     expect(pressure.kind).toBe("poly-aftertouch");
     expect(controlForMessage(pressure)).toBe("pad-top-1");
     expect(controlForMessage(decodeMessage([0x93, 60, 0], "MIDI"))).toBe("key-60");
+  });
+
+  it("displays encoder relative values as signed steps around center 64", () => {
+    expect(encoderStep(62)).toBe("-2");
+    expect(encoderStep(63)).toBe("-1");
+    expect(encoderStep(64)).toBe("0");
+    expect(encoderStep(65)).toBe("+1");
+    expect(encoderStep(66)).toBe("+2");
+  });
+
+  it("decodes backend raw SSE payloads with source-specific port identity", () => {
+    const perf = decodeBackendRaw({
+      time: "2026-09-26T18:15:00.000Z",
+      source: "performance",
+      port: "Launchkey MK4 61 MIDI In",
+      kind: "aftertouch",
+      channel: 2,
+      data1: 69,
+      raw: "d245",
+    });
+    expect(perf).toMatchObject({
+      source: "daemon",
+      daemonSource: "performance",
+      port: "MIDI",
+      portName: "Launchkey MK4 61 MIDI In",
+      kind: "aftertouch",
+      channel: 3,
+      number: 69,
+      raw: "d2 45",
+      control: null,
+    });
+
+    const daw = decodeBackendRaw({
+      source: "launchkey-daw",
+      port: "Launchkey MK4 61 DAW In",
+      kind: "poly-aftertouch",
+      channel: 0,
+      data1: 96,
+      data2: 77,
+      raw: "a0604d",
+    });
+    expect(daw?.port).toBe("DAW");
+    expect(daw?.control).toBe("pad-top-1");
   });
 
   it("recognizes pressure from older inventories that recorded it as raw", () => {

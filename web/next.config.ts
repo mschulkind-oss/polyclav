@@ -11,11 +11,12 @@ const shared: NextConfig = {
   reactStrictMode: true,
 };
 
-// Dev runs `next dev` on :3000 while the daemon serves the API on :8666
-// (Procfile.dev / `just web-dev`); the rewrite proxies /api/* across.
-// Rewrites are incompatible with `output: "export"`, so the export mode
-// and the proxy are split by build phase — the exported bundle calls
-// /api/* same-origin and needs no rewrite.
+// Standalone `just web-dev` runs `next dev` on :3000 while the daemon serves
+// the API on :8666; `just dev` runs the same Next dev server under Hivemind,
+// which injects PORT=5100 for the web process. In both cases the rewrite
+// proxies /api/* across. Rewrites are incompatible with `output: "export"`,
+// so export mode and the proxy are split by build phase — the exported bundle
+// calls /api/* same-origin and needs no rewrite.
 const config = (phase: string): NextConfig => {
   if (phase === PHASE_DEVELOPMENT_SERVER) {
     return {
@@ -35,7 +36,12 @@ const config = (phase: string): NextConfig => {
   // artifact) even when the sources didn't change, and making CI's
   // export-freshness gate impossible to satisfy. Asset cache-busting
   // still comes from the content-hashed chunk filenames.
-  return { ...shared, output: "export", generateBuildId: () => "embedded" };
+  return {
+    ...shared,
+    distDir: ".next-build",
+    output: "export",
+    generateBuildId: () => "embedded",
+  };
 };
 
 export default config;

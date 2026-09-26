@@ -123,7 +123,7 @@ bootstrap *args: build
 
 clean:
     cargo clean --manifest-path audio-core/Cargo.toml
-    rm -rf bin .gocache
+    rm -rf bin .gocache web/.next-build
 
 # Drop a default soundfont into soundfonts/ for dev. FreePats is small and
 # public-domain. URL is configurable. Override SOUNDFONT_URL / SOUNDFONT_FILE
