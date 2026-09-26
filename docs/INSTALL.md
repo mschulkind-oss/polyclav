@@ -226,6 +226,14 @@ Logs tee to `/tmp/polyclav.log` when run under overmind. On startup
 failure the error goes to stderr (multi-line, human-readable); routine
 operation goes to stdout as structured slog lines.
 
+polyclav protects the host's MIDI/audio devices with a per-user singleton
+lock. If another daemon is already running, a new daemon waits briefly for a
+restart handoff and then exits with `another polyclav is already running`.
+Stop the existing `just dev`, overmind, or manual process before starting a
+second long-running daemon. Offline commands such as `polyclav doctor`,
+`polyclav midi`, `polyclav render`, `polyclav bootstrap`, and
+`polyclav version` do not take this daemon lock.
+
 ## Where to go next
 
 - `USER_GUIDE.md` — full config schema, every key explained.

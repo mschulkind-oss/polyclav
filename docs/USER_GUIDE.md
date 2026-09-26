@@ -462,6 +462,13 @@ tail -f /tmp/polyclav.log
 
 You can also run the binary directly: `./bin/polyclav`.
 
+Only one daemon instance may run per user. If `just dev`, overmind, or a
+manual `./bin/polyclav` is already holding the MIDI/audio devices, a second
+daemon waits briefly for a graceful restart and then exits with
+`another polyclav is already running`. Stop the existing supervisor
+(`overmind quit`, Ctrl-C in `just dev`, or the terminal running the manual
+binary) before starting another one.
+
 ## Playing
 
 1. Connect your MIDI keyboard and audio interface.

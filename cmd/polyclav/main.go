@@ -107,6 +107,13 @@ func main() {
 	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
 	logger := slog.New(handler)
 
+	lock, err := acquireDefaultDaemonLock(daemonLockWait)
+	if err != nil {
+		logger.Error("acquire daemon singleton", "err", err)
+		os.Exit(1)
+	}
+	defer lock.Close()
+
 	path := *configPath
 	if path == "" {
 		cfgDir, err := os.UserConfigDir()
