@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import LaunchkeyDebugPage from "./page";
@@ -53,6 +54,14 @@ function installMIDI() {
 }
 
 describe("Launchkey debugger", () => {
+  it("overrides the dashboard's multi-column main grid for one full-width instrument", () => {
+    const css = readFileSync("app/launchkey-debug/style.css", "utf8");
+    expect(css).toMatch(/\.lk-debug\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+    expect(css).toMatch(
+      /\.lk-pad-row\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*minmax\(0,\s*1fr\)\)/s,
+    );
+  });
+
   afterEach(() => {
     Reflect.deleteProperty(navigator, "requestMIDIAccess");
     Reflect.deleteProperty(globalThis, "EventSource");

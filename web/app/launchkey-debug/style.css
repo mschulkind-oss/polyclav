@@ -1,5 +1,6 @@
 .lk-debug {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
 }
 .lk-debug .wide {
@@ -139,8 +140,8 @@
 }
 .lk-pad-row {
   display: grid;
-  grid-template-columns: repeat(8, minmax(40px, 1fr));
-  gap: 0.35rem;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 0.25rem;
 }
 .lk-transport,
 .lk-daw-commands {
@@ -218,6 +219,8 @@
 }
 .lk-control.pad {
   min-height: 50px;
+  min-width: 0;
+  padding: 0.2rem;
   border-radius: 9px;
 }
 .lk-control.wheel {
