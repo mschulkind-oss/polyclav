@@ -135,7 +135,14 @@ class PromptListTest(unittest.TestCase):
     def test_follow_up_walks_shift_modes_and_restores_daw(self):
         prompts = list(inv.iter_controls("follow-up"))
         joined = "\n".join(item["control"] for item in prompts)
-        self.assertLess(len(prompts), 40)
+        self.assertGreaterEqual(len(prompts), 38)
+        self.assertLess(len(prompts), 70)
+        for number in range(1, 10):
+            self.assertIn(f"Shift + fader button {number} ", joined)
+        for mode in ("DAW", "Drum", "DAW Drum", "User Chord", "Arp Pattern", "Chord Map", "Custom 1", "Custom 2", "Custom 3", "Custom 4"):
+            self.assertIn(f"select {mode};", joined)
+        for mode in ("Plugin", "Mixer", "Sends", "Transport", "Custom 1", "Custom 2", "Custom 3", "Custom 4"):
+            self.assertIn(f"encoder menu: select {mode};", joined)
         for expected in ("Shift + fader button", "Shift + pad", "DAW", "Drum", "User Chord", "Arp Pattern", "Custom 4", "aftertouch", "Scale", "Chord Map", "Arp", "Fixed Chord", "Latch"):
             self.assertIn(expected, joined)
         self.assertEqual(prompts[-1]["control"], "Return pads to DAW layout via Shift menu; press top-row pad 1 and release")

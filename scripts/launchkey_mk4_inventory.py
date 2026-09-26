@@ -281,16 +281,16 @@ CONTROL_GROUPS: list[tuple[str, list[str]]] = [
 # physical buttons. Longer windows allow a selection followed by a pad/key.
 FOLLOW_UP_GROUPS: list[tuple[str, list[str]]] = [
     ("Shift and layout menus", [
-        "Shift + fader button 1 (Volume): hold Shift, tap button, release Shift; move fader 1",
-        "Shift + fader button 2 (Custom 1): hold Shift, tap button, release Shift; move fader 1",
-        "Shift + fader button 5 (Custom 4): hold Shift, tap button, release Shift; move fader 1",
-        "Shift + fader button 1 (Volume): restore Volume fader layout",
-        "Shift + encoder layout selection: select Plugin, rotate encoder 1; then select another available encoder mode and rotate encoder 1",
-        "Shift + encoder layout selection: restore Plugin mode",
+        *[f"Shift + fader button {i} (printed shifted label): hold Shift, tap button, release Shift; move fader 1 if layout changes"
+          for i in range(1, 10)],
+        "Restore Volume fader layout using Shift menu; move fader 1",
+        *[f"Shift + encoder menu: select {mode}; release Shift and rotate encoder 1 (skip unavailable modes)"
+          for mode in ("Plugin", "Mixer", "Sends", "Transport", "Custom 1", "Custom 2", "Custom 3", "Custom 4")],
+        "Restore Plugin encoder layout using Shift menu; rotate encoder 1",
     ]),
     ("Pad modes: enter using Shift menu and press one pad", [
         *[f"Shift + pad menu: select {mode}; release Shift, press top-row pad 1, hold for aftertouch, release"
-          for mode in ("DAW", "Drum", "User Chord", "Arp Pattern", "Custom 1", "Custom 2", "Custom 3", "Custom 4")],
+          for mode in ("DAW", "Drum", "DAW Drum", "User Chord", "Arp Pattern", "Chord Map", "Custom 1", "Custom 2", "Custom 3", "Custom 4")],
         "Shift + pad menu: restore DAW layout before pressure capture",
         "Pad aftertouch: in DAW layout press top-row pad 3 lightly, increase pressure, then release",
     ]),
