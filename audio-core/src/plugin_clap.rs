@@ -33,7 +33,7 @@ use clack_host::prelude::{
     PluginAudioConfiguration, PluginEntry, PluginInstance, StartedPluginAudioProcessor,
 };
 
-use crate::MidiEvent;
+use crate::{record_clap_input_event_drop, record_plugin_render_error, MidiEvent};
 use clap_sys::ext::note_ports::{
     clap_note_port_info, clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP,
     CLAP_NOTE_DIALECT_MIDI,
@@ -45,77 +45,92 @@ enum ClapNoteDialect {
     Midi,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ClapNoteInput {
+    dialect: ClapNoteDialect,
+    port_index: u16,
+    port_id: u32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(test, derive(Eq))]
 enum EncodedClapEvent {
-    RawMidi([u8; 3]),
+    RawMidi {
+        port_index: u16,
+        bytes: [u8; 3],
+    },
     TypedNoteOn {
+        port_index: u16,
         channel: u8,
         note: u8,
         velocity: u8,
         note_id: i32,
     },
     TypedNoteOff {
+        port_index: u16,
         channel: u8,
         note: u8,
         note_id: i32,
     },
 }
 
-fn typed_pckn(channel: u8, note: u8) -> Pckn {
-    Pckn::new(0u16, channel as u16, note as u16, Match::All)
+fn typed_pckn(port_index: u16, channel: u8, note: u8) -> Pckn {
+    Pckn::new(port_index, channel as u16, note as u16, Match::All)
 }
 
-fn encode_midi_event(event: &MidiEvent, dialect: ClapNoteDialect) -> Vec<EncodedClapEvent> {
+fn encode_midi_event(event: &MidiEvent, note_input: ClapNoteInput) -> Vec<EncodedClapEvent> {
+    let dialect = note_input.dialect;
     match *event {
         MidiEvent::NoteOn {
             channel,
             note,
             velocity: 0,
-        } => encode_midi_event(&MidiEvent::NoteOff { channel, note }, dialect),
+        } => encode_midi_event(&MidiEvent::NoteOff { channel, note }, note_input),
         MidiEvent::NoteOn {
             channel,
             note,
             velocity,
         } => match dialect {
             ClapNoteDialect::Clap => vec![EncodedClapEvent::TypedNoteOn {
+                port_index: note_input.port_index,
                 channel,
                 note,
                 velocity,
-                note_id: typed_pckn(channel, note).raw_note_id(),
+                note_id: typed_pckn(note_input.port_index, channel, note).raw_note_id(),
             }],
-            ClapNoteDialect::Midi => vec![EncodedClapEvent::RawMidi([
-                0x90 | (channel & 0x0F),
-                note & 0x7F,
-                velocity & 0x7F,
-            ])],
+            ClapNoteDialect::Midi => vec![EncodedClapEvent::RawMidi {
+                port_index: note_input.port_index,
+                bytes: [0x90 | (channel & 0x0F), note & 0x7F, velocity & 0x7F],
+            }],
         },
         MidiEvent::NoteOff { channel, note } => match dialect {
             ClapNoteDialect::Clap => vec![EncodedClapEvent::TypedNoteOff {
+                port_index: note_input.port_index,
                 channel,
                 note,
-                note_id: typed_pckn(channel, note).raw_note_id(),
+                note_id: typed_pckn(note_input.port_index, channel, note).raw_note_id(),
             }],
-            ClapNoteDialect::Midi => vec![EncodedClapEvent::RawMidi([
-                0x80 | (channel & 0x0F),
-                note & 0x7F,
-                0,
-            ])],
+            ClapNoteDialect::Midi => vec![EncodedClapEvent::RawMidi {
+                port_index: note_input.port_index,
+                bytes: [0x80 | (channel & 0x0F), note & 0x7F, 0],
+            }],
         },
         MidiEvent::ControlChange {
             channel,
             controller,
             value,
-        } => vec![EncodedClapEvent::RawMidi([
-            0xB0 | (channel & 0x0F),
-            controller & 0x7F,
-            value & 0x7F,
-        ])],
-        MidiEvent::PitchBend { channel, bend } => vec![EncodedClapEvent::RawMidi([
-            0xE0 | (channel & 0x0F),
-            (bend & 0x7F) as u8,
-            ((bend >> 7) & 0x7F) as u8,
-        ])],
+        } => vec![EncodedClapEvent::RawMidi {
+            port_index: note_input.port_index,
+            bytes: [0xB0 | (channel & 0x0F), controller & 0x7F, value & 0x7F],
+        }],
+        MidiEvent::PitchBend { channel, bend } => vec![EncodedClapEvent::RawMidi {
+            port_index: note_input.port_index,
+            bytes: [
+                0xE0 | (channel & 0x0F),
+                (bend & 0x7F) as u8,
+                ((bend >> 7) & 0x7F) as u8,
+            ],
+        }],
     }
 }
 
@@ -129,7 +144,7 @@ fn choose_note_dialect(supported: u32) -> Option<ClapNoteDialect> {
     }
 }
 
-fn query_note_dialect(instance: &PluginInstance<()>) -> Result<ClapNoteDialect, String> {
+fn query_note_input(instance: &PluginInstance<()>) -> Result<ClapNoteInput, String> {
     let handle = instance.plugin_shared_handle();
     let raw = handle.as_raw();
     let Some(get_extension) = raw.get_extension else {
@@ -152,7 +167,7 @@ fn query_note_dialect(instance: &PluginInstance<()>) -> Result<ClapNoteDialect, 
         .ok_or_else(|| "CLAP note-ports extension missing get".to_string())?;
     let n = unsafe { count(handle.as_raw_ptr(), true) };
 
-    let mut saw_midi = false;
+    let mut saw_midi: Option<ClapNoteInput> = None;
     for index in 0..n {
         let mut info = clap_note_port_info {
             id: 0,
@@ -162,17 +177,27 @@ fn query_note_dialect(instance: &PluginInstance<()>) -> Result<ClapNoteDialect, 
         };
         if unsafe { get(handle.as_raw_ptr(), index, true, &mut info) } {
             match choose_note_dialect(info.supported_dialects) {
-                Some(ClapNoteDialect::Clap) => return Ok(ClapNoteDialect::Clap),
-                Some(ClapNoteDialect::Midi) => saw_midi = true,
-                None => {}
+                Some(ClapNoteDialect::Clap) => {
+                    return Ok(ClapNoteInput {
+                        dialect: ClapNoteDialect::Clap,
+                        port_index: index as u16,
+                        port_id: info.id,
+                    });
+                }
+                Some(ClapNoteDialect::Midi) if saw_midi.is_none() => {
+                    saw_midi = Some(ClapNoteInput {
+                        dialect: ClapNoteDialect::Midi,
+                        port_index: index as u16,
+                        port_id: info.id,
+                    });
+                }
+                Some(ClapNoteDialect::Midi) | None => {}
             }
         }
     }
-    if saw_midi {
-        Ok(ClapNoteDialect::Midi)
-    } else {
-        Err("CLAP plugin has no input note port supporting CLAP notes or raw MIDI".to_string())
-    }
+    saw_midi.ok_or_else(|| {
+        "CLAP plugin has no input note port supporting CLAP notes or raw MIDI".to_string()
+    })
 }
 
 /// Cached `HostInfo`. CLAP plugins expect a stable host identity; rebuild
@@ -205,11 +230,10 @@ pub struct ClapInstance {
     input_ports: AudioPorts,
     /// Reusable event input buffer; cleared and refilled each callback.
     input_events: EventBuffer,
-    /// Sink for events the plugin produces (note offs after sustain
-    /// release, MPE expressions, etc). We drop them on the floor in
-    /// Phase 1.
-    output_events: EventBuffer,
-    note_dialect: ClapNoteDialect,
+    /// Selected CLAP note input dialect and port.
+    note_input: ClapNoteInput,
+    input_event_count: u32,
+    input_event_limit: u32,
 }
 
 // SAFETY: `StartedPluginAudioProcessor` is already `Send`. `AudioPorts`
@@ -268,7 +292,7 @@ impl ClapInstance {
                 .map_err(|e| format!("CLAP instantiate {plugin_id}: {e:?}"))?;
 
         // 4. Choose the input note event dialect before activation.
-        let note_dialect = query_note_dialect(&instance)?;
+        let note_input = query_note_input(&instance)?;
 
         // 5. Activate with our audio configuration.
         let audio_cfg = PluginAudioConfiguration {
@@ -301,19 +325,26 @@ impl ClapInstance {
             out_r: Vec::with_capacity(max_block),
             input_ports: AudioPorts::with_capacity(0, 0),
             input_events: EventBuffer::with_capacity(64),
-            output_events: EventBuffer::with_capacity(64),
-            note_dialect,
+            note_input,
+            input_event_count: 0,
+            input_event_limit: 64,
         })
     }
 
     /// Push a MIDI event onto the next-block input buffer.
     pub fn push_midi(&mut self, event: &MidiEvent) {
-        for encoded in encode_midi_event(event, self.note_dialect) {
+        for encoded in encode_midi_event(event, self.note_input) {
+            if self.input_event_count >= self.input_event_limit {
+                record_clap_input_event_drop();
+                continue;
+            }
             match encoded {
-                EncodedClapEvent::RawMidi(bytes) => {
-                    self.input_events.push(&ClapMidiEvent::new(0, 0, bytes));
+                EncodedClapEvent::RawMidi { port_index, bytes } => {
+                    self.input_events
+                        .push(&ClapMidiEvent::new(0, port_index, bytes));
                 }
                 EncodedClapEvent::TypedNoteOn {
+                    port_index,
                     channel,
                     note,
                     velocity,
@@ -321,15 +352,24 @@ impl ClapInstance {
                 } => {
                     self.input_events.push(&NoteOnEvent::new(
                         0,
-                        typed_pckn(channel, note),
+                        typed_pckn(port_index, channel, note),
                         f64::from(velocity) / 127.0,
                     ));
                 }
-                EncodedClapEvent::TypedNoteOff { channel, note, .. } => {
-                    self.input_events
-                        .push(&NoteOffEvent::new(0, typed_pckn(channel, note), 0.0));
+                EncodedClapEvent::TypedNoteOff {
+                    port_index,
+                    channel,
+                    note,
+                    ..
+                } => {
+                    self.input_events.push(&NoteOffEvent::new(
+                        0,
+                        typed_pckn(port_index, channel, note),
+                        0.0,
+                    ));
                 }
             }
+            self.input_event_count += 1;
         }
     }
 
@@ -356,8 +396,10 @@ impl ClapInstance {
             .with_input_buffers::<_, _, [_; 0], [_; 0]>([]);
 
         let in_events = InputEvents::from_buffer(&self.input_events);
-        self.output_events.clear();
-        let mut out_events = OutputEvents::from_buffer(&mut self.output_events);
+        // Phase 1 intentionally does not collect plugin output events. A void
+        // output event list prevents plugin-emitted events from growing a
+        // Vec-backed host buffer on the audio thread.
+        let mut out_events = OutputEvents::void();
 
         let result = self.processor.process(
             &input_audio,
@@ -370,9 +412,10 @@ impl ClapInstance {
 
         // Clear MIDI input for the next block regardless of outcome.
         self.input_events.clear();
+        self.input_event_count = 0;
 
-        if let Err(e) = result {
-            eprintln!("audio-core: clap process failed: {e:?}");
+        if result.is_err() {
+            record_plugin_render_error();
             for s in samples.iter_mut() {
                 *s = 0.0;
             }
@@ -391,19 +434,32 @@ impl ClapInstance {
 mod tests {
     use super::*;
 
+    fn note_input(dialect: ClapNoteDialect) -> ClapNoteInput {
+        ClapNoteInput {
+            dialect,
+            port_index: 0,
+            port_id: 0,
+        }
+    }
+
     #[test]
-    fn clap_dialect_note_on_emits_one_typed_event_with_wildcard_note_id() {
+    fn clap_dialect_note_on_emits_one_typed_event_with_selected_port() {
         let events = encode_midi_event(
             &MidiEvent::NoteOn {
                 channel: 2,
                 note: 64,
                 velocity: 100,
             },
-            ClapNoteDialect::Clap,
+            ClapNoteInput {
+                dialect: ClapNoteDialect::Clap,
+                port_index: 3,
+                port_id: 99,
+            },
         );
         assert_eq!(
             events,
             vec![EncodedClapEvent::TypedNoteOn {
+                port_index: 3,
                 channel: 2,
                 note: 64,
                 velocity: 100,
@@ -413,16 +469,26 @@ mod tests {
     }
 
     #[test]
-    fn midi_dialect_note_on_emits_one_raw_midi_event() {
+    fn midi_dialect_note_on_emits_one_raw_midi_event_with_selected_port_index() {
         let events = encode_midi_event(
             &MidiEvent::NoteOn {
                 channel: 2,
                 note: 64,
                 velocity: 100,
             },
-            ClapNoteDialect::Midi,
+            ClapNoteInput {
+                dialect: ClapNoteDialect::Midi,
+                port_index: 4,
+                port_id: 42,
+            },
         );
-        assert_eq!(events, vec![EncodedClapEvent::RawMidi([0x92, 64, 100])]);
+        assert_eq!(
+            events,
+            vec![EncodedClapEvent::RawMidi {
+                port_index: 4,
+                bytes: [0x92, 64, 100]
+            }]
+        );
     }
 
     #[test]
@@ -433,9 +499,10 @@ mod tests {
                     channel: 1,
                     note: 60
                 },
-                ClapNoteDialect::Clap
+                note_input(ClapNoteDialect::Clap)
             ),
             vec![EncodedClapEvent::TypedNoteOff {
+                port_index: 0,
                 channel: 1,
                 note: 60,
                 note_id: -1
@@ -447,9 +514,12 @@ mod tests {
                     channel: 1,
                     note: 60
                 },
-                ClapNoteDialect::Midi
+                note_input(ClapNoteDialect::Midi)
             ),
-            vec![EncodedClapEvent::RawMidi([0x81, 60, 0])]
+            vec![EncodedClapEvent::RawMidi {
+                port_index: 0,
+                bytes: [0x81, 60, 0]
+            }]
         );
     }
 
@@ -462,9 +532,10 @@ mod tests {
                     note: 60,
                     velocity: 0
                 },
-                ClapNoteDialect::Clap
+                note_input(ClapNoteDialect::Clap)
             ),
             vec![EncodedClapEvent::TypedNoteOff {
+                port_index: 0,
                 channel: 1,
                 note: 60,
                 note_id: -1
@@ -477,9 +548,12 @@ mod tests {
                     note: 60,
                     velocity: 0
                 },
-                ClapNoteDialect::Midi
+                note_input(ClapNoteDialect::Midi)
             ),
-            vec![EncodedClapEvent::RawMidi([0x81, 60, 0])]
+            vec![EncodedClapEvent::RawMidi {
+                port_index: 0,
+                bytes: [0x81, 60, 0]
+            }]
         );
     }
 

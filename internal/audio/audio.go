@@ -313,34 +313,42 @@ func SetLatencyFrames(frames int) {
 // callback pressure, MIDI queue drops, and backend reload churn; they are not
 // server-reported xrun counts.
 type Metrics struct {
-	Callbacks               uint64
-	MIDIDrops               uint64
-	ReloadQueueFull         uint64
-	ReloadCoalesced         uint64
-	StaleBackends           uint64
-	BackendSwaps            uint64
-	NullBuffers             uint64
-	CallbackOverMaxQuantum  uint64
-	BackendDisposalOverflow uint64
-	LastFrames              uint32
-	MaxFrames               uint32
+	Callbacks                    uint64
+	MIDIDrops                    uint64
+	ReloadQueueFull              uint64
+	ReloadCoalesced              uint64
+	StaleBackends                uint64
+	BackendSwaps                 uint64
+	NullBuffers                  uint64
+	CallbackOverMaxQuantum       uint64
+	RequestedOverMaxQuantum      uint64
+	BufferCapacityOverMaxQuantum uint64
+	BackendDisposalOverflow      uint64
+	PluginRenderErrors           uint64
+	ClapInputEventDrops          uint64
+	LastFrames                   uint32
+	MaxFrames                    uint32
 }
 
 func GetMetrics() Metrics {
 	var cm C.PolyclavAudioMetrics
 	C.polyclav_audio_get_metrics(&cm)
 	return Metrics{
-		Callbacks:               uint64(cm.callbacks),
-		MIDIDrops:               uint64(cm.midi_drops),
-		ReloadQueueFull:         uint64(cm.reload_queue_full),
-		ReloadCoalesced:         uint64(cm.reload_coalesced),
-		StaleBackends:           uint64(cm.stale_backends),
-		BackendSwaps:            uint64(cm.backend_swaps),
-		NullBuffers:             uint64(cm.null_buffers),
-		CallbackOverMaxQuantum:  uint64(cm.callback_over_max_quantum),
-		BackendDisposalOverflow: uint64(cm.backend_disposal_overflow),
-		LastFrames:              uint32(cm.last_frames),
-		MaxFrames:               uint32(cm.max_frames),
+		Callbacks:                    uint64(cm.callbacks),
+		MIDIDrops:                    uint64(cm.midi_drops),
+		ReloadQueueFull:              uint64(cm.reload_queue_full),
+		ReloadCoalesced:              uint64(cm.reload_coalesced),
+		StaleBackends:                uint64(cm.stale_backends),
+		BackendSwaps:                 uint64(cm.backend_swaps),
+		NullBuffers:                  uint64(cm.null_buffers),
+		CallbackOverMaxQuantum:       uint64(cm.callback_over_max_quantum),
+		RequestedOverMaxQuantum:      uint64(cm.requested_over_max_quantum),
+		BufferCapacityOverMaxQuantum: uint64(cm.buffer_capacity_over_max_quantum),
+		BackendDisposalOverflow:      uint64(cm.backend_disposal_overflow),
+		PluginRenderErrors:           uint64(cm.plugin_render_errors),
+		ClapInputEventDrops:          uint64(cm.clap_input_event_drops),
+		LastFrames:                   uint32(cm.last_frames),
+		MaxFrames:                    uint32(cm.max_frames),
 	}
 }
 

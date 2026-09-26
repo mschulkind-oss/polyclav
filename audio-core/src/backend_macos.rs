@@ -132,11 +132,11 @@ pub(crate) fn run_audio(
         .build_output_stream::<f32, _, _>(
             config, // by value — StreamConfig is Copy in cpal 0.18.
             // Data callback: interleaved stereo f32, samples.len() == frames*2.
-            // Same three steps as process_audio: swap pending backend, drain
-            // MIDI, render one block.
+            // Same three steps as process_audio: drain MIDI into the current
+            // backend, swap pending backend, render one block.
             move |samples: &mut [f32], _info: &OutputCallbackInfo| {
-                swap_pending_backend(&mut user_data);
                 drain_midi(&mut user_data);
+                swap_pending_backend(&mut user_data);
                 render_block(&mut user_data, samples);
 
                 record_audio_callback(samples.len() / CHANNELS as usize);

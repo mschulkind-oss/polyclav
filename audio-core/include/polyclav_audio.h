@@ -37,7 +37,11 @@ typedef struct {
     uint64_t backend_swaps;
     uint64_t null_buffers;
     uint64_t callback_over_max_quantum;
+    uint64_t requested_over_max_quantum;
+    uint64_t buffer_capacity_over_max_quantum;
     uint64_t backend_disposal_overflow;
+    uint64_t plugin_render_errors;
+    uint64_t clap_input_event_drops;
     uint32_t last_frames;
     uint32_t max_frames;
 } PolyclavAudioMetrics;

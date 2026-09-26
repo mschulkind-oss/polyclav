@@ -64,7 +64,7 @@ const MIN_QUANTUM: u32 = 16;
 /// Default audio buffer size (frames) when none is configured — ~2.7 ms at
 /// 48 kHz, the historical polyclav quantum.
 const DEFAULT_QUANTUM: u32 = 128;
-const BACKEND_DISPOSAL_QUEUE_CAPACITY: usize = 32;
+const BACKEND_DISPOSAL_QUEUE_CAPACITY: usize = 256;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -76,8 +76,13 @@ pub struct PolyclavAudioMetrics {
     pub stale_backends: u64,
     pub backend_swaps: u64,
     pub null_buffers: u64,
+    /// Backward-compatible sum of requested and buffer-capacity over-limit callbacks.
     pub callback_over_max_quantum: u64,
+    pub requested_over_max_quantum: u64,
+    pub buffer_capacity_over_max_quantum: u64,
     pub backend_disposal_overflow: u64,
+    pub plugin_render_errors: u64,
+    pub clap_input_event_drops: u64,
     pub last_frames: u32,
     pub max_frames: u32,
 }
@@ -92,7 +97,11 @@ struct AudioMetricsAtomics {
     backend_swaps: AtomicU64,
     null_buffers: AtomicU64,
     callback_over_max_quantum: AtomicU64,
+    requested_over_max_quantum: AtomicU64,
+    buffer_capacity_over_max_quantum: AtomicU64,
     backend_disposal_overflow: AtomicU64,
+    plugin_render_errors: AtomicU64,
+    clap_input_event_drops: AtomicU64,
     last_frames: AtomicU32,
     max_frames: AtomicU32,
 }
@@ -121,7 +130,46 @@ pub(crate) fn record_audio_callback(frames: usize) {
         metrics
             .callback_over_max_quantum
             .fetch_add(1, Ordering::Relaxed);
+        metrics
+            .requested_over_max_quantum
+            .fetch_add(1, Ordering::Relaxed);
     }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn record_plugin_render_error() {
+    audio_metrics()
+        .plugin_render_errors
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn record_clap_input_event_drop() {
+    audio_metrics()
+        .clap_input_event_drops
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(target_os = "linux")]
+fn record_requested_over_max_quantum() {
+    let metrics = audio_metrics();
+    metrics
+        .callback_over_max_quantum
+        .fetch_add(1, Ordering::Relaxed);
+    metrics
+        .requested_over_max_quantum
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(target_os = "linux")]
+fn record_buffer_capacity_over_max_quantum() {
+    let metrics = audio_metrics();
+    metrics
+        .callback_over_max_quantum
+        .fetch_add(1, Ordering::Relaxed);
+    metrics
+        .buffer_capacity_over_max_quantum
+        .fetch_add(1, Ordering::Relaxed);
 }
 
 pub(crate) enum SynthBackend {
@@ -236,26 +284,27 @@ enum MidiEvent {
 }
 
 struct HeldNotes {
-    held: [[bool; 128]; 16],
+    held: [[u8; 128]; 16],
 }
 
 impl Default for HeldNotes {
     fn default() -> Self {
         Self {
-            held: [[false; 128]; 16],
+            held: [[0; 128]; 16],
         }
     }
 }
 
 impl HeldNotes {
-    fn observe(&mut self, event: &MidiEvent) {
+    fn observe_delivered(&mut self, event: &MidiEvent) {
         match *event {
             MidiEvent::NoteOn {
                 channel,
                 note,
                 velocity,
             } if velocity > 0 => {
-                self.held[(channel & 0x0F) as usize][(note & 0x7F) as usize] = true;
+                let slot = &mut self.held[(channel & 0x0F) as usize][(note & 0x7F) as usize];
+                *slot = slot.saturating_add(1);
             }
             MidiEvent::NoteOn {
                 channel,
@@ -263,22 +312,29 @@ impl HeldNotes {
                 velocity: 0,
             }
             | MidiEvent::NoteOff { channel, note } => {
-                self.held[(channel & 0x0F) as usize][(note & 0x7F) as usize] = false;
+                let slot = &mut self.held[(channel & 0x0F) as usize][(note & 0x7F) as usize];
+                *slot = slot.saturating_sub(1);
             }
             _ => {}
         }
     }
 
-    fn panic_events(&mut self) -> Vec<MidiEvent> {
-        let mut events = Vec::new();
+    fn panic_event_count(&self) -> usize {
+        self.held
+            .iter()
+            .map(|channel| channel.iter().map(|&count| count as usize).sum::<usize>())
+            .sum()
+    }
+
+    fn panic_events(&self) -> Vec<MidiEvent> {
+        let mut events = Vec::with_capacity(self.panic_event_count());
         for channel in 0..16 {
             for note in 0..128 {
-                if self.held[channel][note] {
+                for _ in 0..self.held[channel][note] {
                     events.push(MidiEvent::NoteOff {
                         channel: channel as u8,
                         note: note as u8,
                     });
-                    self.held[channel][note] = false;
                 }
             }
         }
@@ -306,6 +362,8 @@ fn soundfont_path_cell() -> &'static Mutex<Option<PathBuf>> {
 /// discards loads whose captured generation is older than the latest, so rapid
 /// pad-spam can't cause the audio to swap to a stale soundfont.
 static SOUNDFONT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LOADER_EPOCH: AtomicU64 = AtomicU64::new(0);
+static LOADERS_ACCEPTED: AtomicBool = AtomicBool::new(false);
 
 /// Requested audio buffer size in frames — polyclav's own latency knob,
 /// read once when the audio thread starts. `0` is normalized to
@@ -399,6 +457,21 @@ fn drain_backend_disposal_queue() {
     while let Some(backend) = backend_disposal_queue().pop() {
         dispose_backend_off_rt(backend);
     }
+}
+
+fn enqueue_preloaded_backend_if_current(
+    queue: &ArrayQueue<(u64, SynthBackend)>,
+    generation: u64,
+    loader_epoch: u64,
+    backend: SynthBackend,
+) -> bool {
+    if !LOADERS_ACCEPTED.load(Ordering::Acquire)
+        || LOADER_EPOCH.load(Ordering::Acquire) != loader_epoch
+    {
+        dispose_backend_off_rt(backend);
+        return false;
+    }
+    enqueue_preloaded_backend(queue, generation, backend)
 }
 
 fn drain_synth_reload_queue_off_rt() {
@@ -1093,7 +1166,12 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
         eprintln!("audio-core: start (already running)");
         return 0;
     }
+    let _ = audio_metrics();
+    let _ = synth_reload_queue();
+    let _ = backend_disposal_queue();
     drain_synth_reload_queue_off_rt();
+    LOADERS_ACCEPTED.store(true, Ordering::Release);
+    LOADER_EPOCH.fetch_add(1, Ordering::AcqRel);
 
     let quit_flag = Arc::new(AtomicBool::new(false));
     let quit_for_thread = Arc::clone(&quit_flag);
@@ -1139,6 +1217,8 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
             0
         }
         Ok(Err(_)) | Err(_) => {
+            LOADERS_ACCEPTED.store(false, Ordering::Release);
+            LOADER_EPOCH.fetch_add(1, Ordering::AcqRel);
             quit_flag.store(true, Ordering::SeqCst);
             let _ = handle.join();
             let _ = disposal_thread.join();
@@ -1152,6 +1232,8 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
 pub extern "C" fn polyclav_audio_stop() {
     let mut state_guard = state_cell().lock().unwrap();
     if let Some(state) = state_guard.take() {
+        LOADERS_ACCEPTED.store(false, Ordering::Release);
+        LOADER_EPOCH.fetch_add(1, Ordering::AcqRel);
         state.quit_flag.store(true, Ordering::SeqCst);
         let _ = state.thread.join();
         drain_synth_reload_queue_off_rt();
@@ -1216,7 +1298,13 @@ pub unsafe extern "C" fn polyclav_audio_get_metrics(out: *mut PolyclavAudioMetri
             backend_swaps: m.backend_swaps.load(Ordering::Relaxed),
             null_buffers: m.null_buffers.load(Ordering::Relaxed),
             callback_over_max_quantum: m.callback_over_max_quantum.load(Ordering::Relaxed),
+            requested_over_max_quantum: m.requested_over_max_quantum.load(Ordering::Relaxed),
+            buffer_capacity_over_max_quantum: m
+                .buffer_capacity_over_max_quantum
+                .load(Ordering::Relaxed),
             backend_disposal_overflow: m.backend_disposal_overflow.load(Ordering::Relaxed),
+            plugin_render_errors: m.plugin_render_errors.load(Ordering::Relaxed),
+            clap_input_event_drops: m.clap_input_event_drops.load(Ordering::Relaxed),
             last_frames: m.last_frames.load(Ordering::Relaxed),
             max_frames: m.max_frames.load(Ordering::Relaxed),
         };
@@ -1234,7 +1322,12 @@ pub extern "C" fn polyclav_audio_reset_metrics() {
     m.backend_swaps.store(0, Ordering::Relaxed);
     m.null_buffers.store(0, Ordering::Relaxed);
     m.callback_over_max_quantum.store(0, Ordering::Relaxed);
+    m.requested_over_max_quantum.store(0, Ordering::Relaxed);
+    m.buffer_capacity_over_max_quantum
+        .store(0, Ordering::Relaxed);
     m.backend_disposal_overflow.store(0, Ordering::Relaxed);
+    m.plugin_render_errors.store(0, Ordering::Relaxed);
+    m.clap_input_event_drops.store(0, Ordering::Relaxed);
     m.last_frames.store(0, Ordering::Relaxed);
     m.max_frames.store(0, Ordering::Relaxed);
 }
@@ -1262,6 +1355,7 @@ pub extern "C" fn polyclav_audio_reload_soundfont() -> i32 {
     }
     let queue = Arc::clone(synth_reload_queue());
     let generation = SOUNDFONT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let loader_epoch = LOADER_EPOCH.load(Ordering::Acquire);
     thread::Builder::new()
         .name("polyclav-sf-reload".into())
         .spawn(move || {
@@ -1269,7 +1363,7 @@ pub extern "C" fn polyclav_audio_reload_soundfont() -> i32 {
             match SynthBackend::load(&path) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if enqueue_preloaded_backend(&queue, generation, backend) {
+                    if enqueue_preloaded_backend_if_current(&queue, generation, loader_epoch, backend) {
                         eprintln!("audio-core: reload queued backend={name}");
                     } else {
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name}");
@@ -1311,6 +1405,7 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
     }
     let queue = Arc::clone(synth_reload_queue());
     let generation = SOUNDFONT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let loader_epoch = LOADER_EPOCH.load(Ordering::Acquire);
     thread::Builder::new()
         .name("polyclav-lv2-load".into())
         .spawn(move || {
@@ -1318,7 +1413,7 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
             match SynthBackend::load_lv2(&uri) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if enqueue_preloaded_backend(&queue, generation, backend) {
+                    if enqueue_preloaded_backend_if_current(&queue, generation, loader_epoch, backend) {
                         eprintln!("audio-core: reload queued backend={name} gen={generation}");
                     } else {
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
@@ -1363,6 +1458,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     }
     let queue = Arc::clone(synth_reload_queue());
     let generation = SOUNDFONT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let loader_epoch = LOADER_EPOCH.load(Ordering::Acquire);
     thread::Builder::new()
         .name("polyclav-clap-load".into())
         .spawn(move || {
@@ -1373,7 +1469,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
             match SynthBackend::load_clap(&bundle_path, &plugin_id) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if enqueue_preloaded_backend(&queue, generation, backend) {
+                    if enqueue_preloaded_backend_if_current(&queue, generation, loader_epoch, backend) {
                         eprintln!("audio-core: reload queued backend={name} gen={generation}");
                     } else {
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
@@ -1461,6 +1557,7 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
     }
     let queue = Arc::clone(synth_reload_queue());
     let generation = SOUNDFONT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let loader_epoch = LOADER_EPOCH.load(Ordering::Acquire);
     thread::Builder::new()
         .name("polyclav-native-load".into())
         .spawn(move || {
@@ -1468,7 +1565,7 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
             match SynthBackend::load_native(&engine) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if enqueue_preloaded_backend(&queue, generation, backend) {
+                    if enqueue_preloaded_backend_if_current(&queue, generation, loader_epoch, backend) {
                         eprintln!("audio-core: reload queued backend={name} gen={generation}");
                     } else {
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
@@ -1494,9 +1591,11 @@ fn normalize_midi_event(event: MidiEvent) -> MidiEvent {
 
 fn push_midi_event(queue: &ArrayQueue<MidiEvent>, event: MidiEvent) -> bool {
     let event = normalize_midi_event(event);
-    held_notes().lock().unwrap().observe(&event);
     match queue.push(event) {
-        Ok(()) => true,
+        Ok(()) => {
+            held_notes().lock().unwrap().observe_delivered(&event);
+            true
+        }
         Err(_) => {
             audio_metrics().midi_drops.fetch_add(1, Ordering::Relaxed);
             false
@@ -1523,11 +1622,11 @@ pub extern "C" fn polyclav_midi_note_off(channel: u8, note: u8, _velocity: u8) {
 
 #[no_mangle]
 pub extern "C" fn polyclav_midi_panic() {
-    let events = held_notes().lock().unwrap().panic_events();
     let queue = midi_queue();
-    for event in events {
+    let mut held = held_notes().lock().unwrap();
+    for event in held.panic_events() {
         match queue.push(event) {
-            Ok(()) => {}
+            Ok(()) => held.observe_delivered(&event),
             Err(_) => {
                 audio_metrics().midi_drops.fetch_add(1, Ordering::Relaxed);
             }
@@ -2827,11 +2926,12 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
 
 #[cfg(target_os = "linux")]
 fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
-    // 1. Hot-swap soundfont if a freshly loaded backend is pending.
-    swap_pending_backend(user_data);
-
-    // 2. Drain MIDI events into the current synth.
+    // 1. Drain MIDI first so panic note-offs queued before a patch switch
+    // reach the currently active backend before it is disposed.
     drain_midi(user_data);
+
+    // 2. Hot-swap soundfont if a freshly loaded backend is pending.
+    swap_pending_backend(user_data);
 
     let raw = unsafe { stream.dequeue_raw_buffer() };
     if raw.is_null() {
@@ -2851,10 +2951,11 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
     let max_frames = (data.maxsize as usize) / stride;
     let requested = pw_buf.requested as usize;
     let n_frames = clamp_callback_frames(requested, max_frames);
-    if requested > MAX_QUANTUM || max_frames > MAX_QUANTUM {
-        audio_metrics()
-            .callback_over_max_quantum
-            .fetch_add(1, Ordering::Relaxed);
+    if requested > MAX_QUANTUM {
+        record_requested_over_max_quantum();
+    }
+    if max_frames > MAX_QUANTUM {
+        record_buffer_capacity_over_max_quantum();
     }
 
     if !data.data.is_null() && n_frames > 0 {
@@ -2889,6 +2990,10 @@ fn clamp_callback_frames(requested: usize, max_frames: usize) -> usize {
 mod tests {
     use super::*;
 
+    fn reset_test_held_notes() {
+        *held_notes().lock().unwrap() = HeldNotes::default();
+    }
+
     /// `polyclav_audio_set_latency_frames` clamps to [MIN_QUANTUM,
     /// MAX_QUANTUM] and maps 0 to the default quantum. This is the config
     /// "buffer size / latency" knob; the value flows into PipeWire's
@@ -2921,6 +3026,19 @@ mod tests {
     }
 
     #[test]
+    fn max_quantum_metrics_are_split_by_cause() {
+        polyclav_audio_reset_metrics();
+        record_requested_over_max_quantum();
+        record_buffer_capacity_over_max_quantum();
+
+        let mut metrics = PolyclavAudioMetrics::default();
+        unsafe { polyclav_audio_get_metrics(&mut metrics) };
+        assert_eq!(metrics.callback_over_max_quantum, 2);
+        assert_eq!(metrics.requested_over_max_quantum, 1);
+        assert_eq!(metrics.buffer_capacity_over_max_quantum, 1);
+    }
+
+    #[test]
     fn metrics_ffi_is_null_safe_and_resettable() {
         polyclav_audio_reset_metrics();
         unsafe { polyclav_audio_get_metrics(std::ptr::null_mut()) };
@@ -2938,6 +3056,7 @@ mod tests {
 
     #[test]
     fn full_midi_queue_increments_drop_metric() {
+        reset_test_held_notes();
         polyclav_audio_reset_metrics();
         let queue = ArrayQueue::new(1);
         assert!(push_midi_event(
@@ -2958,60 +3077,141 @@ mod tests {
         let mut metrics = PolyclavAudioMetrics::default();
         unsafe { polyclav_audio_get_metrics(&mut metrics) };
         assert_eq!(metrics.midi_drops, 1);
+        reset_test_held_notes();
+    }
+
+    #[test]
+    fn dropped_note_off_does_not_clear_held_state() {
+        reset_test_held_notes();
+        polyclav_audio_reset_metrics();
+        let queue = ArrayQueue::new(1);
+        assert!(push_midi_event(
+            &queue,
+            MidiEvent::NoteOn {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+        ));
+        assert!(!push_midi_event(
+            &queue,
+            MidiEvent::NoteOff {
+                channel: 0,
+                note: 60,
+            },
+        ));
+        // The note-off never reached the audio queue, so held-note recovery
+        // must still consider the note active.
+        let panic_events = held_notes().lock().unwrap().panic_events();
+        assert!(panic_events.contains(&MidiEvent::NoteOff {
+            channel: 0,
+            note: 60,
+        }));
+        while queue.pop().is_some() {}
+        for event in panic_events {
+            held_notes().lock().unwrap().observe_delivered(&event);
+        }
+        reset_test_held_notes();
+    }
+
+    #[test]
+    fn repeated_same_key_strokes_panic_emit_paired_releases() {
+        let mut held = HeldNotes::default();
+        held.observe_delivered(&MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        held.observe_delivered(&MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        held.observe_delivered(&MidiEvent::NoteOff {
+            channel: 0,
+            note: 60,
+        });
+        assert_eq!(
+            held.panic_events(),
+            vec![MidiEvent::NoteOff {
+                channel: 0,
+                note: 60,
+            }]
+        );
     }
 
     #[test]
     fn held_notes_track_releases_and_panic_only_emits_held_notes() {
         let mut held = HeldNotes::default();
-        held.observe(&MidiEvent::NoteOn {
+        held.observe_delivered(&MidiEvent::NoteOn {
             channel: 0,
             note: 60,
             velocity: 100,
         });
-        held.observe(&MidiEvent::NoteOn {
+        held.observe_delivered(&MidiEvent::NoteOn {
             channel: 0,
             note: 60,
             velocity: 110,
         });
-        held.observe(&MidiEvent::NoteOn {
+        held.observe_delivered(&MidiEvent::NoteOn {
             channel: 1,
             note: 64,
             velocity: 90,
         });
-        held.observe(&MidiEvent::NoteOff {
+        held.observe_delivered(&MidiEvent::NoteOff {
             channel: 0,
             note: 60,
         });
-        held.observe(&MidiEvent::NoteOff {
+        held.observe_delivered(&MidiEvent::NoteOff {
             channel: 0,
             note: 60,
         });
 
+        let panic_events = held.panic_events();
         assert_eq!(
-            held.panic_events(),
+            panic_events,
             vec![MidiEvent::NoteOff {
                 channel: 1,
                 note: 64
             }]
         );
+        for event in &panic_events {
+            held.observe_delivered(event);
+        }
         assert!(held.panic_events().is_empty());
     }
 
     #[test]
     fn held_notes_treat_velocity_zero_note_on_as_release() {
         let mut held = HeldNotes::default();
-        held.observe(&MidiEvent::NoteOn {
+        held.observe_delivered(&MidiEvent::NoteOn {
             channel: 2,
             note: 72,
             velocity: 100,
         });
-        held.observe(&normalize_midi_event(MidiEvent::NoteOn {
+        held.observe_delivered(&normalize_midi_event(MidiEvent::NoteOn {
             channel: 2,
             note: 72,
             velocity: 0,
         }));
 
         assert!(held.panic_events().is_empty());
+    }
+
+    #[test]
+    fn stale_loader_epoch_drops_backend_without_enqueuing() {
+        let queue = ArrayQueue::new(1);
+        LOADERS_ACCEPTED.store(true, Ordering::Release);
+        LOADER_EPOCH.store(10, Ordering::Release);
+        assert!(!enqueue_preloaded_backend_if_current(
+            &queue,
+            1,
+            9,
+            SynthBackend::load_native("minimoog").unwrap(),
+        ));
+        assert!(queue.is_empty());
+        LOADERS_ACCEPTED.store(false, Ordering::Release);
+        LOADER_EPOCH.store(0, Ordering::Release);
     }
 
     #[test]

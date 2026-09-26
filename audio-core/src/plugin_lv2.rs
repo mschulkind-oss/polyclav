@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use livi::event::LV2AtomSequence;
 use livi::{EmptyPortConnections, Features, FeaturesBuilder, World};
 
-use crate::MidiEvent;
+use crate::{record_plugin_render_error, MidiEvent};
 
 /// Atom-sequence event buffer size in bytes. The same constant the livi
 /// JACK example uses; comfortably larger than anything one audio callback
@@ -138,10 +138,11 @@ impl LvInstance {
         // are per-block, not cumulative.
         self.midi_in.clear();
 
-        if let Err(e) = result {
+        if result.is_err() {
             // Don't kill the audio thread on a single bad block; just zero
-            // output and log sparsely. Bad plugins are a real possibility.
-            eprintln!("audio-core: lv2 plugin.run failed: {e:?}");
+            // output and report through RT-safe metrics. Bad plugins are a
+            // real possibility, but stderr is not safe from the callback.
+            record_plugin_render_error();
             for s in samples.iter_mut() {
                 *s = 0.0;
             }
