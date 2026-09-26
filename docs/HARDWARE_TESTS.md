@@ -12,7 +12,9 @@ it any time after a rebuild or before a release.
 - On page 1 (MAIN): knobs 1/2/3 drive volume / reverb / compressor on
   every patch; knob 4 drives cutoff *only* on `type = "native"` patches
   (no-op on others).
-- Top-row pads switch patches.
+- Top-row pads switch patches in the current bank of eight. With more than
+  eight configured patches, Track ←/→ changes banks; check slots 9–16 and
+  that empty slots in a partial bank are dark and inert.
 - `overmind quit` returns the Launchkey to non-DAW (Custom/factory) mode.
 
 ## Knob pages (pending hardware verification)
@@ -35,7 +37,35 @@ unit-tested against driver fakes, but has never met the device. Verify:
   lines; e.g. "Osc1 Detune" / "+7 c").
 - Transport Play toggles the audition player's last-used clip (run with
   `--play <clip>` first); shows PLAY/STOP, or "(no clip)" if nothing
-  has played yet. Stop/Record/Loop/Rewind/FF/Track/Shift do nothing.
+  has played yet. Stop/Record/Loop/Rewind/FF/Shift do nothing. Track
+  ←/→ changes patch banks when more than eight patches are configured.
+
+## Launchkey 61 MK4 control inventory to verify
+
+The Launchkey has two USB MIDI ports: the performance port sends played
+notes and wheels, while the DAW port sends surface-control messages. The Novation Launchkey MK4 Programmer’s Reference Guide describes their
+MIDI protocol; a local hardware reverse-engineering reference is also
+available on this host at `~/projects/hw_hacking/docs/hardware_interfaces.md`.
+This inventory is
+what Polyclav currently decodes, not a claim that every physical button has
+been observed on this particular unit:
+
+| Physical controls | Polyclav use now | What to check |
+|---|---|---|
+| 61 keys, pitch and mod wheels, sustain input | Performance MIDI to synth/plugin | Verify which port carries each CC; organ expression expects CC11, not ordinary CC64 sustain. |
+| 16 pads (two rows of eight) | Top row selects eight patch slots per bank; bottom row indicates knob pages | Check pad notes 96–103 / 112–119 on the DAW port. |
+| 8 endless encoders | Five synth/chain pages | Check relative CC85–92 on channel 16. |
+| 9 faders | Mixer by default; opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
+| 9 fader buttons | Decoded, no application action yet | Check CC37–45 on channel 16. |
+| Scene ↑/↓ and Track ←/→ | Knob-page navigation and patch-bank navigation, respectively | Check which printed arrow pair produces each event; button note numbers 104–105 and 102–103. |
+| Play, Stop, Record, Loop, Rewind, Fast-forward, Shift | Play toggles audition; the rest are decoded but unused | Check button note numbers 115, 116, 117, 118, 113, 114, 106 respectively. |
+| Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Capture messages before assigning host actions; some alter device behavior rather than emit a distinct DAW button. |
+
+On the host, `python3 ~/projects/hw_hacking/monitor_midi.py` can display
+messages from both Launchkey ports while pressing one control at a time.
+The script's auto-detected ALSA port numbers should be checked against
+`aconnect -l` if messages are missing. Report the printed label, port,
+channel, message type and number for each control Polyclav does not use.
 
 ## How to report back
 
