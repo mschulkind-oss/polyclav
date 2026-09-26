@@ -120,6 +120,18 @@ pub struct PolyclavClapFeedbackEvent {
     pub kind: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PolyclavBackendEvent {
+    pub generation: u64,
+    // 1 = swapped active, 2 = asynchronous load failed, 3 = stale load discarded.
+    pub kind: u32,
+}
+
+const BACKEND_EVENT_ACTIVE: u32 = 1;
+const BACKEND_EVENT_FAILED: u32 = 2;
+const BACKEND_EVENT_STALE: u32 = 3;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClapParamWrite {
     pub clap_id: u32,
@@ -134,6 +146,19 @@ pub(crate) fn clap_param_queue() -> &'static Arc<ArrayQueue<ClapParamWrite>> {
 static CLAP_FEEDBACK_QUEUE: OnceLock<Arc<ArrayQueue<PolyclavClapFeedbackEvent>>> = OnceLock::new();
 pub(crate) fn clap_feedback_queue() -> &'static Arc<ArrayQueue<PolyclavClapFeedbackEvent>> {
     CLAP_FEEDBACK_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(1024)))
+}
+
+static BACKEND_EVENT_QUEUE: OnceLock<Arc<ArrayQueue<PolyclavBackendEvent>>> = OnceLock::new();
+fn backend_event_queue() -> &'static Arc<ArrayQueue<PolyclavBackendEvent>> {
+    BACKEND_EVENT_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(128)))
+}
+
+fn push_backend_event(generation: u64, kind: u32) {
+    let q = backend_event_queue();
+    if q.push(PolyclavBackendEvent { generation, kind }).is_err() {
+        let _ = q.pop();
+        let _ = q.push(PolyclavBackendEvent { generation, kind });
+    }
 }
 
 fn copy_str_to_c_array<const N: usize>(dst: &mut [c_char; N], src: &str) {
@@ -1484,6 +1509,7 @@ pub extern "C" fn polyclav_audio_reload_soundfont() -> i32 {
                 }
                 Err(e) => {
                     eprintln!("audio-core: reload load failed: {e}");
+                    push_backend_event(generation, BACKEND_EVENT_FAILED);
                 }
             }
         })
@@ -1536,7 +1562,10 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
                     }
                 }
-                Err(e) => eprintln!("audio-core: LV2 load failed: {e}"),
+                Err(e) => {
+                    eprintln!("audio-core: LV2 load failed: {e}");
+                    push_backend_event(generation, BACKEND_EVENT_FAILED);
+                }
             }
         })
         .expect("spawn lv2 load thread");
@@ -1616,7 +1645,10 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
                     }
                 }
-                Err(e) => eprintln!("audio-core: CLAP load failed: {e}"),
+                Err(e) => {
+                    eprintln!("audio-core: CLAP load failed: {e}");
+                    push_backend_event(generation, BACKEND_EVENT_FAILED);
+                }
             }
         })
         .expect("spawn clap load thread");
@@ -1696,6 +1728,26 @@ pub unsafe extern "C" fn polyclav_audio_clap_poll_feedback(
         }
     }
     1
+}
+
+/// # Safety
+/// out must be NULL or point to writable storage for one event.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_poll_backend_event(out: *mut PolyclavBackendEvent) -> i32 {
+    let Some(ev) = backend_event_queue().pop() else {
+        return 0;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = ev;
+        }
+    }
+    1
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_audio_backend_generation() -> u64 {
+    SOUNDFONT_GENERATION.load(Ordering::SeqCst)
 }
 
 /// # Safety
@@ -1879,7 +1931,10 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
                         eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
                     }
                 }
-                Err(e) => eprintln!("audio-core: native load failed: {e}"),
+                Err(e) => {
+                    eprintln!("audio-core: native load failed: {e}");
+                    push_backend_event(generation, BACKEND_EVENT_FAILED);
+                }
             }
         })
         .expect("spawn native load thread");
@@ -2962,6 +3017,7 @@ pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
             audio_metrics()
                 .stale_backends
                 .fetch_add(1, Ordering::Relaxed);
+            push_backend_event(gen, BACKEND_EVENT_STALE);
             enqueue_backend_disposal(backend);
         }
     }
@@ -2974,6 +3030,7 @@ pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
         audio_metrics()
             .backend_swaps
             .fetch_add(1, Ordering::Relaxed);
+        push_backend_event(_gen, BACKEND_EVENT_ACTIVE);
     }
 }
 

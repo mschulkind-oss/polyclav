@@ -573,6 +573,53 @@ func TestDispatchTransport(t *testing.T) {
 	}
 }
 
+func TestPatchBankPadSelection(t *testing.T) {
+	cases := []struct {
+		name      string
+		bank, col int
+		total     int
+		want      int
+		wantOK    bool
+	}{
+		{name: "first bank first pad", bank: 0, col: 0, total: 16, want: 0, wantOK: true},
+		{name: "first bank eighth pad", bank: 0, col: 7, total: 16, want: 7, wantOK: true},
+		{name: "second bank first pad selects nine", bank: 1, col: 0, total: 16, want: 8, wantOK: true},
+		{name: "second bank eighth pad selects sixteen", bank: 1, col: 7, total: 16, want: 15, wantOK: true},
+		{name: "partial bank out of range inert", bank: 1, col: 4, total: 12, wantOK: false},
+		{name: "negative bank inert", bank: -1, col: 0, total: 16, wantOK: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := patchIndexForBankPad(tc.bank, tc.col, tc.total)
+			if ok != tc.wantOK || got != tc.want {
+				t.Fatalf("patchIndexForBankPad(%d,%d,%d) = (%d,%v), want (%d,%v)", tc.bank, tc.col, tc.total, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestPatchBankTrackTransportBoundaries(t *testing.T) {
+	if _, ok := patchBankAfterTransport(0, 8, driver.TransportTrackRight); ok {
+		t.Fatal("single bank must not consume Track Right")
+	}
+	if got, ok := patchBankAfterTransport(0, 16, driver.TransportTrackRight); !ok || got != 1 {
+		t.Fatalf("Track Right from first bank = (%d,%v), want (1,true)", got, ok)
+	}
+	if got, ok := patchBankAfterTransport(1, 16, driver.TransportTrackRight); ok || got != 1 {
+		t.Fatalf("Track Right at upper boundary = (%d,%v), want (1,false)", got, ok)
+	}
+	if got, ok := patchBankAfterTransport(1, 16, driver.TransportTrackLeft); !ok || got != 0 {
+		t.Fatalf("Track Left from second bank = (%d,%v), want (0,true)", got, ok)
+	}
+	if got, ok := patchBankAfterTransport(0, 16, driver.TransportTrackLeft); ok || got != 0 {
+		t.Fatalf("Track Left at lower boundary = (%d,%v), want (0,false)", got, ok)
+	}
+	start, end := patchBankRangeLabel(1, 12)
+	if start != 9 || end != 12 {
+		t.Fatalf("range label = %d-%d, want 9-12", start, end)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

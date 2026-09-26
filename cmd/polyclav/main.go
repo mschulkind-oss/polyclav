@@ -370,14 +370,18 @@ func main() {
 	var mapper *osc.Mapper
 	var pg *pages.Pages
 
+	patchBank := 0
 	pushPadColors := func() {
 		lk := sup.Launchkey()
-		for i, p := range registry.All() {
-			if i >= 8 {
-				break
+		all := registry.All()
+		start := patchBank * 8
+		for col := 0; col < 8; col++ {
+			color := components.Color(0)
+			if idx := start + col; idx >= 0 && idx < len(all) {
+				color = all[idx].PadColor
 			}
-			if err := lk.SetPadColor(0, i, p.PadColor); err != nil {
-				logger.Warn("launchkey set pad color", "col", i, "err", err)
+			if err := lk.SetPadColor(0, col, color); err != nil {
+				logger.Warn("launchkey set pad color", "col", col, "err", err)
 			}
 		}
 		// The device forgets pad LEDs across power cycles: repaint the
@@ -430,6 +434,14 @@ func main() {
 			// controls layer only and writes the label+value popup through
 			// the screen adapter below, which arms the 800 ms restore.
 			pg.HandleKnob(e.Index, e.Delta)
+		case driver.FaderEvent:
+			// Faders remain OSC/mixer-owned by default. Per-CLAP-patch organ drawbar
+			// capture is intentionally not wired until the selected patch declares it
+			// and parameter identity is known; this avoids changing room volume and
+			// organ drawbars from the same physical movement.
+		case driver.FaderButtonEvent:
+			// Fader buttons are decoded, but expression/rotary/percussion routing is
+			// deliberately left inert until their physical MIDI behavior is verified.
 		case driver.TransportEvent:
 			// ROADMAP §2.5 transport table — status as shipped:
 			//
@@ -456,23 +468,37 @@ func main() {
 			if !e.Pressed {
 				return
 			}
+			if next, ok := patchBankAfterTransport(patchBank, len(registry.All()), e.Button); ok {
+				patchBank = next
+				pushPadColors()
+				start, end := patchBankRangeLabel(patchBank, len(registry.All()))
+				if err := sup.Launchkey().SetDisplayText("PATCH BANK", fmt.Sprintf("%d-%d", start, end)); err != nil {
+					logger.Warn("launchkey patch bank display", "err", err)
+				}
+				armScreenRestore()
+				return
+			}
 			dispatchTransport(pg, e.Button)
 		case driver.PadEvent:
 			logger.Info("pad event", "row", e.Row, "col", e.Col, "pressed", e.Pressed, "vel", e.Velocity)
 			if e.Row != 0 || !e.Pressed {
 				return
 			}
+			patchIndex, ok := patchIndexForBankPad(patchBank, e.Col, len(registry.All()))
+			if !ok {
+				return
+			}
 			// SelectPatchIndex restores the patch's saved knob values,
 			// records it as current, and publishes the change.
-			if err := ctl.SelectPatchIndex(e.Col); err != nil {
-				logger.Warn("patch select", "col", e.Col, "err", err)
+			if err := ctl.SelectPatchIndex(patchIndex); err != nil {
+				logger.Warn("patch select", "col", e.Col, "index", patchIndex, "err", err)
 				return
 			}
 			// The hub patch follower (below) owns the Launchkey screen
 			// repaint for EVERY patch-select surface — pads included — so
 			// the display is updated exactly once per change.
 			if cur := registry.Current(); cur != nil {
-				logger.Info("patch selected", "col", e.Col, "name", cur.Name, "soundfont", cur.Soundfont, "gain_db", cur.GainDB)
+				logger.Info("patch selected", "col", e.Col, "index", patchIndex, "name", cur.Name, "soundfont", cur.Soundfont, "gain_db", cur.GainDB)
 			}
 		}
 	}
@@ -592,7 +618,14 @@ func main() {
 		if cur == nil {
 			return true
 		}
-		if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
+		line2 := ""
+		switch st := registry.Status(); {
+		case st.Index >= 0 && st.Index < len(registry.All()) && st.State == patches.LoadStateLoading:
+			line2 = "Loading"
+		case st.State == patches.LoadStateFailed:
+			line2 = "Load failed"
+		}
+		if err := sup.Launchkey().SetDisplayText(cur.Display, line2); err != nil {
 			logger.Warn("launchkey set display text", "err", err)
 		}
 		return true
@@ -614,6 +647,37 @@ func main() {
 			followVelocity()
 			followDisplay()
 			followPages()
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for {
+					ev, ok := audio.PollBackendEvent()
+					if !ok {
+						break
+					}
+					switch ev.Kind {
+					case audio.BackendEventActive:
+						if registry.MarkActive(ev.Generation) {
+							hub.Publish(controls.Change{Type: "patch"})
+						}
+					case audio.BackendEventFailed:
+						if registry.MarkFailed(ev.Generation, "audio-core loader failed") {
+							logger.Warn("patch load failed", "generation", ev.Generation)
+							hub.Publish(controls.Change{Type: "patch"})
+						}
+					case audio.BackendEventStale:
+						logger.Debug("stale patch load discarded", "generation", ev.Generation)
+					}
+				}
+			}
 		}
 	}()
 
@@ -770,12 +834,56 @@ func (t playerToggle) Toggle() (playing bool, clip string, ok bool) {
 // machine — split from onDAWEvent so the §2.5 mapping is unit-testable.
 // Unlisted buttons are intentionally unbound; see the status table at
 // the TransportEvent case in onDAWEvent.
+func patchIndexForBankPad(bank, col, total int) (int, bool) {
+	if bank < 0 || col < 0 || col >= 8 {
+		return 0, false
+	}
+	idx := bank*8 + col
+	if idx < 0 || idx >= total {
+		return 0, false
+	}
+	return idx, true
+}
+
+func patchBankAfterTransport(bank, total int, b driver.TransportButton) (int, bool) {
+	if total <= 8 {
+		return bank, false
+	}
+	maxBank := (total - 1) / 8
+	switch b {
+	case driver.TransportTrackLeft:
+		if bank <= 0 {
+			return bank, false
+		}
+		return bank - 1, true
+	case driver.TransportTrackRight:
+		if bank >= maxBank {
+			return bank, false
+		}
+		return bank + 1, true
+	default:
+		return bank, false
+	}
+}
+
+func patchBankRangeLabel(bank, total int) (int, int) {
+	start := bank*8 + 1
+	end := start + 7
+	if total > 0 && end > total {
+		end = total
+	}
+	return start, end
+}
+
 func dispatchTransport(pg *pages.Pages, b driver.TransportButton) {
 	switch b {
 	case driver.TransportSceneUp:
 		pg.PrevPage()
 	case driver.TransportSceneDown:
 		pg.NextPage()
+	case driver.TransportTrackLeft, driver.TransportTrackRight:
+		// Track buttons are handled by the patch-bank layer when multiple
+		// banks exist. They stay inert here so Scene remains knob-page navigation.
 	case driver.TransportPlay:
 		pg.TogglePlay()
 	}

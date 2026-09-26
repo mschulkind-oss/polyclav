@@ -93,11 +93,19 @@ typedef struct {
     uint32_t kind;
 } PolyclavClapFeedbackEvent;
 
+typedef struct {
+    uint64_t generation;
+    /* 1 = swapped active, 2 = asynchronous load failed, 3 = stale load discarded. */
+    uint32_t kind;
+} PolyclavBackendEvent;
+
 int32_t polyclav_audio_clap_discover_params(const char *bundle_path, const char *plugin_id,
                                             PolyclavClapParamInfoC *out, uintptr_t capacity,
                                             uintptr_t *out_count);
 int32_t polyclav_audio_clap_set_param(uint32_t clap_id, double value);
 int32_t polyclav_audio_clap_poll_feedback(PolyclavClapFeedbackEvent *out);
+int32_t polyclav_audio_poll_backend_event(PolyclavBackendEvent *out);
+uint64_t polyclav_audio_backend_generation(void);
 int32_t polyclav_audio_clap_save_state(uint8_t *out, uintptr_t capacity, uintptr_t *out_len);
 
 /* Load and switch to a native pure-Rust synth patch. `engine` selects

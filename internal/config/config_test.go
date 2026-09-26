@@ -278,6 +278,51 @@ velocity_gamma = 0.7
 	}
 }
 
+func TestLoadLaunchkeyOrganBindingIsExplicitPerClapPatch(t *testing.T) {
+	cfg := mustLoadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/Potato Keys.clap"
+plugin_id = "com.littlepotato.keys"
+
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+drawbar_param_ids = [
+  "drawbar16", "drawbar5_1_3", "drawbar8",
+  "drawbar4", "drawbar2_2_3", "drawbar2",
+  "drawbar1_3_5", "drawbar1_1_3", "drawbar1",
+]
+
+[[patches]]
+name = "piano"
+soundfont = "/tmp/piano.sf2"
+`)
+	organ := cfg.Patches[0].LaunchkeyOrgan
+	if !organ.Enabled || organ.Ownership != "organ" || len(organ.DrawbarParamIDs) != 9 {
+		t.Fatalf("organ binding = %+v", organ)
+	}
+	if got := cfg.Patches[1].LaunchkeyOrgan.Ownership; got != "mixer" {
+		t.Fatalf("default ownership = %q, want mixer", got)
+	}
+}
+
+func TestLoadRejectsInvalidLaunchkeyOrganBinding(t *testing.T) {
+	_, err := loadTOML(t, `
+[[patches]]
+name = "piano"
+soundfont = "/tmp/piano.sf2"
+
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+`)
+	if err == nil || !strings.Contains(err.Error(), "enabled requires type=clap") {
+		t.Fatalf("err = %v, want type=clap validation", err)
+	}
+}
+
 func TestLoadVelocityDecodesPoints(t *testing.T) {
 	cfg := mustLoadTOML(t, `
 [midi.velocity]

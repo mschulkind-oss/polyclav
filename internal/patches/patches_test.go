@@ -33,6 +33,7 @@ type fakeAudio struct {
 	nativeEngine      string
 	nativeCalls       int
 	nativeErr         error
+	generation        uint64
 }
 
 func (f *fakeAudio) Panic() {
@@ -86,6 +87,72 @@ func (f *fakeAudio) SetNativePatch(engine string) error {
 	f.calls = append(f.calls, "native")
 	f.nativeEngine = engine
 	return f.nativeErr
+}
+
+func (f *fakeAudio) BackendGeneration() uint64 {
+	if f.generation == 0 {
+		f.generation = 1
+	}
+	return f.generation
+}
+
+func TestRegistryReadinessKeepsActivePatchOnAsyncFailure(t *testing.T) {
+	dir := t.TempDir()
+	a := makePatch(t, dir, "a", 10)
+	b := makePatch(t, dir, "b", 11)
+	fa := &fakeAudio{generation: 1}
+	r := newWithBackend([]Patch{a, b}, fa)
+	if err := r.SelectIndex(0); err != nil {
+		t.Fatalf("select a: %v", err)
+	}
+	if !r.MarkActive(1) {
+		t.Fatal("MarkActive(1) = false")
+	}
+	fa.generation = 2
+	if err := r.SelectIndex(1); err != nil {
+		t.Fatalf("select b: %v", err)
+	}
+	if active := r.Active(); active == nil || active.Name != "a" {
+		t.Fatalf("active during load = %#v, want a", active)
+	}
+	if st := r.Status(); st.State != LoadStateLoading || st.Index != 1 || st.Generation != 2 {
+		t.Fatalf("status during load = %#v", st)
+	}
+	if !r.MarkFailed(2, "loader failed") {
+		t.Fatal("MarkFailed(2) = false")
+	}
+	if cur := r.Current(); cur == nil || cur.Name != "a" {
+		t.Fatalf("current after failure = %#v, want a", cur)
+	}
+	if active := r.Active(); active == nil || active.Name != "a" {
+		t.Fatalf("active after failure = %#v, want a", active)
+	}
+	if st := r.Status(); st.State != LoadStateFailed || !strings.Contains(st.Err, "loader failed") {
+		t.Fatalf("status after failure = %#v", st)
+	}
+}
+
+func TestRegistryReadinessIgnoresStaleGenerations(t *testing.T) {
+	dir := t.TempDir()
+	a := makePatch(t, dir, "a", 10)
+	b := makePatch(t, dir, "b", 11)
+	fa := &fakeAudio{generation: 7}
+	r := newWithBackend([]Patch{a, b}, fa)
+	if err := r.SelectIndex(0); err != nil {
+		t.Fatalf("select a: %v", err)
+	}
+	if r.MarkActive(6) {
+		t.Fatal("stale MarkActive returned true")
+	}
+	if active := r.Active(); active != nil {
+		t.Fatalf("active after stale mark = %#v, want nil", active)
+	}
+	if !r.MarkActive(7) {
+		t.Fatal("MarkActive(7) = false")
+	}
+	if active := r.Active(); active == nil || active.Name != "a" {
+		t.Fatalf("active after current mark = %#v, want a", active)
+	}
 }
 
 func makePatch(t *testing.T, dir, name string, color components.Color) Patch {

@@ -25,6 +25,8 @@ package audio
 // int32_t polyclav_audio_clap_discover_params(const char *bundle_path, const char *plugin_id, PolyclavClapParamInfoC *out, uintptr_t capacity, uintptr_t *out_count);
 // int32_t polyclav_audio_clap_set_param(uint32_t clap_id, double value);
 // int32_t polyclav_audio_clap_poll_feedback(PolyclavClapFeedbackEvent *out);
+// int32_t polyclav_audio_poll_backend_event(PolyclavBackendEvent *out);
+// uint64_t polyclav_audio_backend_generation(void);
 // int32_t polyclav_audio_clap_save_state(uint8_t *out, uintptr_t capacity, uintptr_t *out_len);
 // void polyclav_midi_panic(void);
 // // Native synth backend (Phase 1; see docs/ROADMAP.md).
@@ -70,6 +72,21 @@ type ClapFeedbackEvent struct {
 	ClapID uint32
 	Value  float64
 	Kind   uint32
+}
+
+// BackendEventKind classifies asynchronous backend load events.
+type BackendEventKind uint32
+
+const (
+	BackendEventActive BackendEventKind = 1
+	BackendEventFailed BackendEventKind = 2
+	BackendEventStale  BackendEventKind = 3
+)
+
+// BackendEvent reports asynchronous backend load completion from audio-core.
+type BackendEvent struct {
+	Generation uint64
+	Kind       BackendEventKind
 }
 
 func Start() error {
@@ -517,6 +534,18 @@ func PollClapFeedback() (ClapFeedbackEvent, bool) {
 		return ClapFeedbackEvent{}, false
 	}
 	return ClapFeedbackEvent{ClapID: uint32(ev.clap_id), Value: float64(ev.value), Kind: uint32(ev.kind)}, true
+}
+
+func PollBackendEvent() (BackendEvent, bool) {
+	var ev C.PolyclavBackendEvent
+	if C.polyclav_audio_poll_backend_event(&ev) == 0 {
+		return BackendEvent{}, false
+	}
+	return BackendEvent{Generation: uint64(ev.generation), Kind: BackendEventKind(ev.kind)}, true
+}
+
+func BackendGeneration() uint64 {
+	return uint64(C.polyclav_audio_backend_generation())
 }
 
 // SaveClapState asks the active CLAP plugin for its binary state blob. It

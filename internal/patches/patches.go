@@ -47,6 +47,34 @@ type Patch struct {
 	// Non-empty wins over VelocityCurve/VelocityGamma in the daemon's
 	// precedence order; nil = no point override.
 	VelocityPoints [][]int
+	LaunchkeyOrgan LaunchkeyOrgan
+}
+
+// LaunchkeyOrgan is the runtime copy of a patch's explicit Launchkey organ
+// binding policy. Disabled patches never capture faders from mixer OSC.
+type LaunchkeyOrgan struct {
+	Enabled         bool
+	Ownership       string
+	DrawbarParamIDs []string
+}
+
+// LoadState is the registry-visible readiness state for a selectable patch.
+type LoadState string
+
+const (
+	LoadStateIdle      LoadState = "idle"
+	LoadStateRequested LoadState = "requested"
+	LoadStateLoading   LoadState = "loading"
+	LoadStateActive    LoadState = "active"
+	LoadStateFailed    LoadState = "failed"
+)
+
+// LoadStatus describes requested/loading/active/failed patch readiness.
+type LoadStatus struct {
+	Index      int
+	Generation uint64
+	State      LoadState
+	Err        string
 }
 
 // audioBackend is the slice of internal/audio that Registry needs. The default
@@ -60,6 +88,7 @@ type audioBackend interface {
 	SetClapPlugin(bundlePath, pluginID string) error
 	SetClapPluginWithState(bundlePath, pluginID string, stateBlob []byte) error
 	SetNativePatch(engine string) error
+	BackendGeneration() uint64
 }
 
 // realAudioBackend is the production wiring; calls audio.SetSoundfont and
@@ -78,13 +107,16 @@ func (realAudioBackend) SetClapPluginWithState(bundlePath, pluginID string, stat
 	return audio.SetClapPluginWithState(bundlePath, pluginID, stateBlob)
 }
 func (realAudioBackend) SetNativePatch(engine string) error { return audio.SetNativePatch(engine) }
+func (realAudioBackend) BackendGeneration() uint64          { return audio.BackendGeneration() }
 
 // Registry holds the ordered list of patches and tracks which one is loaded.
 // Methods are goroutine-safe via an internal mutex.
 type Registry struct {
 	mu      sync.Mutex
 	patches []Patch
-	current int // -1 == nothing loaded
+	current int // requested/current UI patch; -1 == nothing selected
+	active  int // audio-confirmed active patch; -1 == no confirmed backend
+	status  LoadStatus
 	audio   audioBackend
 }
 
@@ -95,6 +127,8 @@ func New(patches []Patch) *Registry {
 	return &Registry{
 		patches: append([]Patch(nil), patches...), // defensive copy
 		current: -1,
+		active:  -1,
+		status:  LoadStatus{Index: -1, State: LoadStateIdle},
 		audio:   realAudioBackend{},
 	}
 }
@@ -124,11 +158,58 @@ func (r *Registry) All() []Patch {
 func (r *Registry) Current() *Patch {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.current < 0 || r.current >= len(r.patches) {
+	return r.patchAtLocked(r.current)
+}
+
+// Active returns the audio-confirmed active patch. During an asynchronous load,
+// this remains the previous patch so callers can distinguish visible selection
+// from the sound that is actually live.
+func (r *Registry) Active() *Patch {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.patchAtLocked(r.active)
+}
+
+func (r *Registry) patchAtLocked(i int) *Patch {
+	if i < 0 || i >= len(r.patches) {
 		return nil
 	}
-	p := r.patches[r.current]
+	p := r.patches[i]
 	return &p
+}
+
+func (r *Registry) Status() LoadStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.status
+}
+
+// MarkActive records audio-core's confirmation that generation swapped in.
+func (r *Registry) MarkActive(generation uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status.Generation != generation || r.status.State != LoadStateLoading {
+		return false
+	}
+	r.active = r.status.Index
+	r.current = r.status.Index
+	r.status.State = LoadStateActive
+	r.status.Err = ""
+	return true
+}
+
+// MarkFailed records an asynchronous loader failure and restores Current to the
+// last active patch, leaving the old backend sounding.
+func (r *Registry) MarkFailed(generation uint64, msg string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status.Generation != generation || r.status.State != LoadStateLoading {
+		return false
+	}
+	r.current = r.active
+	r.status.State = LoadStateFailed
+	r.status.Err = msg
+	return true
 }
 
 // Select finds a patch by Name and applies it. Returns an error if the name
@@ -241,6 +322,7 @@ func (r *Registry) selectIndex(i int, clapStateBlob []byte) error {
 
 	r.mu.Lock()
 	r.current = i
+	r.status = LoadStatus{Index: i, Generation: backend.BackendGeneration(), State: LoadStateLoading}
 	r.mu.Unlock()
 	return nil
 }
@@ -266,6 +348,11 @@ func FromConfig(cfgs []config.PatchConfig) []Patch {
 			VelocityCurve:  c.VelocityCurve,
 			VelocityGamma:  c.VelocityGamma,
 			VelocityPoints: c.VelocityPoints,
+			LaunchkeyOrgan: LaunchkeyOrgan{
+				Enabled:         c.LaunchkeyOrgan.Enabled,
+				Ownership:       c.LaunchkeyOrgan.Ownership,
+				DrawbarParamIDs: append([]string(nil), c.LaunchkeyOrgan.DrawbarParamIDs...),
+			},
 		})
 	}
 	return out

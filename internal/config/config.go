@@ -186,9 +186,20 @@ type PatchConfig struct {
 	// VelocityPoints is the point-curve override (same shape and
 	// same-scope exclusivity rules as VelocityConfig.Points); it wins
 	// over VelocityCurve/VelocityGamma in the daemon's precedence order.
-	VelocityCurve  string  `toml:"velocity_curve"` // "linear" | "soft" | "hard" | "custom"; "" = inherit global
-	VelocityGamma  float32 `toml:"velocity_gamma"` // required iff velocity_curve = "custom"
-	VelocityPoints [][]int `toml:"velocity_points"`
+	VelocityCurve  string               `toml:"velocity_curve"` // "linear" | "soft" | "hard" | "custom"; "" = inherit global
+	VelocityGamma  float32              `toml:"velocity_gamma"` // required iff velocity_curve = "custom"
+	VelocityPoints [][]int              `toml:"velocity_points"`
+	LaunchkeyOrgan LaunchkeyOrganConfig `toml:"launchkey_organ"`
+}
+
+// LaunchkeyOrganConfig is a per-CLAP-patch opt-in for organ performance
+// bindings. Disabled by default so existing Launchkey faders keep their mixer
+// behavior. Ownership is "mixer" (default, no capture) or "organ" (capture
+// DAW faders 1-9 for drawbars while this patch is selected).
+type LaunchkeyOrganConfig struct {
+	Enabled         bool     `toml:"enabled"`
+	Ownership       string   `toml:"ownership"`
+	DrawbarParamIDs []string `toml:"drawbar_param_ids"`
 }
 
 const (
@@ -266,6 +277,9 @@ func Load(path string) (*Config, error) {
 			c.Type = PatchTypeSoundfont
 		}
 		c.PluginPath = ExpandHome(c.PluginPath)
+		if c.LaunchkeyOrgan.Ownership == "" {
+			c.LaunchkeyOrgan.Ownership = "mixer"
+		}
 		switch c.Type {
 		case PatchTypeSoundfont:
 			if c.Soundfont == "" {
@@ -320,6 +334,7 @@ func Load(path string) (*Config, error) {
 	// same philosophy as MissingDepsError).
 	errs := velocityConfigErrors(cfg)
 	errs = append(errs, heartbeatConfigErrors(cfg, oscBlock)...)
+	errs = append(errs, launchkeyOrganConfigErrors(cfg)...)
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("load config %q: invalid settings:\n  - %s",
 			path, strings.Join(errs, "\n  - "))
@@ -457,6 +472,23 @@ func velocityPointsErrors(prefix, field string, pts [][]int) []string {
 		}
 		if pts[i][1] < pts[i-1][1] {
 			errs = append(errs, fmt.Sprintf("%s: %s[%d] y (%d) must be >= previous y (%d)", prefix, field, i, pts[i][1], pts[i-1][1]))
+		}
+	}
+	return errs
+}
+
+func launchkeyOrganConfigErrors(cfg *Config) []string {
+	var errs []string
+	for _, p := range cfg.Patches {
+		o := p.LaunchkeyOrgan.Ownership
+		if o != "" && o != "mixer" && o != "organ" {
+			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: ownership must be mixer or organ", p.Name))
+		}
+		if p.LaunchkeyOrgan.Enabled && p.Type != PatchTypeCLAP {
+			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: enabled requires type=clap", p.Name))
+		}
+		if len(p.LaunchkeyOrgan.DrawbarParamIDs) != 0 && len(p.LaunchkeyOrgan.DrawbarParamIDs) != 9 {
+			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_param_ids must list exactly 9 IDs", p.Name))
 		}
 	}
 	return errs
