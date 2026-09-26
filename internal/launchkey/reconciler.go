@@ -12,6 +12,7 @@ import (
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
+	"github.com/mschulkind-oss/polyclav/internal/midi"
 )
 
 // launchkeyMatch is the fixed substring this package uses to
@@ -45,6 +46,7 @@ type ReconcilerConfig struct {
 	IdleThreshold time.Duration
 
 	OnDAWEvent   func(driver.Event)
+	RawSink      midi.RawSink
 	OnReconnect  func()
 	OnDisconnect func()
 
@@ -54,7 +56,7 @@ type ReconcilerConfig struct {
 	// Opener opens the DAW control-surface connection. Tests inject a
 	// fake; production uses openReal.
 	Opener func(ctx context.Context, logger *slog.Logger, portMatch string,
-		dawSink func(driver.Event)) (Connection, error)
+		dawSink func(driver.Event), rawSink midi.RawSink) (Connection, error)
 }
 
 // Connection is one live joint MIDI+DAW connection to the keyboard.
@@ -187,7 +189,7 @@ func (r *Reconciler) tryOpen(ctx context.Context) {
 			r.cfg.OnDAWEvent(ev)
 		}
 	}
-	conn, err := r.cfg.Opener(ctx, r.logger, launchkeyMatch, dawSink)
+	conn, err := r.cfg.Opener(ctx, r.logger, launchkeyMatch, dawSink, r.cfg.RawSink)
 	if err != nil {
 		r.logger.Warn("launchkey open", "err", err)
 		return
@@ -353,14 +355,14 @@ func defaultPortLister() ([]string, error) {
 }
 
 func openReal(ctx context.Context, logger *slog.Logger, portMatch string,
-	dawSink func(driver.Event)) (Connection, error) {
+	dawSink func(driver.Event), rawSink midi.RawSink) (Connection, error) {
 
 	dawCtx, cancelDAW := context.WithCancel(ctx)
 	lost := make(chan struct{})
 	var lostOnce sync.Once
 	signalLost := func() { lostOnce.Do(func() { close(lost) }) }
 
-	d, err := driver.Open(dawCtx, logger, portMatch)
+	d, err := driver.OpenWithRaw(dawCtx, logger, portMatch, rawSink)
 	if err != nil {
 		cancelDAW()
 		return Connection{}, fmt.Errorf("daw open: %w", err)

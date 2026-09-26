@@ -47,7 +47,7 @@ func (f *fakeMuxRig) lister() ([]string, error) {
 // opener blocks until ctx is cancelled, simulating a live per-port
 // listener goroutine; it pushes one event through sink immediately so
 // tests can confirm the shared sink is actually wired per port.
-func (f *fakeMuxRig) opener(ctx context.Context, _ *slog.Logger, portName string, sink Sink) error {
+func (f *fakeMuxRig) opener(ctx context.Context, _ *slog.Logger, portName string, sink Sink, rawSink func([]byte)) error {
 	f.openCount.Add(1)
 	f.activeMu.Lock()
 	f.active[portName] = true
@@ -142,6 +142,38 @@ func TestMultiplexerOpensAndClosesPerPort(t *testing.T) {
 	rig.setNames(nil)
 	waitMuxCondition(t, func() bool { return m.PortCount() == 0 }, "port closes")
 	waitMuxCondition(t, func() bool { return !rig.isActive("Some Synth") }, "opener sees the port inactive")
+}
+
+func TestMultiplexerRawSinkIncludesPerformancePortIdentity(t *testing.T) {
+	rawSeen := make(chan RawEvent, 1)
+	opener := func(ctx context.Context, _ *slog.Logger, portName string, _ Sink, rawSink func([]byte)) error {
+		if rawSink != nil {
+			rawSink([]byte{0xD2, 0x45})
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	m := NewMultiplexer(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		MultiplexerConfig{
+			Allow:        []string{"Launchkey"},
+			PollInterval: 5 * time.Millisecond,
+			PortLister:   func() ([]string, error) { return []string{"Launchkey MK4 MIDI"}, nil },
+			Opener:       opener,
+			RawSink:      func(ev RawEvent) { rawSeen <- ev },
+		},
+	)
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+
+	select {
+	case ev := <-rawSeen:
+		if ev.Source != "performance" || ev.Port != "Launchkey MK4 MIDI" || ev.Kind != "aftertouch" || ev.Raw != "d245" {
+			t.Fatalf("raw event = %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("raw sink did not receive event")
+	}
 }
 
 func TestMultiplexerHandlesMultipleDevicesIndependently(t *testing.T) {

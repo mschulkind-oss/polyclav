@@ -48,6 +48,12 @@ type Sink func(Event)
 // (case-insensitive) and forwards parsed events to sink. Returns when
 // ctx is cancelled OR the underlying ALSA port dies (USB unplug, etc.).
 func Listen(ctx context.Context, logger *slog.Logger, match string, sink Sink) error {
+	return ListenWithRaw(ctx, logger, match, sink, nil)
+}
+
+// ListenWithRaw is Listen plus an optional raw wire-message sink. rawSink is
+// called with a copied message before parse drops unsupported message kinds.
+func ListenWithRaw(ctx context.Context, logger *slog.Logger, match string, sink Sink, rawSink func(port string, raw []byte)) error {
 	drv, err := rtmididrv.New()
 	if err != nil {
 		return fmt.Errorf("midi driver: %w", err)
@@ -74,7 +80,10 @@ func Listen(ctx context.Context, logger *slog.Logger, match string, sink Sink) e
 
 	// HandleError cancels the inner ctx so Listen returns on port-loss (USB unplug → ALSA stream death).
 	stop, err := midi.ListenTo(in, func(msg midi.Message, _ int32) {
-		if ev, ok := parse(msg); ok {
+		if rawSink != nil {
+			rawSink(in.String(), append([]byte(nil), msg.Bytes()...))
+		}
+		if ev, ok := parse(msg); ok && sink != nil {
 			sink(ev)
 		}
 	}, midi.HandleError(func(err error) {

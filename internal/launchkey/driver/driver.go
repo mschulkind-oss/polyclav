@@ -125,6 +125,13 @@ type SendRecord struct {
 const sendRingCap = 128
 
 func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, error) {
+	return OpenWithRaw(ctx, logger, portMatch, nil)
+}
+
+// OpenWithRaw is Open plus an optional read-only raw inbound sink used by the
+// Launchkey debug stream. The sink is called from the existing DAW listener;
+// no extra MIDI ports are opened.
+func OpenWithRaw(ctx context.Context, logger *slog.Logger, portMatch string, rawSink midi.RawSink) (*Driver, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -226,22 +233,7 @@ func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, 
 	listenCtx, cancel := context.WithCancel(ctx)
 	d.cancel = cancel
 	stop, err := in.Listen(func(msg []byte, _ int32) {
-		// Wire-level liveness: stamped for ANY inbound byte, independent
-		// of whether parseMessage recognizes it — LastEventAt is the
-		// idle watchdog's signal (internal/launchkey.Reconciler), and it
-		// must not go quiet just because the device sent something this
-		// package doesn't decode.
-		d.recordEvent()
-		ev, ok := parseMessage(msg)
-		if !ok {
-			return
-		}
-		select {
-		case d.events <- ev:
-		case <-listenCtx.Done():
-		default:
-			logger.Warn("launchkey events channel full; dropping event")
-		}
+		d.handleInbound(listenCtx, in.String(), msg, rawSink)
 	}, drivers.ListenConfig{
 		SysEx:       false,
 		ActiveSense: false,
@@ -266,6 +258,28 @@ func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, 
 }
 
 func (d *Driver) Events() <-chan Event { return d.events }
+
+func (d *Driver) handleInbound(ctx context.Context, port string, msg []byte, rawSink midi.RawSink) {
+	// Wire-level liveness: stamped for ANY inbound byte, independent
+	// of whether parseMessage recognizes it — LastEventAt is the
+	// idle watchdog's signal (internal/launchkey.Reconciler), and it
+	// must not go quiet just because the device sent something this
+	// package doesn't decode.
+	d.recordEvent()
+	if rawSink != nil {
+		rawSink(midi.NewRawEvent("launchkey-daw", port, msg))
+	}
+	ev, ok := parseMessage(msg)
+	if !ok {
+		return
+	}
+	select {
+	case d.events <- ev:
+	case <-ctx.Done():
+	default:
+		d.logger.Warn("launchkey events channel full; dropping event")
+	}
+}
 
 func (d *Driver) Close() error {
 	d.closeMu.Lock()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
+	"github.com/mschulkind-oss/polyclav/internal/midi"
 )
 
 type fakeRig struct {
@@ -58,7 +59,7 @@ func (f *fakeRig) lister() ([]string, error) {
 }
 
 func (f *fakeRig) opener(_ context.Context, _ *slog.Logger, _ string,
-	_ func(driver.Event)) (Connection, error) {
+	_ func(driver.Event), _ midi.RawSink) (Connection, error) {
 	if f.openFailErr != nil {
 		return Connection{}, f.openFailErr
 	}
@@ -137,6 +138,37 @@ func stopReconciler(t *testing.T, cancel context.CancelFunc, done <-chan struct{
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("Run did not exit")
+	}
+}
+
+func TestReconcilerPassesRawSinkToExistingDAWOpener(t *testing.T) {
+	seen := make(chan midi.RawEvent, 1)
+	r := NewReconciler(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ReconcilerConfig{
+			PollInterval: 5 * time.Millisecond,
+			PortLister:   func() ([]string, error) { return []string{"Launchkey MK4 DAW"}, nil },
+			RawSink:      func(ev midi.RawEvent) { seen <- ev },
+			Opener: func(_ context.Context, _ *slog.Logger, _ string, _ func(driver.Event), rawSink midi.RawSink) (Connection, error) {
+				if rawSink != nil {
+					rawSink(midi.NewRawEvent("launchkey-daw", "Launchkey MK4 DAW", []byte{0xA0, 0x60, 0x7F}))
+				}
+				return Connection{Lost: make(chan struct{}), Close: func() {}}, nil
+			},
+		},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = r.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	select {
+	case ev := <-seen:
+		if ev.Source != "launchkey-daw" || ev.Port != "Launchkey MK4 DAW" || ev.Kind != "poly-aftertouch" {
+			t.Fatalf("raw event = %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("raw sink was not wired into opener")
 	}
 }
 

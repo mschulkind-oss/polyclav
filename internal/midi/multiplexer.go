@@ -58,14 +58,20 @@ type MultiplexerConfig struct {
 	// would need a new field; today's synth/OSC-mapper consumers don't).
 	Sink Sink
 
+	// RawSink receives copied raw inbound messages from existing open
+	// performance listeners before parsing, including message kinds the
+	// synth decoder ignores (aftertouch, program change, etc.).
+	RawSink RawSink
+
 	// PortLister enumerates current MIDI input port names. Tests inject
 	// a fake; production defaults to PortNames.
 	PortLister func() ([]string, error)
 	// Opener listens to a single named port and streams its events to
-	// sink until ctx is cancelled or the port dies. Tests inject a fake;
-	// production defaults to Listen (an exact port name is specific
+	// sink until ctx is cancelled or the port dies. rawSink, when non-nil,
+	// receives copied raw messages before decode. Tests inject a fake;
+	// production defaults to ListenWithRaw (an exact port name is specific
 	// enough to be its own unique "match" substring — see NewMultiplexer).
-	Opener func(ctx context.Context, logger *slog.Logger, portName string, sink Sink) error
+	Opener func(ctx context.Context, logger *slog.Logger, portName string, sink Sink, rawSink func([]byte)) error
 }
 
 // Multiplexer is a hotplug reconciler for reading note input from every
@@ -123,7 +129,13 @@ func NewMultiplexer(logger *slog.Logger, cfg MultiplexerConfig) *Multiplexer {
 		// itself as Listen's substring match — see PickPortName's step-1
 		// filter followed by RoleMIDI's step-3 tiebreaker, which returns
 		// the sole (already-unique) match regardless of role keyword.
-		cfg.Opener = Listen
+		cfg.Opener = func(ctx context.Context, logger *slog.Logger, portName string, sink Sink, rawSink func([]byte)) error {
+			return ListenWithRaw(ctx, logger, portName, sink, func(_ string, raw []byte) {
+				if rawSink != nil {
+					rawSink(raw)
+				}
+			})
+		}
 	}
 	return &Multiplexer{
 		logger: logger,
@@ -370,18 +382,27 @@ func (m *Multiplexer) open(ctx context.Context, name string) {
 	// MultiplexerConfig.IdleThreshold) before forwarding — events carry
 	// no per-port identity of their own, so this is the only place that
 	// knows which port an event just arrived on.
-	wrappedSink := func(ev Event) {
+	stampActivity := func() {
 		self.activityMu.Lock()
 		self.lastEventAt = time.Now()
 		self.idleAlerted = false
 		self.activityMu.Unlock()
+	}
+	wrappedRawSink := func(raw []byte) {
+		stampActivity()
+		if m.cfg.RawSink != nil {
+			m.cfg.RawSink(NewRawEvent("performance", name, raw))
+		}
+	}
+	wrappedSink := func(ev Event) {
+		stampActivity()
 		if m.cfg.Sink != nil {
 			m.cfg.Sink(ev)
 		}
 	}
 	go func() {
 		defer close(done)
-		err := m.cfg.Opener(portCtx, m.logger, name, wrappedSink)
+		err := m.cfg.Opener(portCtx, m.logger, name, wrappedSink, wrappedRawSink)
 
 		m.mu.Lock()
 		if m.ports[name] == self {

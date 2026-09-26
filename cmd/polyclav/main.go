@@ -408,6 +408,10 @@ func main() {
 		}
 	}
 
+	publishRawMIDI := func(ev midi.RawEvent) {
+		hub.Publish(controls.Change{Type: "midi-raw", Data: ev.Data()})
+	}
+
 	onMIDIEvent := func(ev midi.Event) {
 		pushSynth(ev)
 		if mapper != nil {
@@ -542,6 +546,7 @@ func main() {
 			PollInterval:  1 * time.Second,
 			IdleThreshold: idleWatchdogThreshold,
 			OnDAWEvent:    onDAWEvent,
+			RawSink:       publishRawMIDI,
 			// The callbacks run inside the supervisor's reconciler
 			// goroutines, which start strictly after `sup` is assigned —
 			// reading it here is race-free.
@@ -574,6 +579,7 @@ func main() {
 			PollInterval:  1 * time.Second,
 			IdleThreshold: idleWatchdogThreshold,
 			Sink:          onMIDIEvent,
+			RawSink:       publishRawMIDI,
 		},
 	}
 	sup = supervisor.New(logger, supCfg)
