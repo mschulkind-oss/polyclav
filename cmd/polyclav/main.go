@@ -227,7 +227,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go func() { _ = stateStore.Run(ctx) }()
+	stateDone := make(chan struct{})
+	go func() {
+		_ = stateStore.Run(ctx)
+		close(stateDone)
+	}()
 
 	audio.SetSoundfont(cfg.Soundfont.Path)
 	audio.SetLatencyFrames(cfg.Audio.LatencyFrames) // 0 = engine default; must precede Start
@@ -666,11 +670,17 @@ func main() {
 					switch ev.Kind {
 					case audio.BackendEventActive:
 						if registry.MarkActive(ev.Generation) {
+							if cur := registry.Current(); cur != nil {
+								stateStore.SetCurrentPatch(cur.Name)
+							}
 							hub.Publish(controls.Change{Type: "patch"})
 							hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "active"}})
 						}
 					case audio.BackendEventFailed:
 						if registry.MarkFailed(ev.Generation, "audio-core loader failed") {
+							if cur := registry.Current(); cur != nil {
+								stateStore.SetCurrentPatch(cur.Name)
+							}
 							logger.Warn("patch load failed", "generation", ev.Generation)
 							hub.Publish(controls.Change{Type: "patch"})
 							hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "failed", "last_error": "audio-core loader failed"}})
@@ -679,6 +689,13 @@ func main() {
 						logger.Debug("stale patch load discarded", "generation", ev.Generation)
 						hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "stale"}})
 					}
+				}
+				for {
+					ev, ok := audio.PollClapFeedback()
+					if !ok {
+						break
+					}
+					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
 			}
 		}
@@ -737,8 +754,16 @@ func main() {
 	}
 
 	// Stop the player before the audio engine so its NoteOff hygiene
-	// (releasing anything still ringing) lands on a live engine.
+	// (releasing anything still ringing) lands on a live engine, then persist
+	// the active CLAP backend while the engine is still available.
 	plr.Stop()
+	ctl.SaveActiveClapState()
+	stop()
+	select {
+	case <-stateDone:
+	case <-time.After(2 * time.Second):
+		logger.Warn("state store did not flush within 2s")
+	}
 	audio.Stop()
 	logger.Info("shutdown complete")
 	os.Exit(0)

@@ -198,10 +198,26 @@ type devPluginParamJSON struct {
 	Flags   uint32  `json:"flags"`
 }
 
-func (s *Server) devPluginParams() ([]devPluginParamJSON, error) {
+func (s *Server) activeDevClapPatch() (*patches.Patch, error) {
 	cur := s.deps.Registry.Current()
 	if cur == nil || normalizedPatchType(cur.Type) != "clap" {
 		return nil, fmt.Errorf("no CLAP patch selected")
+	}
+	if rs, ok := s.deps.Registry.(pluginRegistryStatus); ok {
+		status := rs.Status()
+		active := rs.Active()
+		if active == nil || active.Name != cur.Name || status.State != patches.LoadStateActive {
+			return nil, fmt.Errorf("CLAP patch is not active yet")
+		}
+		return active, nil
+	}
+	return cur, nil
+}
+
+func (s *Server) devPluginParams() ([]devPluginParamJSON, error) {
+	cur, err := s.activeDevClapPatch()
+	if err != nil {
+		return nil, err
 	}
 	if s.deps.DevPluginAudio == nil {
 		return nil, fmt.Errorf("development plugin audio API not available")

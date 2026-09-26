@@ -134,6 +134,7 @@ const BACKEND_EVENT_STALE: u32 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClapParamWrite {
+    pub generation: u64,
     pub clap_id: u32,
     pub value: f64,
 }
@@ -175,11 +176,12 @@ fn copy_str_to_c_array<const N: usize>(dst: &mut [c_char; N], src: &str) {
 }
 
 type ClapStateResponse = mpsc::SyncSender<Result<Vec<u8>, String>>;
-type ClapStateRequestQueue = Arc<ArrayQueue<ClapStateResponse>>;
+type ClapStateRequestSender = mpsc::Sender<ClapStateResponse>;
 
-static CLAP_STATE_REQUEST_QUEUE: OnceLock<ClapStateRequestQueue> = OnceLock::new();
-pub(crate) fn clap_state_request_queue() -> &'static ClapStateRequestQueue {
-    CLAP_STATE_REQUEST_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(8)))
+static ACTIVE_CLAP_STATE_REQUEST_SENDER: OnceLock<Mutex<Option<ClapStateRequestSender>>> =
+    OnceLock::new();
+fn active_clap_state_request_sender() -> &'static Mutex<Option<ClapStateRequestSender>> {
+    ACTIVE_CLAP_STATE_REQUEST_SENDER.get_or_init(|| Mutex::new(None))
 }
 
 static LAST_CLAP_STATE_BLOB: OnceLock<Mutex<Option<Vec<u8>>>> = OnceLock::new();
@@ -340,6 +342,7 @@ impl SynthBackend {
         bundle_path: &Path,
         plugin_id: &str,
         state_blob: Option<&[u8]>,
+        generation: u64,
     ) -> Result<Self, String> {
         let inst = ClapInstance::load(
             bundle_path,
@@ -347,6 +350,7 @@ impl SynthBackend {
             f64::from(SAMPLE_RATE),
             MAX_QUANTUM,
             state_blob,
+            generation,
         )?;
         eprintln!(
             "audio-core: CLAP plugin loaded ({} :: {plugin_id})",
@@ -1636,7 +1640,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
                 "audio-core: background load of CLAP plugin {} :: {plugin_id:?}",
                 bundle_path.display()
             );
-            match SynthBackend::load_clap(&bundle_path, &plugin_id, state_blob.as_deref()) {
+            match SynthBackend::load_clap(&bundle_path, &plugin_id, state_blob.as_deref(), generation) {
                 Ok(backend) => {
                     let name = backend.name();
                     if enqueue_preloaded_backend_if_current(&queue, generation, loader_epoch, backend) {
@@ -1703,7 +1707,12 @@ pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
 #[cfg(target_os = "linux")]
 #[no_mangle]
 pub extern "C" fn polyclav_audio_clap_set_param(clap_id: u32, value: f64) -> i32 {
-    match clap_param_queue().push(ClapParamWrite { clap_id, value }) {
+    let generation = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
+    match clap_param_queue().push(ClapParamWrite {
+        generation,
+        clap_id,
+        value,
+    }) {
         Ok(()) => 0,
         Err(_) => {
             record_clap_input_event_drop();
@@ -1762,7 +1771,11 @@ pub unsafe extern "C" fn polyclav_audio_clap_save_state(
 ) -> i32 {
     if out.is_null() {
         let (tx, rx) = mpsc::sync_channel(1);
-        if clap_state_request_queue().push(tx).is_err() {
+        let sender = active_clap_state_request_sender().lock().unwrap().clone();
+        let Some(sender) = sender else {
+            return 1;
+        };
+        if sender.send(tx).is_err() {
             return 1;
         }
         match rx.recv_timeout(Duration::from_millis(500)) {
@@ -2729,7 +2742,7 @@ fn load_synth_by_type(
         "lv2" => SynthBackend::load_lv2(patch_ref),
         "clap" => {
             let id = plugin_id.ok_or_else(|| "clap patch_type requires plugin_id".to_string())?;
-            SynthBackend::load_clap(Path::new(patch_ref), id, None)
+            SynthBackend::load_clap(Path::new(patch_ref), id, None, 0)
         }
         other => Err(format!("unknown patch_type {other:?}")),
     }
@@ -3023,6 +3036,14 @@ pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
     }
 
     if let Some((_gen, new_backend)) = selected {
+        #[cfg(target_os = "linux")]
+        {
+            let sender = match &new_backend {
+                SynthBackend::Clap(clap) => Some(clap.state_request_sender()),
+                _ => None,
+            };
+            *active_clap_state_request_sender().lock().unwrap() = sender;
+        }
         if let Some(old_backend) = user_data.synth.take() {
             enqueue_backend_disposal(old_backend);
         }
@@ -3561,6 +3582,20 @@ mod tests {
         }));
 
         assert!(held.panic_events().is_empty());
+    }
+
+    #[test]
+    fn clap_param_writes_are_tagged_with_current_generation() {
+        while clap_param_queue().pop().is_some() {}
+        SOUNDFONT_GENERATION.store(44, Ordering::SeqCst);
+
+        assert_eq!(polyclav_audio_clap_set_param(123, 0.75), 0);
+
+        let write = clap_param_queue().pop().expect("queued CLAP param write");
+        assert_eq!(write.generation, 44);
+        assert_eq!(write.clap_id, 123);
+        assert_eq!(write.value, 0.75);
+        SOUNDFONT_GENERATION.store(0, Ordering::SeqCst);
     }
 
     #[test]

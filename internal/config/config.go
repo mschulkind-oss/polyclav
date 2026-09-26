@@ -487,6 +487,9 @@ func launchkeyOrganConfigErrors(cfg *Config) []string {
 		if p.LaunchkeyOrgan.Enabled && p.Type != PatchTypeCLAP {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: enabled requires type=clap", p.Name))
 		}
+		if p.LaunchkeyOrgan.Enabled && p.LaunchkeyOrgan.Ownership == "organ" && len(p.LaunchkeyOrgan.DrawbarParamIDs) == 0 {
+			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: organ ownership requires drawbar_param_ids", p.Name))
+		}
 		if len(p.LaunchkeyOrgan.DrawbarParamIDs) != 0 && len(p.LaunchkeyOrgan.DrawbarParamIDs) != 9 {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_param_ids must list exactly 9 IDs", p.Name))
 		}

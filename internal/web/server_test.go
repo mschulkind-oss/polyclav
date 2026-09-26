@@ -2142,6 +2142,24 @@ func TestDevPluginParamPatchValidatesAndPublishes(t *testing.T) {
 	}
 }
 
+func TestDevPluginParamPatchRejectsPendingLoadMismatch(t *testing.T) {
+	t.Setenv("POLYCLAV_DEV_WEB", "1")
+	devAudio := &fakeDevPluginAudio{params: []audio.ClapParamInfo{{ClapID: 42, Name: "16′", MinValue: 0, MaxValue: 1}}}
+	f := newFixture(t, func(d *Deps) { d.DevPluginAudio = devAudio })
+	f.reg.mu.Lock()
+	f.reg.patches = []patches.Patch{sfPatch, clapPatch}
+	f.reg.current = 1
+	f.reg.active = 0
+	f.reg.status = patches.LoadStatus{Index: 1, Generation: 2, State: patches.LoadStateLoading}
+	f.reg.mu.Unlock()
+
+	wantStatus(t, f.do(t, "GET", "/api/dev/plugin/params", nil), http.StatusConflict)
+	wantStatus(t, f.do(t, "PATCH", "/api/dev/plugin/params", map[string]any{"id": "42", "value": 0.5}), http.StatusConflict)
+	if _, _, ok := devAudio.lastSet(); ok {
+		t.Fatalf("SetClapParam called while requested CLAP patch was not active")
+	}
+}
+
 func TestDevPluginRejectsNonLoopback(t *testing.T) {
 	t.Setenv("POLYCLAV_DEV_WEB", "1")
 	f := newFixture(t, func(d *Deps) { d.DevPluginAudio = &fakeDevPluginAudio{} })

@@ -67,6 +67,10 @@ type Registry interface {
 	SelectIndex(i int) error
 }
 
+type activePatchRegistry interface {
+	Active() *patches.Patch
+}
+
 type clapStateSelector interface {
 	SelectWithClapState(name string, stateBlob []byte) error
 }
@@ -1611,8 +1615,17 @@ func (c *Controls) savedClapBlob(name string) ([]byte, error) {
 	return blob, nil
 }
 
-func (c *Controls) saveCurrentClapState() {
-	cur := c.reg.Current()
+func (c *Controls) activePatchForStateSave() *patches.Patch {
+	if ar, ok := c.reg.(activePatchRegistry); ok {
+		if p := ar.Active(); p != nil {
+			return p
+		}
+	}
+	return c.reg.Current()
+}
+
+func (c *Controls) saveActiveClapState() {
+	cur := c.activePatchForStateSave()
 	if cur == nil || cur.Type != "clap" {
 		return
 	}
@@ -1630,6 +1643,15 @@ func (c *Controls) saveCurrentClapState() {
 	})
 }
 
+// SaveActiveClapState persists the audio-confirmed active CLAP backend, if any.
+// It is used on daemon shutdown; normal patch switching also calls this before
+// selecting the next patch.
+func (c *Controls) SaveActiveClapState() {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.saveActiveClapState()
+}
+
 // SelectPatch switches to the named patch: registry select, restore that
 // patch's saved knob values (and, for native patches, its saved synth
 // block) into the audio engine, record it as current in the state store,
@@ -1640,7 +1662,7 @@ func (c *Controls) saveCurrentClapState() {
 func (c *Controls) SelectPatch(name string) error {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
-	c.saveCurrentClapState()
+	c.saveActiveClapState()
 	if sel, ok := c.reg.(clapStateSelector); ok {
 		if p := findPatch(c.reg.All(), name); p != nil && p.Type == "clap" {
 			blob, err := c.savedClapBlob(name)
@@ -1665,7 +1687,7 @@ func (c *Controls) SelectPatch(name string) error {
 func (c *Controls) SelectPatchIndex(i int) error {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
-	c.saveCurrentClapState()
+	c.saveActiveClapState()
 	if sel, ok := c.reg.(clapStateSelector); ok {
 		ps := c.reg.All()
 		if i >= 0 && i < len(ps) && ps[i].Type == "clap" {

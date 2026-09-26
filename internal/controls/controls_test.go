@@ -305,13 +305,14 @@ func (f *fakeAudio) synthCalls() int {
 type fakeRegistry struct {
 	patches        []patches.Patch
 	current        int // -1 == none selected
+	active         int // -1 == none selected; defaults to current when unset in tests
 	selectErr      error
 	clapStateCalls int
 	lastClapState  []byte
 }
 
 func newFakeRegistry(ps ...patches.Patch) *fakeRegistry {
-	return &fakeRegistry{patches: ps, current: -1}
+	return &fakeRegistry{patches: ps, current: -1, active: -1}
 }
 
 func (f *fakeRegistry) All() []patches.Patch {
@@ -325,6 +326,18 @@ func (f *fakeRegistry) Current() *patches.Patch {
 		return nil
 	}
 	p := f.patches[f.current]
+	return &p
+}
+
+func (f *fakeRegistry) Active() *patches.Patch {
+	idx := f.active
+	if idx < 0 {
+		idx = f.current
+	}
+	if idx < 0 || idx >= len(f.patches) {
+		return nil
+	}
+	p := f.patches[idx]
 	return &p
 }
 
@@ -2980,6 +2993,38 @@ func TestSelectPatchSavesPreviousClapBeforeSwitch(t *testing.T) {
 	}
 	got, ok := f.st.claps["organ"]
 	if !ok || got.BlobBase64 != "BAUG" || got.FormatVersion != 1 {
+		t.Fatalf("saved clap state = %+v ok=%v", got, ok)
+	}
+}
+
+func TestSelectPatchSavesActiveClapNotRequestedPatch(t *testing.T) {
+	f := newFixture(t,
+		patches.Patch{Name: "active-organ", Display: "Active", Type: "clap"},
+		patches.Patch{Name: "requested-organ", Display: "Requested", Type: "clap"},
+		patches.Patch{Name: "piano", Display: "Piano", Type: "native", Engine: "minimoog"},
+	)
+	f.reg.active = 0
+	f.reg.current = 1
+	f.audio.clapState = []byte{7, 8, 9}
+	if err := f.c.SelectPatch("piano"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	got, ok := f.st.claps["active-organ"]
+	if !ok || got.BlobBase64 != "BwgJ" || got.FormatVersion != 1 {
+		t.Fatalf("active patch state = %+v ok=%v", got, ok)
+	}
+	if _, ok := f.st.claps["requested-organ"]; ok {
+		t.Fatalf("saved active CLAP state under requested patch")
+	}
+}
+
+func TestSaveActiveClapStatePersistsOnShutdownPath(t *testing.T) {
+	f := newFixture(t, patches.Patch{Name: "organ", Display: "Organ", Type: "clap"})
+	f.reg.active = 0
+	f.audio.clapState = []byte{10, 11, 12}
+	f.c.SaveActiveClapState()
+	got, ok := f.st.claps["organ"]
+	if !ok || got.BlobBase64 != "CgsM" || got.FormatVersion != 1 {
 		t.Fatalf("saved clap state = %+v ok=%v", got, ok)
 	}
 }

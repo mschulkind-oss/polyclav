@@ -27,7 +27,7 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{mpsc, OnceLock};
 
 use clack_host::events::event_types::{
     MidiEvent as ClapMidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent,
@@ -379,6 +379,11 @@ fn encode_param_value_event(clap_id: u32, value: f64) -> Option<ParamValueEvent>
 
 /// Cached `HostInfo`. CLAP plugins expect a stable host identity; rebuild
 /// it once and reuse for every instantiation.
+type ClapStateResponse = mpsc::SyncSender<Result<Vec<u8>, String>>;
+type ClapStateRequestSender = mpsc::Sender<ClapStateResponse>;
+type ClapStateRequestReceiver = mpsc::Receiver<ClapStateResponse>;
+type LoadedClapOwner = (ClapInstance, PluginInstance<()>, ClapStateRequestReceiver);
+
 fn host_info() -> &'static HostInfo {
     static INFO: OnceLock<HostInfo> = OnceLock::new();
     INFO.get_or_init(|| {
@@ -395,7 +400,7 @@ fn host_info() -> &'static HostInfo {
 /// A loaded, activated CLAP plugin instance ready to render audio.
 pub struct ClapInstance {
     processor: StartedPluginAudioProcessor<()>,
-    instance: PluginInstance<()>,
+    state_request_tx: ClapStateRequestSender,
     /// Output audio port wrapper, sized to 2 channels / 1 port. We keep a
     /// pre-allocated `AudioPorts` so the per-callback `with_output_buffers`
     /// call doesn't allocate.
@@ -410,6 +415,8 @@ pub struct ClapInstance {
     input_events: EventBuffer,
     /// Reusable output event buffer for plugin-to-host parameter feedback.
     output_events: EventBuffer,
+    /// Backend generation for filtering host-global parameter writes.
+    generation: u64,
     /// Discovered parameter ids for filtering host-global parameter writes.
     param_ids: Vec<u32>,
     /// Selected CLAP note input dialect and port.
@@ -418,14 +425,18 @@ pub struct ClapInstance {
     input_event_limit: u32,
 }
 
-// SAFETY: `StartedPluginAudioProcessor` is already `Send`. `AudioPorts`
-// and `EventBuffer` are public clack types that are `Send`. `Vec<f32>` is
-// `Send`. The struct as a whole is therefore `Send` by composition; this
-// is just an explicit assertion that nothing in here pins us to the
-// instantiation thread.
+// SAFETY: `StartedPluginAudioProcessor` is already `Send`. `PluginInstance`
+// is intentionally not stored here; it remains on the CLAP owner thread and is
+// reached only by `state_request_tx`. `AudioPorts`, `EventBuffer`, and `Vec` are
+// `Send`, so moving this audio processor wrapper to the audio thread preserves
+// the plugin-instance thread affinity documented at the top of this file.
 unsafe impl Send for ClapInstance {}
 
 impl ClapInstance {
+    pub(crate) fn state_request_sender(&self) -> ClapStateRequestSender {
+        self.state_request_tx.clone()
+    }
+
     /// Load a CLAP bundle and instantiate the plugin with the given id.
     /// Runs on a background worker thread; never on the audio thread.
     pub fn load(
@@ -434,85 +445,123 @@ impl ClapInstance {
         sample_rate: f64,
         max_block: usize,
         state_blob: Option<&[u8]>,
+        generation: u64,
     ) -> Result<Self, String> {
-        // 1. Load the .clap dynamic library and its entry descriptor.
-        // SAFETY: `PluginEntry::load` is unsafe because dlopen can execute
-        // arbitrary code; we accept that risk as the host of plugins.
-        let entry = unsafe { PluginEntry::load(bundle_path) }
-            .map_err(|e| format!("CLAP load {}: {e:?}", bundle_path.display()))?;
+        let bundle_path = bundle_path.to_path_buf();
+        let plugin_id = plugin_id.to_string();
+        let state_blob = state_blob.map(|b| b.to_vec());
+        let (loaded_tx, loaded_rx) = mpsc::sync_channel(1);
 
-        // 2. Pull the plugin factory and verify the requested id exists.
-        let factory = entry
-            .get_plugin_factory()
-            .ok_or_else(|| "CLAP entry has no plugin factory".to_string())?;
+        std::thread::Builder::new()
+            .name("polyclav-clap-owner".into())
+            .spawn(move || {
+                let result = (|| -> Result<LoadedClapOwner, String> {
+                    // 1. Load the .clap dynamic library and its entry descriptor.
+                    // SAFETY: `PluginEntry::load` is unsafe because dlopen can execute
+                    // arbitrary code; we accept that risk as the host of plugins.
+                    let entry = unsafe { PluginEntry::load(&bundle_path) }
+                        .map_err(|e| format!("CLAP load {}: {e:?}", bundle_path.display()))?;
 
-        let plugin_id_c =
-            CString::new(plugin_id).map_err(|e| format!("CLAP plugin id has interior NUL: {e}"))?;
+                    // 2. Pull the plugin factory and verify the requested id exists.
+                    let factory = entry
+                        .get_plugin_factory()
+                        .ok_or_else(|| "CLAP entry has no plugin factory".to_string())?;
 
-        // Validate the id is present — gives a clearer error than the
-        // `PluginInstance::new` failure which doesn't say *why* the id
-        // was not found.
-        let known = factory
-            .plugin_descriptors()
-            .filter_map(|d| d.id())
-            .any(|id| id.to_bytes() == plugin_id_c.as_bytes());
-        if !known {
-            let available: Vec<String> = factory
-                .plugin_descriptors()
-                .filter_map(|d| d.id())
-                .map(|id| String::from_utf8_lossy(id.to_bytes()).into_owned())
-                .collect();
-            return Err(format!(
-                "CLAP plugin id {plugin_id:?} not found in {}; available ids: {available:?}",
-                bundle_path.display()
-            ));
-        }
+                    let plugin_id_c = CString::new(plugin_id.as_str())
+                        .map_err(|e| format!("CLAP plugin id has interior NUL: {e}"))?;
 
-        // 3. Instantiate. The unit-type `()` works as our `HostHandlers`
-        // because clack provides a default no-op impl for it.
-        let mut instance =
-            PluginInstance::<()>::new(|_| (), |_| (), &entry, plugin_id_c.as_c_str(), host_info())
-                .map_err(|e| format!("CLAP instantiate {plugin_id}: {e:?}"))?;
+                    let known = factory
+                        .plugin_descriptors()
+                        .filter_map(|d| d.id())
+                        .any(|id| id.to_bytes() == plugin_id_c.as_bytes());
+                    if !known {
+                        let available: Vec<String> = factory
+                            .plugin_descriptors()
+                            .filter_map(|d| d.id())
+                            .map(|id| String::from_utf8_lossy(id.to_bytes()).into_owned())
+                            .collect();
+                        return Err(format!(
+                            "CLAP plugin id {plugin_id:?} not found in {}; available ids: {available:?}",
+                            bundle_path.display()
+                        ));
+                    }
 
-        // 4. Choose the input note event dialect and restore optional state before activation.
-        let note_input = query_note_input(&instance)?;
-        let params = query_params(&instance);
-        if let Some(blob) = state_blob {
-            load_state(&instance, blob)?;
-        }
+                    // 3. Instantiate on this owner thread. The PluginInstance never
+                    // leaves this thread; the Send audio processor is handed to the
+                    // audio backend, and state save requests are serviced here.
+                    let mut instance = PluginInstance::<()>::new(
+                        |_| (),
+                        |_| (),
+                        &entry,
+                        plugin_id_c.as_c_str(),
+                        host_info(),
+                    )
+                    .map_err(|e| format!("CLAP instantiate {plugin_id}: {e:?}"))?;
 
-        // 5. Activate with our audio configuration.
-        let audio_cfg = PluginAudioConfiguration {
-            sample_rate,
-            min_frames_count: 1,
-            max_frames_count: max_block as u32,
-        };
-        let stopped = instance
-            .activate(|_, _| (), audio_cfg)
-            .map_err(|e| format!("CLAP activate {plugin_id}: {e:?}"))?;
+                    // 4. Choose the input note event dialect and restore optional state before activation.
+                    let note_input = query_note_input(&instance)?;
+                    let params = query_params(&instance);
+                    if let Some(blob) = state_blob.as_deref() {
+                        load_state(&instance, blob)?;
+                    }
 
-        // 6. Start processing — must succeed before we ship the
-        // processor to the audio thread.
-        let processor = stopped
-            .start_processing()
-            .map_err(|e| format!("CLAP start_processing {plugin_id}: {e:?}"))?;
+                    // 5. Activate with our audio configuration.
+                    let audio_cfg = PluginAudioConfiguration {
+                        sample_rate,
+                        min_frames_count: 1,
+                        max_frames_count: max_block as u32,
+                    };
+                    let stopped = instance
+                        .activate(|_, _| (), audio_cfg)
+                        .map_err(|e| format!("CLAP activate {plugin_id}: {e:?}"))?;
 
-        drop(entry);
+                    // 6. Start processing — must succeed before we ship the
+                    // processor to the audio thread.
+                    let processor = stopped
+                        .start_processing()
+                        .map_err(|e| format!("CLAP start_processing {plugin_id}: {e:?}"))?;
 
-        Ok(Self {
-            processor,
-            instance,
-            output_ports: AudioPorts::with_capacity(2, 1),
-            out_l: Vec::with_capacity(max_block),
-            out_r: Vec::with_capacity(max_block),
-            input_ports: AudioPorts::with_capacity(0, 0),
-            input_events: EventBuffer::with_capacity(64),
-            output_events: EventBuffer::with_capacity(64),
-            param_ids: params.into_iter().map(|p| p.clap_id).collect(),
-            note_input,
-            input_event_count: 0,
-            input_event_limit: 64,
-        })
+                    drop(entry);
+
+                    let (state_request_tx, state_request_rx) = mpsc::channel();
+                    let clap = Self {
+                        processor,
+                        state_request_tx,
+                        output_ports: AudioPorts::with_capacity(2, 1),
+                        out_l: Vec::with_capacity(max_block),
+                        out_r: Vec::with_capacity(max_block),
+                        input_ports: AudioPorts::with_capacity(0, 0),
+                        input_events: EventBuffer::with_capacity(64),
+                        output_events: EventBuffer::with_capacity(64),
+                        generation,
+                        param_ids: params.into_iter().map(|p| p.clap_id).collect(),
+                        note_input,
+                        input_event_count: 0,
+                        input_event_limit: 64,
+                    };
+                    Ok((clap, instance, state_request_rx))
+                })();
+
+                match result {
+                    Ok((clap, instance, state_request_rx)) => {
+                        let _ = loaded_tx.send(Ok(clap));
+                        // Keep PluginInstance pinned to this owner thread and service
+                        // non-realtime state saves here until the audio backend drops
+                        // its sender.
+                        for tx in state_request_rx {
+                            let _ = tx.send(save_state(&instance));
+                        }
+                    }
+                    Err(e) => {
+                        let _ = loaded_tx.send(Err(e));
+                    }
+                }
+            })
+            .map_err(|e| format!("spawn CLAP owner thread: {e}"))?;
+
+        loaded_rx
+            .recv()
+            .map_err(|e| format!("CLAP owner thread exited before load completed: {e}"))?
     }
 
     /// Push a MIDI event onto the next-block input buffer.
@@ -559,7 +608,7 @@ impl ClapInstance {
 
     fn push_pending_param_events(&mut self) {
         while let Some(write) = clap_param_queue().pop() {
-            if !self.param_ids.contains(&write.clap_id) {
+            if write.generation != self.generation || !self.param_ids.contains(&write.clap_id) {
                 continue;
             }
             if self.input_event_count >= self.input_event_limit {
@@ -570,12 +619,6 @@ impl ClapInstance {
                 self.input_events.push(&ev);
                 self.input_event_count += 1;
             }
-        }
-    }
-
-    fn service_state_requests(&self) {
-        while let Some(tx) = crate::clap_state_request_queue().pop() {
-            let _ = tx.send(save_state(&self.instance));
         }
     }
 
@@ -630,7 +673,6 @@ impl ClapInstance {
         );
 
         self.collect_feedback_events();
-        self.service_state_requests();
 
         // Clear MIDI/param input for the next block regardless of outcome.
         self.input_events.clear();

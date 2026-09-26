@@ -323,6 +323,23 @@ ownership = "organ"
 	}
 }
 
+func TestLoadRejectsOrganOwnershipWithoutDrawbarIDs(t *testing.T) {
+	_, err := loadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/Potato Keys.clap"
+plugin_id = "com.littlepotato.keys"
+
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+`)
+	if err == nil || !strings.Contains(err.Error(), "organ ownership requires drawbar_param_ids") {
+		t.Fatalf("err = %v, want drawbar_param_ids validation", err)
+	}
+}
+
 func TestLoadVelocityDecodesPoints(t *testing.T) {
 	cfg := mustLoadTOML(t, `
 [midi.velocity]
