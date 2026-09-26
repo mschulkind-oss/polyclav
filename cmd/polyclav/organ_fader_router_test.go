@@ -70,6 +70,65 @@ func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testin
 	}
 }
 
+func TestPotatoKeysAutoBindsExactFootageLabels(t *testing.T) {
+	p := organPatch()
+	p.PluginID = "com.littlepotato.keys"
+	p.LaunchkeyOrgan.DrawbarClapIDs = nil
+	params := drawbarParams()
+	for i, label := range []string{"16′", "5⅓′", "8′", "4′", "2⅔′", "2′", "1⅗′", "1⅓′", "1′"} {
+		params[i].Name = label
+	}
+	cache := clapcache.New()
+	cache.Replace(params)
+	setter, mapper := &fakeSetter{}, &fakeMapper{}
+	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
+	for i := 1; i <= 9; i++ {
+		setter.called = false
+		r.HandleFader(driver.FaderEvent{Index: i, Value: 127})
+		if !setter.called || setter.id != uint32(100+i) || setter.value != 8 {
+			t.Errorf("fader %d: set (%d,%v,%v)", i, setter.id, setter.value, setter.called)
+		}
+	}
+	if len(mapper.events) != 0 {
+		t.Fatalf("organ faders also moved the mixer: %v", mapper.events)
+	}
+}
+
+func TestPotatoKeysAutoBindingRejectsAmbiguousOrInvalidParams(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func([]audio.ClapParamInfo) []audio.ClapParamInfo
+	}{
+		{"missing", func(p []audio.ClapParamInfo) []audio.ClapParamInfo { return p[:8] }},
+		{"duplicate name", func(p []audio.ClapParamInfo) []audio.ClapParamInfo {
+			duplicate := p[0]
+			duplicate.ClapID = 110
+			return append(p, duplicate)
+		}},
+		{"duplicate id", func(p []audio.ClapParamInfo) []audio.ClapParamInfo { p[1].ClapID = p[0].ClapID; return p }},
+		{"bad range", func(p []audio.ClapParamInfo) []audio.ClapParamInfo { p[2].MaxValue = 100; return p }},
+		{"wrong name", func(p []audio.ClapParamInfo) []audio.ClapParamInfo { p[0].Name = "Drive"; return p }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := organPatch()
+			p.PluginID = "com.littlepotato.keys"
+			p.LaunchkeyOrgan.DrawbarClapIDs = nil
+			params := drawbarParams()
+			for i, label := range []string{"16′", "5⅓′", "8′", "4′", "2⅔′", "2′", "1⅗′", "1⅓′", "1′"} {
+				params[i].Name = label
+			}
+			cache := clapcache.New()
+			cache.Replace(tc.edit(params))
+			setter, mapper, screen := &fakeSetter{}, &fakeMapper{}, &fakeScreen{}
+			r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper, screen: screen}
+			r.HandleFader(driver.FaderEvent{Index: 9, Value: 127})
+			if setter.called || len(mapper.events) != 0 || screen.line2 == "" {
+				t.Fatalf("invalid auto binding: setter=%v mixer=%v screen=%+v", setter.called, mapper.events, screen)
+			}
+		})
+	}
+}
+
 func TestOrganFaderMissingParamCapturesWithoutPartialMixerRoute(t *testing.T) {
 	p := organPatch()
 	cache := clapcache.New()
@@ -125,7 +184,7 @@ func TestPotatoKeysPluginOfflineAndLaunchkeyDrawbars(t *testing.T) {
 			t.Fatalf("missing drawbar %q in %v", name, params)
 		}
 	}
-	p := &patches.Patch{Name: "potato-keys", Type: "clap", LaunchkeyOrgan: patches.LaunchkeyOrgan{Enabled: true, Ownership: "organ", DrawbarClapIDs: ids}}
+	p := &patches.Patch{Name: "potato-keys", Type: "clap", PluginID: "com.littlepotato.keys", LaunchkeyOrgan: patches.LaunchkeyOrgan{Enabled: true, Ownership: "organ"}}
 	cache := clapcache.New()
 	cache.Replace(params)
 	setter, mapper := &fakeSetter{}, &fakeMapper{}

@@ -856,25 +856,28 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 
 ### Launchkey organ drawbars
 
-Launchkey DAW faders stay mixer-owned by default. A CLAP organ patch can opt
-in to capture faders 1–9 for drawbars by declaring the discovered numeric
-CLAP parameter IDs in drawbar order. Do not put string IDs such as
-`drawbar16` in `drawbar_clap_ids`; use the numeric IDs shown by the dev
-plugin panel or CLAP discovery for that exact plugin build.
+Launchkey DAW faders stay mixer-owned by default. For Potato Keys, opt in
+to drawbars 1–9 without copying numeric CLAP IDs. Polyclav resolves the
+nine exact footage labels (16′ through 1′) from the active plugin and checks
+that each has a distinct ID and a 0–8 range:
 
 ```toml
+[[patches]]
+name = "potato-keys-organ"
+display = "Potato Keys"
+type = "clap"
+plugin_path = "~/.clap/Potato Keys.clap"
+plugin_id = "com.littlepotato.keys"
+
 [patches.launchkey_organ]
 enabled = true
 ownership = "organ"
-# 16′, 5⅓′, 8′, 4′, 2⅔′, 2′, 1⅗′, 1⅓′, 1′
-drawbar_clap_ids = [1264127187, 663008433, 1021755852, 1088866328, 697526433, 1189532042, 1465392237, 2120943805, 1172754423]
 ```
 
-These IDs were discovered and exercised with the host-mounted Potato Keys
-build available during integration testing. Confirm them in `/dev/plugin`
-for your installed build before enabling organ ownership; they are not
-universal IDs promised for future plugin versions. The optional automated
-plugin test can be run without an audio device:
+If discovery is incomplete or ambiguous, the organ faders do nothing and
+the Launchkey displays `CHECK LABELS`; they do not unexpectedly move mixer
+volume. Other CLAP organs still require nine explicit `drawbar_clap_ids` in
+order. The optional Potato Keys integration test runs without an audio device:
 `POLYCLAV_KEYS_CLAP_PATH="$HOME/.clap/Potato Keys.clap" just test`.
 
 When this capture is active, fader 9 changes the ninth drawbar only; it does

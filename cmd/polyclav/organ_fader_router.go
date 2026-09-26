@@ -65,6 +65,16 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 		return false
 	}
 	ids := cur.LaunchkeyOrgan.DrawbarClapIDs
+	if len(ids) == 0 && cur.PluginID == "com.littlepotato.keys" {
+		var ok bool
+		ids, ok = discoverPotatoKeysDrawbars(r.cache.All())
+		if !ok {
+			// Organ ownership must not unexpectedly move mixer fader 9 when
+			// discovery fails. Keep the controls inert and show the problem.
+			r.show("ORGAN", "CHECK LABELS")
+			return true
+		}
+	}
 	if len(ids) != 9 {
 		r.show("ORGAN", "UNRESOLVED")
 		return true
@@ -91,6 +101,34 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 	r.cache.Update(param.ClapID, value)
 	r.show(drawbarLabel(e.Index), formatParamValue(value, param.MinValue, param.MaxValue))
 	return true
+}
+
+// discoverPotatoKeysDrawbars resolves the CLAP numeric IDs from the active
+// instance's exact nine footage labels. Duplicate labels, IDs, or changed
+// ranges disable capture rather than silently controlling the wrong knob.
+func discoverPotatoKeysDrawbars(params []audio.ClapParamInfo) ([]uint32, bool) {
+	ids := make([]uint32, 9)
+	found := make([]bool, 9)
+	seen := make(map[uint32]bool, 9)
+	for _, p := range params {
+		for i := range ids {
+			if p.Name != strings.TrimSuffix(drawbarLabel(i+1), " drawbar") {
+				continue
+			}
+			if found[i] || seen[p.ClapID] || math.IsNaN(p.MinValue) || math.IsNaN(p.MaxValue) || math.Abs(p.MinValue) > 0.0001 || math.Abs(p.MaxValue-8) > 0.0001 {
+				return nil, false
+			}
+			ids[i] = p.ClapID
+			found[i] = true
+			seen[p.ClapID] = true
+		}
+	}
+	for _, ok := range found {
+		if !ok {
+			return nil, false
+		}
+	}
+	return ids, true
 }
 
 func patchType(typ string) string {

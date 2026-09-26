@@ -342,13 +342,30 @@ drawbar_clap_ids = [101, 101, 101, 101, 101, 101, 101, 101, 101]
 	}
 }
 
-func TestLoadRejectsOrganOwnershipWithoutDrawbarIDs(t *testing.T) {
-	_, err := loadTOML(t, `
+func TestLoadAutoDiscoversPotatoKeysDrawbarsWithoutIDs(t *testing.T) {
+	cfg := mustLoadTOML(t, `
 [[patches]]
 name = "organ"
 type = "clap"
 plugin_path = "/tmp/Potato Keys.clap"
 plugin_id = "com.littlepotato.keys"
+
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+`)
+	if got := cfg.Patches[0].LaunchkeyOrgan; !got.Enabled || got.Ownership != "organ" || len(got.DrawbarClapIDs) != 0 {
+		t.Fatalf("auto organ binding = %+v", got)
+	}
+}
+
+func TestLoadRejectsUnknownOrganWithoutDrawbarIDs(t *testing.T) {
+	_, err := loadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/other.clap"
+plugin_id = "com.other.organ"
 
 [patches.launchkey_organ]
 enabled = true
