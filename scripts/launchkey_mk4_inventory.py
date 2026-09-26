@@ -134,7 +134,7 @@ def parse_aseqdump_line(
         # the 0-based MIDI channel as the first comma-separated value in the
         # event body, e.g. "Note on 0, note 60, velocity 100".
         leading_channel = re.match(
-            r"^(?:Note on|Note off|Control change|Controller|Pitch bend)\s+(-?\d+)\s*,", body, re.I
+            r"^(?:Note on|Note off|Control change|Controller|Pitch bend|Polyphonic aftertouch|Key pressure)\s+(-?\d+)\s*,", body, re.I
         )
         if leading_channel:
             raw_channel = int(leading_channel.group(1))
@@ -147,6 +147,8 @@ def parse_aseqdump_line(
         kind = "note_off"
     elif re.search(r"Control change|Controller", body, re.I):
         kind = "cc"
+    elif re.search(r"Polyphonic aftertouch|Key pressure", body, re.I):
+        kind = "poly_aftertouch"
     elif re.search(r"Pitch bend", body, re.I):
         kind = "pitch_bend"
     elif re.search(r"System exclusive|SysEx", body, re.I):
@@ -274,10 +276,40 @@ CONTROL_GROUPS: list[tuple[str, list[str]]] = [
 ]
 
 
-def iter_controls(selected_groups: set[str] | None = None) -> Iterable[dict[str, str]]:
-    for group, controls in CONTROL_GROUPS:
-        if selected_groups and group not in selected_groups:
-            continue
+# Each capture is passive: the operator enters modes with the keyboard's own
+# buttons and returns to DAW layout afterward. Mode labels are not extra
+# physical buttons. Longer windows allow a selection followed by a pad/key.
+FOLLOW_UP_GROUPS: list[tuple[str, list[str]]] = [
+    ("Shift and layout menus", [
+        "Shift + fader button 1 (Volume): hold Shift, tap button, release Shift; move fader 1",
+        "Shift + fader button 2 (Custom 1): hold Shift, tap button, release Shift; move fader 1",
+        "Shift + fader button 5 (Custom 4): hold Shift, tap button, release Shift; move fader 1",
+        "Shift + fader button 1 (Volume): restore Volume fader layout",
+        "Shift + encoder layout selection: select Plugin, rotate encoder 1; then select another available encoder mode and rotate encoder 1",
+        "Shift + encoder layout selection: restore Plugin mode",
+    ]),
+    ("Pad modes: enter using Shift menu and press one pad", [
+        *[f"Shift + pad menu: select {mode}; release Shift, press top-row pad 1, hold for aftertouch, release"
+          for mode in ("DAW", "Drum", "User Chord", "Arp Pattern", "Custom 1", "Custom 2", "Custom 3", "Custom 4")],
+        "Shift + pad menu: restore DAW layout before pressure capture",
+        "Pad aftertouch: in DAW layout press top-row pad 3 lightly, increase pressure, then release",
+    ]),
+    ("Feature toggles and key output", [
+        "Scale: press once, play and release same key; press again, play and release same key",
+        "Chord Map: select mode, press a pad and play/release one key; leave Chord Map mode",
+        "Arp: press once, play and release a key; press again to turn off (no audio)",
+        "Fixed Chord: hold button and play key if required to define chord; then play/release one key; clear if changed",
+        "Latch: with Arp active, use Shift + Arp or labeled Latch button; play/release a key, toggle off and stop Arp",
+        "Shift + Undo / Redo: hold Shift, tap Undo, release Shift; compare with ordinary Undo",
+        "Shift + transport rewind and fast-forward if physically labeled; otherwise skip",
+        "Return pads to DAW layout via Shift menu; press top-row pad 1 and release",
+    ]),
+]
+
+
+def iter_controls(preset: str = "full") -> Iterable[dict[str, str]]:
+    groups = FOLLOW_UP_GROUPS if preset == "follow-up" else CONTROL_GROUPS
+    for group, controls in groups:
         for control in controls:
             yield {"group": group, "control": control}
 
@@ -360,6 +392,7 @@ def run_inventory(args: argparse.Namespace) -> int:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "safety": "Read-only ALSA capture via aseqdump; no MIDI/audio/control messages are sent.",
         "device_regex": args.device_regex,
+        "preset": getattr(args, "preset", "full"),
         "ports": [asdict(p) for p in ports],
         "capture_ports": [asdict(p) for p in capture_ports],
         "controls": [],
@@ -370,7 +403,7 @@ def run_inventory(args: argparse.Namespace) -> int:
     print("For each prompt: Enter=capture, s=skip/no physical control, q=save and quit.")
     print("Do not infer device-local behavior from silence; the report records no-event evidence.\n")
 
-    for item in iter_controls():
+    for item in iter_controls(getattr(args, "preset", "full")):
         print(f"\n[{item['group']}] {item['control']}")
         choice = prompt_choice(f"Press Enter when ready for a {args.seconds:.1f}s capture (s/q): ")
         record: dict[str, object] = {**item, "status": "captured", "events": []}
@@ -408,6 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daw-port", help="override DAW/control ALSA source, e.g. 32:1")
     parser.add_argument("--seconds", type=float, default=5.0, help="capture duration per prompted control")
     parser.add_argument("--output", default="scratch/launchkey-mk4-inventory.json", help="JSON report path")
+    parser.add_argument("--preset", choices=("full", "follow-up"), default="full", help="follow-up captures Shift/menu/mode behavior without repeating all 83 controls")
     parser.add_argument("--list-prompts", action="store_true", help="print the deterministic prompt list and exit")
     return parser
 
@@ -415,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.list_prompts:
-        for item in iter_controls():
+        for item in iter_controls(args.preset):
             print(f"{item['group']}\t{item['control']}")
         return 0
     return run_inventory(args)

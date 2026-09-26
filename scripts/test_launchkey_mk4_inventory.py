@@ -81,6 +81,15 @@ class AseqdumpParserTest(unittest.TestCase):
         self.assertEqual(cc.channel, 16)
         self.assertEqual(cc.kind, "cc")
 
+    def test_polyphonic_pad_pressure_retains_channel_note_and_value(self):
+        event = inv.parse_aseqdump_line(
+            "32:1   Polyphonic aftertouch   0, note 98, value 54", {"32:1": "daw"}, 10, 9
+        )
+        self.assertEqual(event.kind, "poly_aftertouch")
+        self.assertEqual(event.channel, 1)
+        self.assertEqual(event.raw_values["note"], 98)
+        self.assertEqual(event.raw_values["value"], 54)
+
     def test_press_release_pairing_is_evidence_not_inference(self):
         roles = {"32:1": "daw"}
         events = [
@@ -123,6 +132,14 @@ class InventoryRunTest(unittest.TestCase):
 
 
 class PromptListTest(unittest.TestCase):
+    def test_follow_up_walks_shift_modes_and_restores_daw(self):
+        prompts = list(inv.iter_controls("follow-up"))
+        joined = "\n".join(item["control"] for item in prompts)
+        self.assertLess(len(prompts), 40)
+        for expected in ("Shift + fader button", "Shift + pad", "DAW", "Drum", "User Chord", "Arp Pattern", "Custom 4", "aftertouch", "Scale", "Chord Map", "Arp", "Fixed Chord", "Latch"):
+            self.assertIn(expected, joined)
+        self.assertEqual(prompts[-1]["control"], "Return pads to DAW layout via Shift menu; press top-row pad 1 and release")
+
     def test_prompt_list_covers_photographed_and_previously_omitted_controls(self):
         prompts = "\n".join(item["control"] for item in inv.iter_controls())
         for expected in [

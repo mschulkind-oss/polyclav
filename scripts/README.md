@@ -21,4 +21,12 @@
     --output scratch/launchkey-mk4-inventory.json
   ```
 
-  The script walks every photographed control with deterministic prompts and records timestamped note, CC, SysEx, pitch-bend, and system/realtime evidence per port. A prompt with no observed event is saved as `no_event`; do not treat that as proof of a MIDI event. To share results for driver mapping, send the generated JSON report from `scratch/launchkey-mk4-inventory.json`.
+  The script walks every photographed control with deterministic prompts and records timestamped note, CC, polyphonic pad pressure, SysEx, pitch-bend, and system/realtime evidence per port. A prompt with no observed event is saved as `no_event`; do not treat that as proof of a MIDI event. To share results for driver mapping, send the generated JSON report from `scratch/launchkey-mk4-inventory.json`.
+
+  After the full inventory, use the shorter Shift/layout/feature pass to inspect controls whose meaning changes with keyboard mode. The names printed after `Shift + pad menu` are **choices on the physical pad menu**, not separate buttons. Check the prompt list first; press Enter to capture each scenario and `s` if the control is absent. Select modes on the keyboard itself; the program never sends commands. Use a longer window when you need to select a mode and play a key. Return pads and faders to DAW/Volume mode when done. Choosing Custom modes or setting a chord can change the keyboard's local state; do not do this during a performance.
+
+  ```sh
+  python3 scripts/launchkey_mk4_inventory.py --preset follow-up --list-prompts
+  python3 scripts/launchkey_mk4_inventory.py --preset follow-up --seconds 12 \
+    --output scratch/launchkey-mk4-follow-up.json
+  ```
