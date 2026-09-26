@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mschulkind-oss/polyclav/internal/audio"
+	"github.com/mschulkind-oss/polyclav/internal/clapcache"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/patches"
 	"github.com/mschulkind-oss/polyclav/internal/player"
@@ -566,7 +567,7 @@ func (f fakeDevices) XR18State() string      { return f.xr }
 var (
 	sfPatch     = patches.Patch{Name: "salamander", Display: "Salamander", Type: "soundfont", PadColor: 25, GainDB: -3}
 	nativePatch = patches.Patch{Name: "moog", Display: "Moog", Type: "native", Engine: "minimoog", PadColor: 41}
-	clapPatch   = patches.Patch{Name: "potato", Display: "Potato Keys", Type: "clap", PluginPath: "/tmp/Potato Keys.clap", PluginID: "com.littlepotato.keys", LaunchkeyOrgan: patches.LaunchkeyOrgan{Enabled: true, Ownership: "organ", DrawbarParamIDs: []string{"drawbar16", "drawbar5_1_3", "drawbar8", "drawbar4", "drawbar2_2_3", "drawbar2", "drawbar1_3_5", "drawbar1_1_3", "drawbar1"}}}
+	clapPatch   = patches.Patch{Name: "potato", Display: "Potato Keys", Type: "clap", PluginPath: "/tmp/Potato Keys.clap", PluginID: "com.littlepotato.keys", LaunchkeyOrgan: patches.LaunchkeyOrgan{Enabled: true, Ownership: "organ", DrawbarParamIDs: []string{"drawbar16", "drawbar5_1_3", "drawbar8", "drawbar4", "drawbar2_2_3", "drawbar2", "drawbar1_3_5", "drawbar1_1_3", "drawbar1"}, DrawbarClapIDs: []uint32{101, 102, 103, 104, 105, 106, 107, 108, 109}}}
 )
 
 type fixture struct {
@@ -2104,6 +2105,30 @@ func TestDevPluginStatusReportsClapPatchBindingLoadAndMetrics(t *testing.T) {
 	organ := got["organ_params"].([]any)
 	if len(organ) == 0 {
 		t.Fatalf("missing organ param labels")
+	}
+}
+
+func TestDevPluginParamsPreferActiveCacheValues(t *testing.T) {
+	t.Setenv("POLYCLAV_DEV_WEB", "1")
+	cache := clapcache.New()
+	cache.Replace([]audio.ClapParamInfo{{ClapID: 42, Name: "16 drawbar", MinValue: 0, MaxValue: 8, DefaultValue: 4, CurrentValue: 7}})
+	devAudio := &fakeDevPluginAudio{params: []audio.ClapParamInfo{{ClapID: 42, Name: "16 drawbar", MinValue: 0, MaxValue: 8, DefaultValue: 4, CurrentValue: 1}}}
+	f := newFixture(t, func(d *Deps) { d.DevPluginAudio = devAudio; d.ClapParams = cache })
+	f.reg.mu.Lock()
+	f.reg.patches = []patches.Patch{clapPatch}
+	f.reg.current = 0
+	f.reg.active = 0
+	f.reg.status = patches.LoadStatus{Index: 0, Generation: 1, State: patches.LoadStateActive}
+	f.reg.mu.Unlock()
+
+	rec := f.do(t, "GET", "/api/dev/plugin/params", nil)
+	wantStatus(t, rec, http.StatusOK)
+	var got []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode params: %v", err)
+	}
+	if got[0]["value"].(float64) != 7 {
+		t.Fatalf("value = %v, want active cache value 7", got[0]["value"])
 	}
 }
 

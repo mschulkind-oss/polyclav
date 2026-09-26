@@ -294,13 +294,14 @@ drawbar_param_ids = [
   "drawbar4", "drawbar2_2_3", "drawbar2",
   "drawbar1_3_5", "drawbar1_1_3", "drawbar1",
 ]
+drawbar_clap_ids = [101, 102, 103, 104, 105, 106, 107, 108, 109]
 
 [[patches]]
 name = "piano"
 soundfont = "/tmp/piano.sf2"
 `)
 	organ := cfg.Patches[0].LaunchkeyOrgan
-	if !organ.Enabled || organ.Ownership != "organ" || len(organ.DrawbarParamIDs) != 9 {
+	if !organ.Enabled || organ.Ownership != "organ" || len(organ.DrawbarParamIDs) != 9 || len(organ.DrawbarClapIDs) != 9 {
 		t.Fatalf("organ binding = %+v", organ)
 	}
 	if got := cfg.Patches[1].LaunchkeyOrgan.Ownership; got != "mixer" {
@@ -335,8 +336,8 @@ plugin_id = "com.littlepotato.keys"
 enabled = true
 ownership = "organ"
 `)
-	if err == nil || !strings.Contains(err.Error(), "organ ownership requires drawbar_param_ids") {
-		t.Fatalf("err = %v, want drawbar_param_ids validation", err)
+	if err == nil || !strings.Contains(err.Error(), "organ ownership requires drawbar_clap_ids") {
+		t.Fatalf("err = %v, want drawbar_clap_ids validation", err)
 	}
 }
 

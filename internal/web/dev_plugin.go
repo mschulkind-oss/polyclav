@@ -97,6 +97,7 @@ type devPluginBindingJSON struct {
 	Enabled         bool     `json:"enabled"`
 	Ownership       string   `json:"ownership"`
 	DrawbarParamIDs []string `json:"drawbar_param_ids"`
+	DrawbarClapIDs  []uint32 `json:"drawbar_clap_ids"`
 }
 
 type devPluginMetricsJSON struct {
@@ -155,6 +156,7 @@ func (s *Server) devPluginStatus() devPluginStatusJSON {
 			Enabled:         cur.LaunchkeyOrgan.Enabled,
 			Ownership:       cur.LaunchkeyOrgan.Ownership,
 			DrawbarParamIDs: append([]string(nil), cur.LaunchkeyOrgan.DrawbarParamIDs...),
+			DrawbarClapIDs:  append([]uint32(nil), cur.LaunchkeyOrgan.DrawbarClapIDs...),
 		}
 	}
 	if active != nil {
@@ -222,9 +224,19 @@ func (s *Server) devPluginParams() ([]devPluginParamJSON, error) {
 	if s.deps.DevPluginAudio == nil {
 		return nil, fmt.Errorf("development plugin audio API not available")
 	}
-	ps, err := s.deps.DevPluginAudio.DiscoverClapParams(cur.PluginPath, cur.PluginID)
-	if err != nil {
-		return nil, err
+	var ps []audio.ClapParamInfo
+	if s.deps.ClapParams != nil {
+		ps = s.deps.ClapParams.All()
+	}
+	if len(ps) == 0 {
+		var err error
+		ps, err = s.deps.DevPluginAudio.DiscoverClapParams(cur.PluginPath, cur.PluginID)
+		if err != nil {
+			return nil, err
+		}
+		if s.deps.ClapParams != nil {
+			s.deps.ClapParams.Replace(ps)
+		}
 	}
 	out := make([]devPluginParamJSON, 0, len(ps))
 	for _, p := range ps {
@@ -310,6 +322,9 @@ func (s *Server) handleDevPluginParamPatch(w http.ResponseWriter, r *http.Reques
 	if err := s.deps.DevPluginAudio.SetClapParam(match.ClapID, *body.Value); err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	if s.deps.ClapParams != nil {
+		s.deps.ClapParams.Update(match.ClapID, *body.Value)
 	}
 	match.Value = *body.Value
 	s.deps.Hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{

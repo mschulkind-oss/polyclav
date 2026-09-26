@@ -205,7 +205,12 @@ port = 10024
 #   pads, top:      notes 96..103, ch1
 #   pads, bottom:   notes 112..119, ch1
 
-# Fader 9 → main L/R fader (the "room volume" pattern).
+# Fader 9 → main L/R fader (the "room volume" pattern). CLAP organ
+# patches can opt in to capture DAW faders 1-9 with
+# [patches.launchkey_organ].drawbar_clap_ids; when that capture is active,
+# the organ drawbar receives the movement and this OSC mixer binding does not.
+# Use numeric CLAP IDs discovered for the exact plugin build; do not guess from
+# stable string IDs like drawbar16.
 [[osc.xr18.bindings]]
 source_kind = "cc"
 channel     = 16

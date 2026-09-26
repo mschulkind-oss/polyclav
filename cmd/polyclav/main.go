@@ -22,6 +22,7 @@ import (
 
 	"github.com/mschulkind-oss/polyclav/internal/audio"
 	"github.com/mschulkind-oss/polyclav/internal/bootstrap"
+	"github.com/mschulkind-oss/polyclav/internal/clapcache"
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
@@ -373,6 +374,8 @@ func main() {
 	var sup *supervisor.Supervisor
 	var mapper *osc.Mapper
 	var pg *pages.Pages
+	clapParams := clapcache.New()
+	var faderRouter *organFaderRouter
 
 	patchBank := 0
 	pushPadColors := func() {
@@ -439,10 +442,9 @@ func main() {
 			// the screen adapter below, which arms the 800 ms restore.
 			pg.HandleKnob(e.Index, e.Delta)
 		case driver.FaderEvent:
-			// Faders remain OSC/mixer-owned by default. Per-CLAP-patch organ drawbar
-			// capture is intentionally not wired until the selected patch declares it
-			// and parameter identity is known; this avoids changing room volume and
-			// organ drawbars from the same physical movement.
+			if faderRouter != nil {
+				faderRouter.HandleFader(e)
+			}
 		case driver.FaderButtonEvent:
 			// Fader buttons are decoded, but expression/rotary/percussion routing is
 			// deliberately left inert until their physical MIDI behavior is verified.
@@ -569,6 +571,12 @@ func main() {
 	}
 	sup = supervisor.New(logger, supCfg)
 	mapper = osc.NewMapper(sup.XR18(), logger, cfg.OSC.XR18.Bindings)
+	faderRouter = &organFaderRouter{registry: registry, cache: clapParams, setter: realClapParamSetter{}, mapper: mapper, screen: organScreenFunc(func(line1, line2 string) {
+		if err := sup.Launchkey().SetDisplayText(line1, line2); err != nil {
+			logger.Warn("launchkey organ display", "err", err)
+		}
+		armScreenRestore()
+	})}
 
 	// Knob-page state machine (docs/ROADMAP.md §2): page state and all
 	// knob→param routing live in internal/controls/pages; main only adapts
@@ -672,12 +680,23 @@ func main() {
 						if registry.MarkActive(ev.Generation) {
 							if cur := registry.Current(); cur != nil {
 								stateStore.SetCurrentPatch(cur.Name)
+								if patchType(cur.Type) == "clap" {
+									if ps, err := audio.DiscoverClapParams(cur.PluginPath, cur.PluginID); err != nil {
+										logger.Warn("discover active clap params", "err", err)
+										clapParams.Clear()
+									} else {
+										clapParams.Replace(ps)
+									}
+								} else {
+									clapParams.Clear()
+								}
 							}
 							hub.Publish(controls.Change{Type: "patch"})
 							hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "active"}})
 						}
 					case audio.BackendEventFailed:
 						if registry.MarkFailed(ev.Generation, "audio-core loader failed") {
+							clapParams.Clear()
 							if cur := registry.Current(); cur != nil {
 								stateStore.SetCurrentPatch(cur.Name)
 							}
@@ -695,6 +714,7 @@ func main() {
 					if !ok {
 						break
 					}
+					clapParams.Update(ev.ClapID, ev.Value)
 					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
 			}
@@ -716,6 +736,7 @@ func main() {
 			Devices:     sup,
 			MIDIDevices: sup.MIDI(),
 			Probe:       probe,
+			ClapParams:  clapParams,
 			ConfigTOML:  func() ([]byte, error) { return os.ReadFile(path) },
 			ConfigPath:  path,
 			// Keeps the daemon's global velocity spec in sync with a

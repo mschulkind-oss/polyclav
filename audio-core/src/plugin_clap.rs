@@ -500,10 +500,10 @@ impl ClapInstance {
 
                     // 4. Choose the input note event dialect and restore optional state before activation.
                     let note_input = query_note_input(&instance)?;
-                    let params = query_params(&instance);
                     if let Some(blob) = state_blob.as_deref() {
                         load_state(&instance, blob)?;
                     }
+                    let params = query_params(&instance);
 
                     // 5. Activate with our audio configuration.
                     let audio_cfg = PluginAudioConfiguration {

@@ -854,6 +854,25 @@ the corresponding control on the XR18 (front panel, X-Air-Edit, or the
 mixer's web UI). The XR18 must be reachable on the LAN at the configured
 `host:port`.
 
+### Launchkey organ drawbars
+
+Launchkey DAW faders stay mixer-owned by default. A CLAP organ patch can opt
+in to capture faders 1–9 for drawbars by declaring the discovered numeric
+CLAP parameter IDs in drawbar order. Do not put string IDs such as
+`drawbar16` in `drawbar_clap_ids`; use the numeric IDs shown by the dev
+plugin panel or CLAP discovery for that exact plugin build.
+
+```toml
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+# 16′, 5⅓′, 8′, 4′, 2⅔′, 2′, 1⅗′, 1⅓′, 1′
+drawbar_clap_ids = [101, 102, 103, 104, 105, 106, 107, 108, 109]
+```
+
+When this capture is active, fader 9 changes the ninth drawbar only; it does
+not also send the mixer L/R fader OSC binding.
+
 ## Troubleshooting
 
 | Symptom | Fix |

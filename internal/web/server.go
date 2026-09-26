@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mschulkind-oss/polyclav/internal/clapcache"
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
@@ -68,6 +69,7 @@ type Deps struct {
 	MIDIPortLister func() ([]string, error)
 	Probe          *midiprobe.Session     // may be nil → probe endpoints return 503
 	DevPluginAudio DevPluginAudio         // dev-only CLAP poke surface; nil uses real audio when POLYCLAV_DEV_WEB=1
+	ClapParams     *clapcache.Cache       // active-instance CLAP parameter values; nil falls back to discovery-only dev reads
 	ConfigTOML     func() ([]byte, error) // reads polyclav.toml verbatim; nil → GET /api/config falls back to ConfigPath
 	ConfigPath     string                 // path to polyclav.toml; "" → PUT /api/config and velocity save return 404
 	// SetGlobalVelocity (may be nil) tells the daemon its global

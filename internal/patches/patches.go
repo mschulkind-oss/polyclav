@@ -56,6 +56,7 @@ type LaunchkeyOrgan struct {
 	Enabled         bool
 	Ownership       string
 	DrawbarParamIDs []string
+	DrawbarClapIDs  []uint32
 }
 
 // LoadState is the registry-visible readiness state for a selectable patch.
@@ -352,6 +353,7 @@ func FromConfig(cfgs []config.PatchConfig) []Patch {
 				Enabled:         c.LaunchkeyOrgan.Enabled,
 				Ownership:       c.LaunchkeyOrgan.Ownership,
 				DrawbarParamIDs: append([]string(nil), c.LaunchkeyOrgan.DrawbarParamIDs...),
+				DrawbarClapIDs:  append([]uint32(nil), c.LaunchkeyOrgan.DrawbarClapIDs...),
 			},
 		})
 	}

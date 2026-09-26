@@ -44,11 +44,15 @@ func NewMapper(client Sender, logger *slog.Logger, bindings []Binding) *Mapper {
 }
 
 func keyFor(b Binding) (bindKey, bool) {
+	ch := b.Channel - 1
+	if ch < 0 || ch > 15 {
+		return bindKey{}, false
+	}
 	switch b.SourceKind {
 	case "cc":
-		return bindKey{kind: 'c', channel: byte(b.Channel), controller: byte(b.Controller)}, true
+		return bindKey{kind: 'c', channel: byte(ch), controller: byte(b.Controller)}, true
 	case "note":
-		return bindKey{kind: 'n', channel: byte(b.Channel), controller: byte(b.Controller)}, true
+		return bindKey{kind: 'n', channel: byte(ch), controller: byte(b.Controller)}, true
 	default:
 		return bindKey{}, false
 	}
