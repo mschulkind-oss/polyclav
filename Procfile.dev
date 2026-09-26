@@ -1,11 +1,13 @@
 # Full dev loop (docs/WEB_UI.md): run with `just dev` (= hivemind Procfile.dev).
 # daemon: air rebuilds (just build-bin) + restarts on Go/Rust/config saves
 #         (.air.toml), serving the API on 127.0.0.1:8666 (--web on).
-# web:    next dev serves the app on :3000 with HMR and proxies /api/* to
-#         the daemon (next.config.ts).
-# Browse http://localhost:3000/app/ for live-reloading UI work.
+# web:    next dev respects hivemind's injected PORT=5100 (base 5000 +
+#         one 100 step) with HMR and proxies /api/* to the daemon
+#         (next.config.ts).
+# Browse http://localhost:5100/app/ for live-reloading UI work.
+# Note: / intentionally 404s because Next uses basePath /app; open /app/.
 # ⚠ :8666 serves the web build EMBEDDED in the daemon binary — it never
-#   auto-reloads (only `just build` refreshes it). Use :3000 during dev.
+#   auto-reloads (only `just build` refreshes it). Use :5100 during just dev.
 # If the daemon line dies instantly, air is probably not installed yet
 # (`mise install`); hivemind then kills the web process too by design.
 daemon: air

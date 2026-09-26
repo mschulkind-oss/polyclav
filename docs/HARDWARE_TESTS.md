@@ -91,12 +91,16 @@ try the specified pad/key. A mode name is not a separate button. If a mode is
 not available, skip it. The script sends nothing; pad/fader modes and chord
 settings can change locally on the keyboard, so restore DAW/Volume at the end.
 The probe now records pad polyphonic aftertouch as a separate event with note
-and value. For a visual read-only debug view, run `just web-dev` **without**
-starting the audio daemon and open `http://localhost:3000/app/launchkey-debug/`.
-Chromium's Web MIDI permission permits dual-port live input; alternatively
-load either inventory JSON locally and step through it without any MIDI
-permission. The visual view never transmits MIDI or starts audio. Controls
-that report no message cannot light up from MIDI alone.
+and value. For a visual read-only debug view without starting the audio daemon,
+run standalone `just web-dev` and open
+`http://localhost:3000/app/launchkey-debug/`. Under full `just dev`, hivemind
+assigns the web process `PORT=5100`, so use
+`http://localhost:5100/app/launchkey-debug/` instead. In either mode, `/`
+intentionally 404s because the Next app lives under `/app/`. Chromium's Web
+MIDI permission permits dual-port live input; alternatively load either
+inventory JSON locally and step through it without any MIDI permission. The
+visual view never transmits MIDI or starts audio. Controls that report no
+message cannot light up from MIDI alone.
 
 ## How to report back
 

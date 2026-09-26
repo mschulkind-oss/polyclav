@@ -69,11 +69,13 @@ run *args: build
     ./bin/polyclav {{args}}
 
 #   daemon — air rebuilds (just build-bin) + restarts on go/rs/toml/h saves
-#   web    — next dev with HMR on :3000, /api/* proxied to the daemon :8666
-# Browse http://localhost:3000/app/ (mockup playground: /app/mockup/).
+#   web    — next dev with HMR on :5100 under hivemind, /api/* proxied to
+#            the daemon :8666 (hivemind base 5000 + one 100 step)
+# Browse http://localhost:5100/app/ (mockup playground: /app/mockup/).
+# Note: / intentionally 404s because Next uses basePath /app; open /app/.
 # ⚠ :8666 is the daemon's own port — it serves the web build EMBEDDED at
 #   compile time and NEVER auto-reloads. If "nothing reloads", check you're
-#   on :3000, not :8666.
+#   on :5100, not :8666.
 # air is mise-pinned (mise.toml "go:github.com/air-verse/air"): on a fresh
 # checkout the shim exists but errors until `mise install` runs. If air dies
 # at startup, hivemind takes next dev down with it — so pre-flight both tools
@@ -93,9 +95,10 @@ dev:
         exit 1; \
     fi
     @echo "────────────────────────────────────────────────────────────────────"
-    @echo "  dev UI:   http://localhost:3000/app/   (auto-reloads; mockup at /app/mockup/)"
+    @echo "  dev UI:   http://localhost:5100/app/   (hivemind web PORT=5100; mockup at /app/mockup/)"
+    @echo "            / intentionally 404s because Next uses basePath /app"
     @echo "  WARNING:  :8666 serves the daemon's EMBEDDED web build — it does"
-    @echo "            NOT auto-reload. Always browse :3000 during dev."
+    @echo "            NOT auto-reload. Always browse :5100 during just dev."
     @echo "────────────────────────────────────────────────────────────────────"
     hivemind Procfile.dev
 
@@ -136,9 +139,9 @@ SOUNDFONT_FILE := "freepats-acoustic-grand-piano.sf2"
 web-setup:
     cd web && pnpm install
 
-# Dev loop: next dev on :3000 proxying /api/* to the daemon on :8666
-# (next.config.ts rewrites). Run the daemon too — or use
-# `hivemind Procfile.dev` to get both.
+# Dev loop: next dev directly uses Next's default :3000 and proxies /api/*
+# to the daemon on :8666 (next.config.ts rewrites). Under `just dev`,
+# hivemind injects PORT=5100 for the second Procfile process instead.
 web-dev:
     cd web && pnpm dev
 

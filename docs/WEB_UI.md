@@ -96,10 +96,14 @@ build time, so the released `polyclav` binary stays fully self-contained —
 no node at runtime, no separate deploy.
 
 Dev loop: `Procfile.dev` run with **hivemind** — the daemon on
-`127.0.0.1:8666` plus `next dev` on `:3000` proxying `/api/*` to the
-daemon (Next `rewrites`). `just web-dev`, `just web-build` targets;
-`just check` grows a `web` leg (biome ci + tsc + vitest) that only runs
-when `web/` exists/changed.
+`127.0.0.1:8666` plus `next dev` on `:5100` proxying `/api/*` to the
+daemon (Next `rewrites`). Hivemind assigns that web port because its base
+port is `5000`, its step is `100`, and `web` is the second Procfile
+process. Standalone `just web-dev` runs Next directly, so it uses Next's
+default `:3000`. In both modes open `/app/`; the root `/` intentionally
+404s because `web/next.config.ts` sets `basePath: "/app"`. `just
+web-dev`, `just web-build` targets; `just check` grows a `web` leg (biome
+ci + tsc + vitest) that only runs when `web/` exists/changed.
 
 ### Transport: REST for commands, SSE for state
 
