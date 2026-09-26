@@ -120,11 +120,14 @@ func looksLikeDrawbarParam(index int, p audio.ClapParamInfo) bool {
 	if p.MinValue > 0.0001 || p.MaxValue < 7.999 {
 		return false
 	}
-	name := strings.ToLower(p.Name + " " + p.Module)
-	if !strings.Contains(name, "drawbar") {
-		return false
+	// Potato Keys labels its drawbars by footage alone (for example "16′").
+	// Accept those exact labels without mistaking another numbered control for
+	// a drawbar; other plugins can use explicitly named drawbar parameters.
+	if strings.TrimSpace(p.Name) == strings.TrimSuffix(drawbarLabel(index), " drawbar") {
+		return true
 	}
-	return drawbarNameMatchesPosition(index, name)
+	name := strings.ToLower(p.Name + " " + p.Module)
+	return strings.Contains(name, "drawbar") && drawbarNameMatchesPosition(index, name)
 }
 
 func drawbarNameMatchesPosition(index int, name string) bool {

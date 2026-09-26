@@ -841,6 +841,57 @@ mod tests {
         assert!(encode_param_value_event(u32::MAX, 0.5).is_none());
     }
 
+    // Set POLYCLAV_KEYS_CLAP_PATH to run against a real Linux plugin; no audio
+    // device is opened by this test.
+    #[test]
+    fn potato_keys_state_round_trip_without_audio_device() {
+        let Some(path) = std::env::var_os("POLYCLAV_KEYS_CLAP_PATH") else {
+            return;
+        };
+        let path = Path::new(&path);
+        let mut first = ClapInstance::load(path, "com.littlepotato.keys", 48_000.0, 256, None, 1)
+            .expect("load Potato Keys");
+        let drawbar = first
+            .params()
+            .iter()
+            .find(|p| p.name == "16′")
+            .expect("Potato Keys 16-foot drawbar");
+        let drawbar_id = drawbar.clap_id;
+        let changed_value = if drawbar.current_value > 0.0 {
+            0.0
+        } else {
+            8.0
+        };
+        first
+            .input_events
+            .push(&encode_param_value_event(drawbar_id, changed_value).expect("valid drawbar id"));
+        first.render(&mut [0.0; 512]);
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        first
+            .state_request_sender()
+            .send(reply_tx)
+            .expect("request CLAP state");
+        let blob = reply_rx.recv().expect("state reply").expect("save state");
+        assert!(!blob.is_empty(), "Potato Keys returned empty state");
+        drop(first);
+        let restored =
+            ClapInstance::load(path, "com.littlepotato.keys", 48_000.0, 256, Some(&blob), 2)
+                .expect("restore Potato Keys state");
+        let round_trip: Vec<(u32, f64)> = restored
+            .params()
+            .iter()
+            .map(|p| (p.clap_id, p.current_value))
+            .collect();
+        assert_eq!(
+            round_trip
+                .iter()
+                .find(|(id, _)| *id == drawbar_id)
+                .map(|(_, v)| *v),
+            Some(changed_value),
+            "CLAP state restore did not preserve changed drawbar",
+        );
+    }
+
     #[test]
     fn note_dialect_prefers_clap_then_midi() {
         assert_eq!(

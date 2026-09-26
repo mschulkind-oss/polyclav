@@ -1,6 +1,8 @@
 package main
 
 import (
+	"math"
+	"os"
 	"testing"
 
 	"github.com/mschulkind-oss/polyclav/internal/audio"
@@ -97,6 +99,73 @@ func TestOrganFaderRejectsWrongDrawbarPositionWithoutMixerRoute(t *testing.T) {
 	}
 	if screen.line2 != "CHECK 102" {
 		t.Fatalf("screen = %q/%q, want CHECK 102", screen.line1, screen.line2)
+	}
+}
+
+// Run with POLYCLAV_KEYS_CLAP_PATH pointing at a Linux Potato Keys build.
+// The binary is optional so the ordinary suite remains self-contained.
+func TestPotatoKeysPluginOfflineAndLaunchkeyDrawbars(t *testing.T) {
+	path := os.Getenv("POLYCLAV_KEYS_CLAP_PATH")
+	if path == "" {
+		t.Skip("set POLYCLAV_KEYS_CLAP_PATH to exercise the installed Potato Keys plugin")
+	}
+	params, err := audio.DiscoverClapParams(path, "com.littlepotato.keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNames := [9]string{"16′", "5⅓′", "8′", "4′", "2⅔′", "2′", "1⅗′", "1⅓′", "1′"}
+	ids := make([]uint32, 9)
+	for i, name := range wantNames {
+		for _, param := range params {
+			if param.Name == name {
+				ids[i] = param.ClapID
+			}
+		}
+		if ids[i] == 0 {
+			t.Fatalf("missing drawbar %q in %v", name, params)
+		}
+	}
+	p := &patches.Patch{Name: "potato-keys", Type: "clap", LaunchkeyOrgan: patches.LaunchkeyOrgan{Enabled: true, Ownership: "organ", DrawbarClapIDs: ids}}
+	cache := clapcache.New()
+	cache.Replace(params)
+	setter, mapper := &fakeSetter{}, &fakeMapper{}
+	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
+	for i, id := range ids {
+		setter.called = false
+		r.HandleFader(driver.FaderEvent{Index: i + 1, Value: 127})
+		if !setter.called || setter.id != id || setter.value != 8 {
+			t.Errorf("fader %d: set (%d,%v,%v), want (%d,8,true)", i+1, setter.id, setter.value, setter.called, id)
+		}
+	}
+	if len(mapper.events) != 0 {
+		t.Fatalf("organ faders also sent mixer events: %v", mapper.events)
+	}
+	for _, tc := range []struct {
+		name   string
+		events []audio.OfflineMIDIEvent
+		want   bool
+	}{
+		{name: "silence", want: false},
+		{name: "note", events: []audio.OfflineMIDIEvent{{Frame: 0, Kind: audio.OfflineNoteOn, Data1: 60, Data2: 100}, {Frame: 24000, Kind: audio.OfflineNoteOff, Data1: 60}}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			samples, err := audio.RenderOfflineEvents("clap", path, "com.littlepotato.keys", nil, tc.events, 48000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			peak := float32(0)
+			for _, sample := range samples {
+				if math.IsNaN(float64(sample)) || math.IsInf(float64(sample), 0) {
+					t.Fatal("non-finite CLAP output")
+				}
+				if sample < -peak || sample > peak {
+					peak = float32(math.Abs(float64(sample)))
+				}
+			}
+			if (peak > 0.001) != tc.want {
+				t.Fatalf("peak = %g, want audible=%v", peak, tc.want)
+			}
+		})
 	}
 }
 

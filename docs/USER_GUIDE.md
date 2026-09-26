@@ -867,8 +867,15 @@ plugin panel or CLAP discovery for that exact plugin build.
 enabled = true
 ownership = "organ"
 # 16′, 5⅓′, 8′, 4′, 2⅔′, 2′, 1⅗′, 1⅓′, 1′
-drawbar_clap_ids = [101, 102, 103, 104, 105, 106, 107, 108, 109]
+drawbar_clap_ids = [1264127187, 663008433, 1021755852, 1088866328, 697526433, 1189532042, 1465392237, 2120943805, 1172754423]
 ```
+
+These IDs were discovered and exercised with the host-mounted Potato Keys
+build available during integration testing. Confirm them in `/dev/plugin`
+for your installed build before enabling organ ownership; they are not
+universal IDs promised for future plugin versions. The optional automated
+plugin test can be run without an audio device:
+`POLYCLAV_KEYS_CLAP_PATH="$HOME/.clap/Potato Keys.clap" just test`.
 
 When this capture is active, fader 9 changes the ninth drawbar only; it does
 not also send the mixer L/R fader OSC binding.
