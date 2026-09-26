@@ -47,8 +47,9 @@ notes and wheels, while the DAW port sends surface-control messages. The Novatio
 MIDI protocol; a local hardware reverse-engineering reference is also
 available on this host at `~/projects/hw_hacking/docs/hardware_interfaces.md`.
 This inventory is
-what Polyclav currently decodes, not a claim that every physical button has
-been observed on this particular unit:
+what Polyclav currently decodes versus the read-only September 2026 inventory.
+The CC messages below are **observations**, not a claim that the daemon
+handles them correctly yet:
 
 | Physical controls | Polyclav use now | What to check |
 |---|---|---|
@@ -56,10 +57,10 @@ been observed on this particular unit:
 | 16 pads (two rows of eight) | Top row selects eight patch slots per bank; bottom row indicates knob pages | Check pad notes 96–103 / 112–119 on the DAW port. |
 | 8 endless encoders | Five synth/chain pages | Check relative CC85–92 on channel 16. |
 | 9 faders | Unmapped by default; optional mixer OSC or opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
-| 9 fader buttons | Decoded, no application action yet | Check CC37–45 on channel 16. |
-| Scene ↑/↓ and Track ←/→ | Knob-page navigation and patch-bank navigation, respectively | Check which printed arrow pair produces each event; button note numbers 104–105 and 102–103. |
-| Play, Stop, Record, Loop, Rewind, Fast-forward, Shift | Play toggles audition; the rest are decoded but unused | Check button note numbers 115, 116, 117, 118, 113, 114, 106 respectively. |
-| Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Capture messages before assigning host actions; some alter device behavior rather than emit a distinct DAW button. |
+| 9 fader buttons | No application action; decoder currently expects channel 16 | Observed CC37–45 on DAW channel **1**, press 127/release 0. Printed shifted names are menu choices, not extra physical buttons. |
+| Pad-bank ↑/↓, display ↑/↓, Track ←/→ | Knob-page navigation and patch-bank navigation are intended, but decoder expects channel-16 note messages | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (display), CC103/102 (Track). Their roles must be reconciled before declaring navigation verified. |
+| Play, Stop, Record, Loop, Rewind, Fast-forward, Shift | Play is intended to toggle audition; decoder expects channel-16 notes | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. Rewind/fast-forward were skipped. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. |
+| Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Octave presses changed subsequent key note numbers but sent no distinct button event. Scale/Arp sent channel-7 CC74/73; Chord Map reported pad layout CC29=14. Fixed Chord sent no distinct button event in the capture. Test modes before assigning host actions. |
 
 Use the committed read-only inventory probe to capture one Launchkey control at
 a time and save a JSON report:
@@ -74,6 +75,28 @@ missing, compare the displayed capture sources with `aconnect -l` and rerun with
 `scratch/launchkey-mk4-inventory.json`; for any surprising result, also mention
 the physical label pressed and whether the probe recorded `captured`,
 `no_event`, `skipped`, or `capture_error`.
+
+To investigate the skipped mode controls without repeating every fader/key,
+run the targeted pass with longer windows:
+
+```sh
+python3 scripts/launchkey_mk4_inventory.py --preset follow-up --list-prompts
+python3 scripts/launchkey_mk4_inventory.py --preset follow-up --seconds 12 \
+  --output scratch/launchkey-mk4-follow-up.json
+```
+
+In a `Shift + pad menu` prompt, hold the keyboard's Shift button and
+select the **named mode** using the physical pad menu, then release Shift and
+try the specified pad/key. A mode name is not a separate button. If a mode is
+not available, skip it. The script sends nothing; pad/fader modes and chord
+settings can change locally on the keyboard, so restore DAW/Volume at the end.
+The probe now records pad polyphonic aftertouch as a separate event with note
+and value. For a visual read-only debug view, run `just web-dev` **without**
+starting the audio daemon and open `http://localhost:3000/app/launchkey-debug/`.
+Chromium's Web MIDI permission permits dual-port live input; alternatively
+load either inventory JSON locally and step through it without any MIDI
+permission. The visual view never transmits MIDI or starts audio. Controls
+that report no message cannot light up from MIDI alone.
 
 ## How to report back
 

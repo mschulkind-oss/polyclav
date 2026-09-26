@@ -14,6 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <nav className="topnav">
           <a href="/app/">Dashboard</a>
           <a href="/app/midi-probe/">MIDI Probe</a>
+          <a href="/app/launchkey-debug/">Launchkey Debug</a>
         </nav>
         {children}
       </body>

@@ -1,0 +1,99 @@
+.lk-debug {
+  display: grid;
+  gap: 1rem;
+}
+.lk-debug .wide {
+  min-width: 0;
+}
+.lk-ports {
+  margin-left: 0.8rem;
+  color: var(--text-muted, #aab4c1);
+}
+.lk-replay {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.8rem;
+}
+.lk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.5rem;
+}
+.lk-pad-row {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(78px, 1fr));
+  gap: 0.5rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.lk-control {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 54px;
+  border: 1px solid #536172;
+  border-radius: 6px;
+  padding: 0.35rem;
+  background: #202b38;
+  color: #eef4f8;
+  text-transform: capitalize;
+  font-size: 0.82rem;
+}
+.lk-control small {
+  color: #b8c5d1;
+  font-size: 0.75rem;
+}
+.lk-control.recent {
+  border-color: #ffc05b;
+}
+.lk-control.held {
+  background: #497e66;
+  border-color: #b9ffce;
+}
+.lk-keys {
+  display: flex;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  min-height: 115px;
+}
+.lk-key {
+  flex: 0 0 22px;
+  border: 1px solid #222;
+  text-align: center;
+  font-size: 0.55rem;
+  padding-top: 65px;
+  border-radius: 0 0 3px 3px;
+  color: #333;
+}
+.lk-key.white {
+  background: #eee;
+  height: 105px;
+}
+.lk-key.black {
+  background: #26313e;
+  color: #eee;
+  height: 74px;
+  padding-top: 45px;
+  margin: 0 -5px;
+  flex-basis: 14px;
+  z-index: 1;
+}
+.lk-key.held {
+  background: #49cb83;
+  color: #102a1a;
+}
+.lk-event-list {
+  max-height: 250px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.lk-event-list > div {
+  padding: 0.2rem 0;
+  border-bottom: 1px solid #49525c;
+}
+@media (max-width: 750px) {
+  .lk-pad-row {
+    grid-template-columns: repeat(8, 78px);
+  }
+}
