@@ -145,13 +145,15 @@ web-setup:
 web-dev:
     cd web && pnpm dev
 
-# Build the static export and refresh the embedded copy. The copy under
+# Build the static export into web/.next-build (isolated from next dev's
+# web/.next cache) and refresh the embedded copy. The copy under
 # internal/web/static/app/ is COMMITTED so `go build` needs no node.
 web-build:
+    rm -rf web/.next-build web/out
     cd web && pnpm build
     rm -rf internal/web/static/app
     mkdir -p internal/web/static/app
-    cp -a web/out/. internal/web/static/app/
+    cp -a web/.next-build/. internal/web/static/app/
 
 web-check:
     cd web && pnpm exec biome ci . && pnpm exec tsc --noEmit

@@ -4,7 +4,7 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 // The app is served by the polyclav daemon from /app/ (see
 // internal/web/static.go), so every page and asset URL must live under
 // that prefix. trailingSlash gives each route a directory-style URL that
-// maps 1:1 onto the exported files (route "/" -> out/index.html).
+// maps 1:1 onto the exported files (route "/" -> .next-build/index.html).
 const shared: NextConfig = {
   basePath: "/app",
   trailingSlash: true,

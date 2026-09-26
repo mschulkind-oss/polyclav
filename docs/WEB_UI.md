@@ -75,7 +75,7 @@ change-notification hub.
 │  Browser ──▶ REST PATCH ──┘         │                                    │
 │                                     ▼                                    │
 │  Browser ◀── SSE /api/events ◀── change hub (pub/sub)                    │
-│  Browser ◀── static files ◀── go:embed web/out (Next.js static export)   │
+│  Browser ◀── static files ◀── go:embed web/.next-build (static export)   │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -91,9 +91,11 @@ dependency.
 
 Per the portfolio tech standards: **Next.js** (with `output: "export"`),
 **pnpm**, **biome** for format/lint, **tsc** for type-checking, node via
-**mise**. The static export (`web/out/`) is embedded with `go:embed` at
-build time, so the released `polyclav` binary stays fully self-contained —
-no node at runtime, no separate deploy.
+**mise**. The static export (`web/.next-build/`) is embedded with
+`go:embed` at build time, so the released `polyclav` binary stays fully
+self-contained — no node at runtime, no separate deploy. Production builds use
+`.next-build` instead of `.next` so `just web-sync` does not rewrite the cache
+used by a concurrently running Next dev server.
 
 Dev loop: `Procfile.dev` run with **hivemind** — the daemon on
 `127.0.0.1:8666` plus `next dev` on `:5100` proxying `/api/*` to the

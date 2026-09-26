@@ -76,6 +76,7 @@ export default function LaunchkeyDebugPage() {
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const accessRef = useRef<MIDIAccess | null>(null);
+  const browserConnectToken = useRef(0);
   const handlersRef = useRef<Map<MIDIInput, (event: MIDIMessageEvent) => void>>(new Map());
 
   const resetSurface = useCallback(() => {
@@ -111,6 +112,7 @@ export default function LaunchkeyDebugPage() {
   }, []);
 
   const disconnectBrowser = useCallback(() => {
+    browserConnectToken.current += 1;
     for (const [input, handler] of handlersRef.current)
       input.removeEventListener("midimessage", handler);
     handlersRef.current.clear();
@@ -230,8 +232,11 @@ export default function LaunchkeyDebugPage() {
       return;
     }
     try {
+      browserConnectToken.current += 1;
+      const token = browserConnectToken.current;
       // sysex:false; no MIDIOutput is opened, and this page never sends messages.
       const access = await navigator.requestMIDIAccess({ sysex: false });
+      if (browserConnectToken.current !== token || activeSource.current !== "browser") return;
       accessRef.current = access;
       access.addEventListener("statechange", onStateChange.current);
       refreshRef.current();

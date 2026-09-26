@@ -49,7 +49,7 @@ function installMIDI() {
   };
   const request = vi.fn().mockResolvedValue(access);
   Object.defineProperty(navigator, "requestMIDIAccess", { configurable: true, value: request });
-  return { handlers, request, send };
+  return { access, handlers, request, send };
 }
 
 describe("Launchkey debugger", () => {
@@ -100,6 +100,24 @@ describe("Launchkey debugger", () => {
     expect(container.querySelector('[data-control="key-60"]')).toHaveClass("held");
     expect(request).toHaveBeenCalledWith({ sysex: false });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen browser MIDI if permission resolves after switching away", async () => {
+    let resolveAccess: (value: ReturnType<typeof installMIDI>["access"]) => void = () => {};
+    const pending = new Promise<ReturnType<typeof installMIDI>["access"]>((resolve) => {
+      resolveAccess = resolve;
+    });
+    const installed = installMIDI();
+    installed.request.mockReturnValueOnce(pending);
+    render(<LaunchkeyDebugPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Browser Web MIDI" }));
+    fireEvent.click(screen.getByRole("button", { name: "offline report" }));
+    await act(async () => resolveAccess(installed.access));
+
+    expect(installed.handlers.size).toBe(0);
+    expect(installed.access.addEventListener).not.toHaveBeenCalled();
+    expect(screen.getByText(/Offline; load a report/)).toBeInTheDocument();
   });
 
   it("renders encoders as signed relative steps around center 64", async () => {
