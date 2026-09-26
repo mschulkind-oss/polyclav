@@ -156,11 +156,12 @@ float polyclav_measure_lufs(const float *samples, uint32_t len);
  * silence handling as polyclav_measure_lufs. */
 float polyclav_measure_peak_dbfs(const float *samples, uint32_t len);
 
-/* MIDI event push (Go -> Rust audio thread, lock-free, drops on queue full). */
+/* MIDI event push (Go -> Rust audio thread, drops on queue full). */
 void polyclav_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
 void polyclav_midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity);
 void polyclav_midi_cc(uint8_t channel, uint8_t controller, uint8_t value);
 void polyclav_midi_pitch_bend(uint8_t channel, uint16_t bend);
+void polyclav_midi_panic(void);
 
 /* DSP parameter setters. All values clamped to [0.0, 1.0] in Rust. The
  * audio thread reads atomically on each callback; updates are advisory

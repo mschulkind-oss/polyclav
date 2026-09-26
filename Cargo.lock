@@ -1141,6 +1141,7 @@ name = "polyclav_audio_core"
 version = "0.0.1"
 dependencies = [
  "clack-host",
+ "clap-sys",
  "cpal",
  "crossbeam-queue",
  "fundsp",

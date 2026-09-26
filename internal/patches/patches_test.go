@@ -12,6 +12,8 @@ import (
 )
 
 type fakeAudio struct {
+	panicCalls        int
+	calls             []string
 	soundfont         string
 	setCalls          int
 	reloadCalls       int
@@ -30,13 +32,20 @@ type fakeAudio struct {
 	nativeErr         error
 }
 
+func (f *fakeAudio) Panic() {
+	f.panicCalls++
+	f.calls = append(f.calls, "panic")
+}
+
 func (f *fakeAudio) SetSoundfont(path string) {
 	f.soundfont = path
 	f.setCalls++
+	f.calls = append(f.calls, "soundfont")
 }
 
 func (f *fakeAudio) ReloadSoundfont() error {
 	f.reloadCalls++
+	f.calls = append(f.calls, "reload")
 	return f.reloadErr
 }
 
@@ -47,12 +56,14 @@ func (f *fakeAudio) SetPatchGain(linear float32) {
 
 func (f *fakeAudio) SetLv2Plugin(uri string) error {
 	f.lv2Calls++
+	f.calls = append(f.calls, "lv2")
 	f.lv2URI = uri
 	return f.lv2Err
 }
 
 func (f *fakeAudio) SetClapPlugin(bundlePath, pluginID string) error {
 	f.clapCalls++
+	f.calls = append(f.calls, "clap")
 	f.clapPath = bundlePath
 	f.clapID = pluginID
 	return f.clapErr
@@ -60,6 +71,7 @@ func (f *fakeAudio) SetClapPlugin(bundlePath, pluginID string) error {
 
 func (f *fakeAudio) SetNativePatch(engine string) error {
 	f.nativeCalls++
+	f.calls = append(f.calls, "native")
 	f.nativeEngine = engine
 	return f.nativeErr
 }
@@ -304,11 +316,15 @@ func TestSelectIndexLv2Patch(t *testing.T) {
 }
 
 func TestSelectIndexClapPatch(t *testing.T) {
+	clapPath := filepath.Join(t.TempDir(), "Dexed.clap")
+	if err := os.WriteFile(clapPath, []byte("fake clap"), 0o644); err != nil {
+		t.Fatalf("write fake clap: %v", err)
+	}
 	p := Patch{
 		Name:       "dexed-clap",
 		Display:    "Dexed",
 		Type:       "clap",
-		PluginPath: "/nix/store/fake-dexed/lib/clap/Dexed.clap",
+		PluginPath: clapPath,
 		PluginID:   "com.asb2m10.dexed",
 		GainDB:     -3.0,
 	}
@@ -441,5 +457,53 @@ func TestSelectIndexNativeMissingEngine(t *testing.T) {
 	}
 	if r.Current() != nil {
 		t.Errorf("expected nil Current() after failed selection, got %v", r.Current())
+	}
+}
+
+func TestSelectIndexPanicsBeforeBackendSwitch(t *testing.T) {
+	dir := t.TempDir()
+	sf := makePatch(t, dir, "sf", components.ColorVibrantGreen)
+	clapPath := filepath.Join(dir, "Potato Keys.clap")
+	if err := os.WriteFile(clapPath, []byte("fake clap"), 0o644); err != nil {
+		t.Fatalf("write fake clap: %v", err)
+	}
+	tests := []struct {
+		name  string
+		patch Patch
+		want  []string
+	}{
+		{name: "soundfont", patch: sf, want: []string{"panic", "soundfont", "reload"}},
+		{name: "lv2", patch: Patch{Name: "lv2", Type: "lv2", PluginURI: "urn:test"}, want: []string{"panic", "lv2"}},
+		{name: "clap", patch: Patch{Name: "clap", Type: "clap", PluginPath: clapPath, PluginID: "com.test"}, want: []string{"panic", "clap"}},
+		{name: "native", patch: Patch{Name: "native", Type: "native", Engine: "minimoog"}, want: []string{"panic", "native"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fa := &fakeAudio{}
+			r := newWithBackend([]Patch{tt.patch}, fa)
+			if err := r.SelectIndex(0); err != nil {
+				t.Fatalf("SelectIndex: %v", err)
+			}
+			if got := strings.Join(fa.calls, ","); got != strings.Join(tt.want, ",") {
+				t.Fatalf("call order = %v, want %v", fa.calls, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectIndexClapMissingPathDoesNotMutateCurrentOrPanic(t *testing.T) {
+	fa := &fakeAudio{}
+	r := newWithBackend([]Patch{
+		{Name: "bad", Type: "clap", PluginPath: filepath.Join(t.TempDir(), "missing.clap"), PluginID: "com.test"},
+	}, fa)
+	err := r.SelectIndex(0)
+	if err == nil {
+		t.Fatal("SelectIndex missing CLAP path succeeded")
+	}
+	if r.Current() != nil {
+		t.Fatalf("current = %+v, want nil", r.Current())
+	}
+	if fa.panicCalls != 0 || fa.clapCalls != 0 || fa.setPatchGainCalls != 0 {
+		t.Fatalf("backend touched on failed select: %+v", fa)
 	}
 }

@@ -213,6 +213,7 @@ impl SynthBackend {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MidiEvent {
     NoteOn {
         channel: u8,
@@ -232,6 +233,62 @@ enum MidiEvent {
         channel: u8,
         bend: u16,
     },
+}
+
+struct HeldNotes {
+    held: [[bool; 128]; 16],
+}
+
+impl Default for HeldNotes {
+    fn default() -> Self {
+        Self {
+            held: [[false; 128]; 16],
+        }
+    }
+}
+
+impl HeldNotes {
+    fn observe(&mut self, event: &MidiEvent) {
+        match *event {
+            MidiEvent::NoteOn {
+                channel,
+                note,
+                velocity,
+            } if velocity > 0 => {
+                self.held[(channel & 0x0F) as usize][(note & 0x7F) as usize] = true;
+            }
+            MidiEvent::NoteOn {
+                channel,
+                note,
+                velocity: 0,
+            }
+            | MidiEvent::NoteOff { channel, note } => {
+                self.held[(channel & 0x0F) as usize][(note & 0x7F) as usize] = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn panic_events(&mut self) -> Vec<MidiEvent> {
+        let mut events = Vec::new();
+        for channel in 0..16 {
+            for note in 0..128 {
+                if self.held[channel][note] {
+                    events.push(MidiEvent::NoteOff {
+                        channel: channel as u8,
+                        note: note as u8,
+                    });
+                    self.held[channel][note] = false;
+                }
+            }
+        }
+        events
+    }
+}
+
+static HELD_NOTES: OnceLock<Mutex<HeldNotes>> = OnceLock::new();
+fn held_notes() -> &'static Mutex<HeldNotes> {
+    HELD_NOTES.get_or_init(|| Mutex::new(HeldNotes::default()))
 }
 
 static MIDI_QUEUE: OnceLock<Arc<ArrayQueue<MidiEvent>>> = OnceLock::new();
@@ -1424,8 +1481,20 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
     0
 }
 
-#[no_mangle]
+fn normalize_midi_event(event: MidiEvent) -> MidiEvent {
+    match event {
+        MidiEvent::NoteOn {
+            channel,
+            note,
+            velocity: 0,
+        } => MidiEvent::NoteOff { channel, note },
+        event => event,
+    }
+}
+
 fn push_midi_event(queue: &ArrayQueue<MidiEvent>, event: MidiEvent) -> bool {
+    let event = normalize_midi_event(event);
+    held_notes().lock().unwrap().observe(&event);
     match queue.push(event) {
         Ok(()) => true,
         Err(_) => {
@@ -1450,6 +1519,20 @@ pub extern "C" fn polyclav_midi_note_on(channel: u8, note: u8, velocity: u8) {
 #[no_mangle]
 pub extern "C" fn polyclav_midi_note_off(channel: u8, note: u8, _velocity: u8) {
     push_midi_event(midi_queue(), MidiEvent::NoteOff { channel, note });
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_midi_panic() {
+    let events = held_notes().lock().unwrap().panic_events();
+    let queue = midi_queue();
+    for event in events {
+        match queue.push(event) {
+            Ok(()) => {}
+            Err(_) => {
+                audio_metrics().midi_drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
 }
 
 #[no_mangle]
@@ -2875,6 +2958,60 @@ mod tests {
         let mut metrics = PolyclavAudioMetrics::default();
         unsafe { polyclav_audio_get_metrics(&mut metrics) };
         assert_eq!(metrics.midi_drops, 1);
+    }
+
+    #[test]
+    fn held_notes_track_releases_and_panic_only_emits_held_notes() {
+        let mut held = HeldNotes::default();
+        held.observe(&MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+        held.observe(&MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 110,
+        });
+        held.observe(&MidiEvent::NoteOn {
+            channel: 1,
+            note: 64,
+            velocity: 90,
+        });
+        held.observe(&MidiEvent::NoteOff {
+            channel: 0,
+            note: 60,
+        });
+        held.observe(&MidiEvent::NoteOff {
+            channel: 0,
+            note: 60,
+        });
+
+        assert_eq!(
+            held.panic_events(),
+            vec![MidiEvent::NoteOff {
+                channel: 1,
+                note: 64
+            }]
+        );
+        assert!(held.panic_events().is_empty());
+    }
+
+    #[test]
+    fn held_notes_treat_velocity_zero_note_on_as_release() {
+        let mut held = HeldNotes::default();
+        held.observe(&MidiEvent::NoteOn {
+            channel: 2,
+            note: 72,
+            velocity: 100,
+        });
+        held.observe(&normalize_midi_event(MidiEvent::NoteOn {
+            channel: 2,
+            note: 72,
+            velocity: 0,
+        }));
+
+        assert!(held.panic_events().is_empty());
     }
 
     #[test]

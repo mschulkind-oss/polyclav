@@ -273,6 +273,9 @@ func parse(msg midi.Message) (Event, bool) {
 	var abs uint16
 	switch {
 	case msg.GetNoteStart(&channel, &key, &vel):
+		if vel == 0 {
+			return Event{Kind: NoteOff, Channel: channel, Note: key}, true
+		}
 		return Event{Kind: NoteOn, Channel: channel, Note: key, Vel: vel}, true
 	case msg.GetNoteEnd(&channel, &key):
 		return Event{Kind: NoteOff, Channel: channel, Note: key}, true

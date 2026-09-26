@@ -52,6 +52,7 @@ type Patch struct {
 // audioBackend is the slice of internal/audio that Registry needs. The default
 // implementation calls into the real audio package; tests inject a fake.
 type audioBackend interface {
+	Panic()
 	SetSoundfont(path string)
 	ReloadSoundfont() error
 	SetPatchGain(linear float32)
@@ -64,6 +65,7 @@ type audioBackend interface {
 // audio.ReloadSoundfont directly.
 type realAudioBackend struct{}
 
+func (realAudioBackend) Panic()                        { audio.Panic() }
 func (realAudioBackend) SetSoundfont(path string)      { audio.SetSoundfont(path) }
 func (realAudioBackend) ReloadSoundfont() error        { return audio.ReloadSoundfont() }
 func (realAudioBackend) SetPatchGain(linear float32)   { audio.SetPatchGain(linear) }
@@ -165,6 +167,7 @@ func (r *Registry) SelectIndex(i int) error {
 		if _, err := os.Stat(p.Soundfont); err != nil {
 			return fmt.Errorf("patch %q: soundfont %q: %w", p.Name, p.Soundfont, err)
 		}
+		backend.Panic()
 		backend.SetSoundfont(p.Soundfont)
 		if err := backend.ReloadSoundfont(); err != nil {
 			return fmt.Errorf("patch %q: reload soundfont: %w", p.Name, err)
@@ -173,6 +176,7 @@ func (r *Registry) SelectIndex(i int) error {
 		if p.PluginURI == "" {
 			return fmt.Errorf("patch %q: type=lv2 missing plugin_uri", p.Name)
 		}
+		backend.Panic()
 		if err := backend.SetLv2Plugin(p.PluginURI); err != nil {
 			return fmt.Errorf("patch %q: set lv2 plugin: %w", p.Name, err)
 		}
@@ -180,6 +184,10 @@ func (r *Registry) SelectIndex(i int) error {
 		if p.PluginPath == "" || p.PluginID == "" {
 			return fmt.Errorf("patch %q: type=clap missing plugin_path or plugin_id", p.Name)
 		}
+		if _, err := os.Stat(p.PluginPath); err != nil {
+			return fmt.Errorf("patch %q: clap plugin_path %q: %w", p.Name, p.PluginPath, err)
+		}
+		backend.Panic()
 		if err := backend.SetClapPlugin(p.PluginPath, p.PluginID); err != nil {
 			return fmt.Errorf("patch %q: set clap plugin: %w", p.Name, err)
 		}
@@ -187,6 +195,7 @@ func (r *Registry) SelectIndex(i int) error {
 		if p.Engine == "" {
 			return fmt.Errorf("patch %q: type=native missing engine", p.Name)
 		}
+		backend.Panic()
 		if err := backend.SetNativePatch(p.Engine); err != nil {
 			return fmt.Errorf("patch %q: set native patch: %w", p.Name, err)
 		}

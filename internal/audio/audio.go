@@ -21,6 +21,7 @@ package audio
 // // declarations).
 // int32_t polyclav_audio_set_lv2_plugin(const char *uri);
 // int32_t polyclav_audio_set_clap_plugin(const char *bundle_path, const char *plugin_id);
+// void polyclav_midi_panic(void);
 // // Native synth backend (Phase 1; see docs/ROADMAP.md).
 // int32_t polyclav_audio_set_native_patch(const char *engine);
 // void    polyclav_dsp_set_native_cutoff_hz(float hz);
@@ -43,6 +44,7 @@ import "C"
 import (
 	"fmt"
 	"math"
+	"os"
 	"unsafe"
 )
 
@@ -387,6 +389,9 @@ func SetClapPlugin(bundlePath, pluginID string) error {
 	if pluginID == "" {
 		return fmt.Errorf("audio-core set clap plugin: empty plugin id")
 	}
+	if _, err := os.Stat(bundlePath); err != nil {
+		return fmt.Errorf("audio-core set clap plugin %q: %w", bundlePath, err)
+	}
 	cpath := C.CString(bundlePath)
 	defer C.free(unsafe.Pointer(cpath))
 	cid := C.CString(pluginID)
@@ -403,6 +408,10 @@ func SetClapPlugin(bundlePath, pluginID string) error {
 // The synth instantiates on a background thread; the audio thread swaps
 // to it on the next callback. Returns an error if scheduling the load
 // failed or the engine name is unknown.
+func Panic() {
+	C.polyclav_midi_panic()
+}
+
 func SetNativePatch(engine string) error {
 	if engine == "" {
 		return fmt.Errorf("audio-core set native patch: empty engine name")
