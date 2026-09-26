@@ -1,6 +1,7 @@
 package patches
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -26,6 +27,8 @@ type fakeAudio struct {
 	clapPath          string
 	clapID            string
 	clapCalls         int
+	clapStateCalls    int
+	lastClapState     []byte
 	clapErr           error
 	nativeEngine      string
 	nativeCalls       int
@@ -66,6 +69,15 @@ func (f *fakeAudio) SetClapPlugin(bundlePath, pluginID string) error {
 	f.calls = append(f.calls, "clap")
 	f.clapPath = bundlePath
 	f.clapID = pluginID
+	return f.clapErr
+}
+
+func (f *fakeAudio) SetClapPluginWithState(bundlePath, pluginID string, stateBlob []byte) error {
+	f.clapStateCalls++
+	f.calls = append(f.calls, "clap-state")
+	f.clapPath = bundlePath
+	f.clapID = pluginID
+	f.lastClapState = append([]byte(nil), stateBlob...)
 	return f.clapErr
 }
 
@@ -505,5 +517,22 @@ func TestSelectIndexClapMissingPathDoesNotMutateCurrentOrPanic(t *testing.T) {
 	}
 	if fa.panicCalls != 0 || fa.clapCalls != 0 || fa.setPatchGainCalls != 0 {
 		t.Fatalf("backend touched on failed select: %+v", fa)
+	}
+}
+
+func TestSelectWithClapStatePassesSavedBlob(t *testing.T) {
+	dir := t.TempDir()
+	plugin := filepath.Join(dir, "fixture.clap")
+	if err := os.WriteFile(plugin, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fa := &fakeAudio{}
+	r := newWithBackend([]Patch{{Name: "organ", Type: "clap", PluginPath: plugin, PluginID: "com.test"}}, fa)
+	blob := []byte{1, 2, 3}
+	if err := r.SelectWithClapState("organ", blob); err != nil {
+		t.Fatalf("SelectWithClapState: %v", err)
+	}
+	if fa.clapStateCalls != 1 || !bytes.Equal(fa.lastClapState, blob) {
+		t.Fatalf("clap state calls=%d blob=%v", fa.clapStateCalls, fa.lastClapState)
 	}
 }

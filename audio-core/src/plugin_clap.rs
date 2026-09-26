@@ -21,19 +21,29 @@
 //! plugin load; Phase 2 will introduce a proper main-thread keeper for
 //! clean teardown.
 
-use std::ffi::CString;
+use clap_sys::ext::params::{clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS};
+use clap_sys::ext::state::{clap_plugin_state, CLAP_EXT_STATE};
+use clap_sys::stream::{clap_istream, clap_ostream};
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
 
-use clack_host::events::event_types::{MidiEvent as ClapMidiEvent, NoteOffEvent, NoteOnEvent};
+use clack_host::events::event_types::{
+    MidiEvent as ClapMidiEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent,
+};
 use clack_host::events::io::{EventBuffer, InputEvents, OutputEvents};
 use clack_host::events::{Match, Pckn};
 use clack_host::prelude::{
     AudioPortBuffer, AudioPortBufferType, AudioPorts, HostInfo, OutputAudioBuffers,
     PluginAudioConfiguration, PluginEntry, PluginInstance, StartedPluginAudioProcessor,
 };
+use clack_host::utils::{ClapId, Cookie};
 
-use crate::{record_clap_input_event_drop, record_plugin_render_error, MidiEvent};
+use crate::{
+    clap_feedback_queue, clap_param_queue, record_clap_input_event_drop,
+    record_plugin_render_error, MidiEvent, PolyclavClapFeedbackEvent, PolyclavClapParamInfo,
+};
 use clap_sys::ext::note_ports::{
     clap_note_port_info, clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP,
     CLAP_NOTE_DIALECT_MIDI,
@@ -200,6 +210,173 @@ fn query_note_input(instance: &PluginInstance<()>) -> Result<ClapNoteInput, Stri
     })
 }
 
+fn c_char_array_to_string(buf: &[c_char]) -> String {
+    let nul = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let bytes: Vec<u8> = buf[..nul].iter().map(|&c| c as u8).collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn plugin_extension<T>(instance: &PluginInstance<()>, ext_id: &CStr) -> Option<&'static T> {
+    let handle = instance.plugin_shared_handle();
+    let raw = handle.as_raw();
+    let get_extension = raw.get_extension?;
+    let ptr = unsafe { get_extension(handle.as_raw_ptr(), ext_id.as_ptr()) };
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*(ptr as *const T) })
+    }
+}
+
+fn query_params(instance: &PluginInstance<()>) -> Vec<PolyclavClapParamInfo> {
+    let Some(params) = plugin_extension::<clap_plugin_params>(instance, CLAP_EXT_PARAMS) else {
+        return Vec::new();
+    };
+    let (Some(count), Some(get_info)) = (params.count, params.get_info) else {
+        return Vec::new();
+    };
+    let handle = instance.plugin_shared_handle();
+    let n = unsafe { count(handle.as_raw_ptr()) };
+    let mut out = Vec::with_capacity(n as usize);
+    for idx in 0..n {
+        let mut info = clap_param_info {
+            id: 0,
+            flags: 0,
+            cookie: std::ptr::null_mut(),
+            name: [0; clap_sys::string_sizes::CLAP_NAME_SIZE],
+            module: [0; clap_sys::string_sizes::CLAP_PATH_SIZE],
+            min_value: 0.0,
+            max_value: 0.0,
+            default_value: 0.0,
+        };
+        if unsafe { get_info(handle.as_raw_ptr(), idx, &mut info) } {
+            let mut current = info.default_value;
+            if let Some(get_value) = params.get_value {
+                let _ = unsafe { get_value(handle.as_raw_ptr(), info.id, &mut current) };
+            }
+            out.push(PolyclavClapParamInfo {
+                clap_id: info.id,
+                flags: info.flags,
+                min_value: info.min_value,
+                max_value: info.max_value,
+                default_value: info.default_value,
+                current_value: current,
+                name: c_char_array_to_string(&info.name),
+                module: c_char_array_to_string(&info.module),
+            });
+        }
+    }
+    out
+}
+
+struct ReadStream<'a> {
+    data: &'a [u8],
+    offset: usize,
+}
+
+unsafe extern "C" fn read_stream(
+    stream: *const clap_istream,
+    buffer: *mut c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || buffer.is_null() {
+        return -1;
+    }
+    let ctx = unsafe { &mut *((*stream).ctx as *mut ReadStream<'_>) };
+    let remaining = ctx.data.len().saturating_sub(ctx.offset);
+    let n = remaining.min(size as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(ctx.data.as_ptr().add(ctx.offset), buffer.cast::<u8>(), n);
+    }
+    ctx.offset += n;
+    n as i64
+}
+
+#[allow(dead_code)]
+unsafe extern "C" fn write_stream(
+    stream: *const clap_ostream,
+    buffer: *const c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || buffer.is_null() {
+        return -1;
+    }
+    let out = unsafe { &mut *((*stream).ctx as *mut Vec<u8>) };
+    let slice = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), size as usize) };
+    out.extend_from_slice(slice);
+    size as i64
+}
+
+fn load_state(instance: &PluginInstance<()>, blob: &[u8]) -> Result<(), String> {
+    if blob.is_empty() {
+        return Ok(());
+    }
+    let Some(state) = plugin_extension::<clap_plugin_state>(instance, CLAP_EXT_STATE) else {
+        return Err("CLAP plugin has no state extension".to_string());
+    };
+    let load = state
+        .load
+        .ok_or_else(|| "CLAP state extension missing load".to_string())?;
+    let mut ctx = ReadStream {
+        data: blob,
+        offset: 0,
+    };
+    let stream = clap_istream {
+        ctx: (&mut ctx as *mut ReadStream<'_>).cast::<c_void>(),
+        read: Some(read_stream),
+    };
+    if unsafe { load(instance.plugin_shared_handle().as_raw_ptr(), &stream) } {
+        Ok(())
+    } else {
+        Err("CLAP state load returned false".to_string())
+    }
+}
+
+#[allow(dead_code)]
+fn save_state(instance: &PluginInstance<()>) -> Result<Vec<u8>, String> {
+    let Some(state) = plugin_extension::<clap_plugin_state>(instance, CLAP_EXT_STATE) else {
+        return Err("CLAP plugin has no state extension".to_string());
+    };
+    let save = state
+        .save
+        .ok_or_else(|| "CLAP state extension missing save".to_string())?;
+    let mut out = Vec::<u8>::new();
+    let stream = clap_ostream {
+        ctx: (&mut out as *mut Vec<u8>).cast::<c_void>(),
+        write: Some(write_stream),
+    };
+    if unsafe { save(instance.plugin_shared_handle().as_raw_ptr(), &stream) } {
+        Ok(out)
+    } else {
+        Err("CLAP state save returned false".to_string())
+    }
+}
+
+pub fn discover_params(
+    bundle_path: &Path,
+    plugin_id: &str,
+) -> Result<Vec<PolyclavClapParamInfo>, String> {
+    let entry = unsafe { PluginEntry::load(bundle_path) }
+        .map_err(|e| format!("CLAP load {}: {e:?}", bundle_path.display()))?;
+    let plugin_id_c =
+        CString::new(plugin_id).map_err(|e| format!("CLAP plugin id has interior NUL: {e}"))?;
+    let instance =
+        PluginInstance::<()>::new(|_| (), |_| (), &entry, plugin_id_c.as_c_str(), host_info())
+            .map_err(|e| format!("CLAP instantiate {plugin_id}: {e:?}"))?;
+    Ok(query_params(&instance))
+}
+
+fn encode_param_value_event(clap_id: u32, value: f64) -> Option<ParamValueEvent> {
+    let id = ClapId::from_raw(clap_id)?;
+    Some(ParamValueEvent::new(
+        0,
+        id,
+        Pckn::match_all(),
+        value,
+        Cookie::empty(),
+    ))
+}
+
 /// Cached `HostInfo`. CLAP plugins expect a stable host identity; rebuild
 /// it once and reuse for every instantiation.
 fn host_info() -> &'static HostInfo {
@@ -218,6 +395,7 @@ fn host_info() -> &'static HostInfo {
 /// A loaded, activated CLAP plugin instance ready to render audio.
 pub struct ClapInstance {
     processor: StartedPluginAudioProcessor<()>,
+    instance: PluginInstance<()>,
     /// Output audio port wrapper, sized to 2 channels / 1 port. We keep a
     /// pre-allocated `AudioPorts` so the per-callback `with_output_buffers`
     /// call doesn't allocate.
@@ -230,6 +408,10 @@ pub struct ClapInstance {
     input_ports: AudioPorts,
     /// Reusable event input buffer; cleared and refilled each callback.
     input_events: EventBuffer,
+    /// Reusable output event buffer for plugin-to-host parameter feedback.
+    output_events: EventBuffer,
+    /// Discovered parameter ids for filtering host-global parameter writes.
+    param_ids: Vec<u32>,
     /// Selected CLAP note input dialect and port.
     note_input: ClapNoteInput,
     input_event_count: u32,
@@ -251,6 +433,7 @@ impl ClapInstance {
         plugin_id: &str,
         sample_rate: f64,
         max_block: usize,
+        state_blob: Option<&[u8]>,
     ) -> Result<Self, String> {
         // 1. Load the .clap dynamic library and its entry descriptor.
         // SAFETY: `PluginEntry::load` is unsafe because dlopen can execute
@@ -291,8 +474,12 @@ impl ClapInstance {
             PluginInstance::<()>::new(|_| (), |_| (), &entry, plugin_id_c.as_c_str(), host_info())
                 .map_err(|e| format!("CLAP instantiate {plugin_id}: {e:?}"))?;
 
-        // 4. Choose the input note event dialect before activation.
+        // 4. Choose the input note event dialect and restore optional state before activation.
         let note_input = query_note_input(&instance)?;
+        let params = query_params(&instance);
+        if let Some(blob) = state_blob {
+            load_state(&instance, blob)?;
+        }
 
         // 5. Activate with our audio configuration.
         let audio_cfg = PluginAudioConfiguration {
@@ -310,21 +497,18 @@ impl ClapInstance {
             .start_processing()
             .map_err(|e| format!("CLAP start_processing {plugin_id}: {e:?}"))?;
 
-        // 7. Drop the PluginInstance shell. Per its Drop impl, since the
-        // started processor still owns an Arc to the same inner, the
-        // shell intentionally leaks one ref count rather than risk an
-        // unsynchronised free. PluginEntry similarly Arc-clones into the
-        // instance; letting it drop here is fine.
-        drop(instance);
         drop(entry);
 
         Ok(Self {
             processor,
+            instance,
             output_ports: AudioPorts::with_capacity(2, 1),
             out_l: Vec::with_capacity(max_block),
             out_r: Vec::with_capacity(max_block),
             input_ports: AudioPorts::with_capacity(0, 0),
             input_events: EventBuffer::with_capacity(64),
+            output_events: EventBuffer::with_capacity(64),
+            param_ids: params.into_iter().map(|p| p.clap_id).collect(),
             note_input,
             input_event_count: 0,
             input_event_limit: 64,
@@ -373,10 +557,47 @@ impl ClapInstance {
         }
     }
 
+    fn push_pending_param_events(&mut self) {
+        while let Some(write) = clap_param_queue().pop() {
+            if !self.param_ids.contains(&write.clap_id) {
+                continue;
+            }
+            if self.input_event_count >= self.input_event_limit {
+                record_clap_input_event_drop();
+                continue;
+            }
+            if let Some(ev) = encode_param_value_event(write.clap_id, write.value) {
+                self.input_events.push(&ev);
+                self.input_event_count += 1;
+            }
+        }
+    }
+
+    fn service_state_requests(&self) {
+        while let Some(tx) = crate::clap_state_request_queue().pop() {
+            let _ = tx.send(save_state(&self.instance));
+        }
+    }
+
+    fn collect_feedback_events(&self) {
+        for ev in self.output_events.iter() {
+            if let Some(param) = ev.as_event::<ParamValueEvent>() {
+                if let Some(id) = param.param_id() {
+                    let _ = clap_feedback_queue().push(PolyclavClapFeedbackEvent {
+                        clap_id: id.get(),
+                        value: param.value(),
+                        kind: 0,
+                    });
+                }
+            }
+        }
+    }
+
     /// Render a single audio callback into the interleaved stereo `samples`
     /// buffer. Called on the audio thread.
     pub fn render(&mut self, samples: &mut [f32]) {
         let n_frames = samples.len() / 2;
+        self.push_pending_param_events();
         self.out_l.clear();
         self.out_l.resize(n_frames, 0.0);
         self.out_r.clear();
@@ -396,10 +617,8 @@ impl ClapInstance {
             .with_input_buffers::<_, _, [_; 0], [_; 0]>([]);
 
         let in_events = InputEvents::from_buffer(&self.input_events);
-        // Phase 1 intentionally does not collect plugin output events. A void
-        // output event list prevents plugin-emitted events from growing a
-        // Vec-backed host buffer on the audio thread.
-        let mut out_events = OutputEvents::void();
+        self.output_events.clear();
+        let mut out_events = OutputEvents::from_buffer(&mut self.output_events);
 
         let result = self.processor.process(
             &input_audio,
@@ -410,7 +629,10 @@ impl ClapInstance {
             None,
         );
 
-        // Clear MIDI input for the next block regardless of outcome.
+        self.collect_feedback_events();
+        self.service_state_requests();
+
+        // Clear MIDI/param input for the next block regardless of outcome.
         self.input_events.clear();
         self.input_event_count = 0;
 
@@ -555,6 +777,18 @@ mod tests {
                 bytes: [0x81, 60, 0]
             }]
         );
+    }
+
+    #[test]
+    fn param_event_encoding_produces_param_value() {
+        let ev = encode_param_value_event(42, 0.75).expect("valid id");
+        assert_eq!(ev.param_id().unwrap().get(), 42);
+        assert_eq!(ev.value(), 0.75);
+    }
+
+    #[test]
+    fn invalid_param_id_is_rejected() {
+        assert!(encode_param_value_event(u32::MAX, 0.5).is_none());
     }
 
     #[test]

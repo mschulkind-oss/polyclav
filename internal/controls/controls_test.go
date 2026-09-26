@@ -52,6 +52,8 @@ type fakeAudio struct {
 	lastLFO                          lfoCall
 	voiceMode                        string
 	oversample                       bool
+	clapState                        []byte
+	clapSaveErr                      error
 	lastOsc                          oscCall
 	oscHook                          func() // optional: runs at SetNativeOsc entry (gate for concurrency tests)
 	oscErr                           error  // forced SetNativeOsc failure
@@ -149,6 +151,10 @@ func (f *fakeAudio) SetFxOrder(p uint32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fxOrder = p
+}
+
+func (f *fakeAudio) SaveClapState() ([]byte, error) {
+	return append([]byte(nil), f.clapState...), f.clapSaveErr
 }
 
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
@@ -297,9 +303,11 @@ func (f *fakeAudio) synthCalls() int {
 // fakeRegistry implements Registry over an in-memory patch list with no
 // audio side effects.
 type fakeRegistry struct {
-	patches   []patches.Patch
-	current   int // -1 == none selected
-	selectErr error
+	patches        []patches.Patch
+	current        int // -1 == none selected
+	selectErr      error
+	clapStateCalls int
+	lastClapState  []byte
 }
 
 func newFakeRegistry(ps ...patches.Patch) *fakeRegistry {
@@ -333,6 +341,12 @@ func (f *fakeRegistry) Select(name string) error {
 	return fmt.Errorf("patch %q not found", name)
 }
 
+func (f *fakeRegistry) SelectWithClapState(name string, stateBlob []byte) error {
+	f.clapStateCalls++
+	f.lastClapState = append([]byte(nil), stateBlob...)
+	return f.Select(name)
+}
+
 func (f *fakeRegistry) SelectIndex(i int) error {
 	if f.selectErr != nil {
 		return f.selectErr
@@ -356,6 +370,7 @@ type knobUpdate struct {
 type fakeStore struct {
 	knobs        map[string]state.Knob
 	synths       map[string]state.SynthState
+	claps        map[string]state.ClapState
 	currentPatch string
 	updates      []knobUpdate
 	synthUpdates int
@@ -368,6 +383,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		knobs:  map[string]state.Knob{},
 		synths: map[string]state.SynthState{},
+		claps:  map[string]state.ClapState{},
 	}
 }
 
@@ -447,6 +463,15 @@ func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
 func (f *fakeStore) UpdatePatchSynth(name string, syn state.SynthState) {
 	f.synths[name] = syn
 	f.synthUpdates++
+}
+
+func (f *fakeStore) PatchClap(name string) (state.ClapState, bool) {
+	cl, ok := f.claps[name]
+	return cl, ok
+}
+
+func (f *fakeStore) UpdatePatchClap(name string, cl state.ClapState) {
+	f.claps[name] = cl
 }
 
 func (f *fakeStore) SetCurrentPatch(name string) {
@@ -2909,5 +2934,52 @@ func TestSetMacrosValidatesAndPublishes(t *testing.T) {
 	got, ok := ch.Data["macros"].([]state.Macro)
 	if !ok || !slices.Equal(got, macros) {
 		t.Errorf("macros change data = %+v, want %+v", ch.Data["macros"], macros)
+	}
+}
+
+func TestSelectPatchClapRestoresSavedBlob(t *testing.T) {
+	f := newFixture(t,
+		patches.Patch{Name: "organ", Display: "Organ", Type: "clap"},
+	)
+	f.st.claps["organ"] = state.ClapState{BlobBase64: "AQID", FormatVersion: 1}
+	if err := f.c.SelectPatch("organ"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if f.reg.clapStateCalls != 1 {
+		t.Fatalf("SelectWithClapState calls = %d, want 1", f.reg.clapStateCalls)
+	}
+	if !slices.Equal(f.reg.lastClapState, []byte{1, 2, 3}) {
+		t.Fatalf("state blob = %v", f.reg.lastClapState)
+	}
+}
+
+func TestSelectPatchClapMissingBlobUsesDefaults(t *testing.T) {
+	f := newFixture(t,
+		patches.Patch{Name: "organ", Display: "Organ", Type: "clap"},
+	)
+	if err := f.c.SelectPatch("organ"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if f.reg.clapStateCalls != 1 {
+		t.Fatalf("SelectWithClapState calls = %d, want 1", f.reg.clapStateCalls)
+	}
+	if f.reg.lastClapState != nil {
+		t.Fatalf("state blob = %v, want nil", f.reg.lastClapState)
+	}
+}
+
+func TestSelectPatchSavesPreviousClapBeforeSwitch(t *testing.T) {
+	f := newFixture(t,
+		patches.Patch{Name: "organ", Display: "Organ", Type: "clap"},
+		patches.Patch{Name: "piano", Display: "Piano", Type: "native", Engine: "minimoog"},
+	)
+	f.reg.current = 0
+	f.audio.clapState = []byte{4, 5, 6}
+	if err := f.c.SelectPatch("piano"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	got, ok := f.st.claps["organ"]
+	if !ok || got.BlobBase64 != "BAUG" || got.FormatVersion != 1 {
+		t.Fatalf("saved clap state = %+v ok=%v", got, ok)
 	}
 }

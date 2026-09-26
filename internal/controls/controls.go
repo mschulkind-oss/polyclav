@@ -1,6 +1,7 @@
 package controls
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,6 +38,7 @@ type Audio interface {
 	// six pedals packed as six 4-bit nibbles (see internal/audio.SetFxOrder and
 	// internal/controls/chain.go packFxOrder).
 	SetFxOrder(uint32)
+	SaveClapState() ([]byte, error)
 	SetNativeCutoffHz(float32)
 	SetMasteringCompressor(float32)
 	SetLimiterCeilingDB(float32)
@@ -65,6 +67,10 @@ type Registry interface {
 	SelectIndex(i int) error
 }
 
+type clapStateSelector interface {
+	SelectWithClapState(name string, stateBlob []byte) error
+}
+
 // StateStore is the slice of *state.Store the controls layer persists
 // through, so browser and Launchkey edits are indistinguishable on disk.
 type StateStore interface {
@@ -75,6 +81,8 @@ type StateStore interface {
 	// SelectPatch maps to the factory defaults.
 	PatchSynth(string) (state.SynthState, bool)
 	UpdatePatchSynth(string, state.SynthState)
+	PatchClap(string) (state.ClapState, bool)
+	UpdatePatchClap(string, state.ClapState)
 	SetCurrentPatch(string)
 	// UpdatePatchEnable sets a chain stage's enable flag; stage is one of
 	// "drive"/"chorus"/"tremolo"/"delay". PedalOrder/SetPedalOrder carry
@@ -1581,6 +1589,47 @@ func (c *Controls) Synth() SynthSnapshot {
 	return c.synth
 }
 
+func findPatch(ps []patches.Patch, name string) *patches.Patch {
+	for i := range ps {
+		if ps[i].Name == name {
+			p := ps[i]
+			return &p
+		}
+	}
+	return nil
+}
+
+func (c *Controls) savedClapBlob(name string) ([]byte, error) {
+	st, ok := c.st.PatchClap(name)
+	if !ok || st.BlobBase64 == "" {
+		return nil, nil
+	}
+	blob, err := base64.StdEncoding.DecodeString(st.BlobBase64)
+	if err != nil {
+		return nil, fmt.Errorf("patch %q: decode clap state: %w", name, err)
+	}
+	return blob, nil
+}
+
+func (c *Controls) saveCurrentClapState() {
+	cur := c.reg.Current()
+	if cur == nil || cur.Type != "clap" {
+		return
+	}
+	blob, err := c.audio.SaveClapState()
+	if err != nil {
+		c.logger.Warn("save clap state", "patch", cur.Name, "err", err)
+		return
+	}
+	if len(blob) == 0 {
+		return
+	}
+	c.st.UpdatePatchClap(cur.Name, state.ClapState{
+		BlobBase64:    base64.StdEncoding.EncodeToString(blob),
+		FormatVersion: 1,
+	})
+}
+
 // SelectPatch switches to the named patch: registry select, restore that
 // patch's saved knob values (and, for native patches, its saved synth
 // block) into the audio engine, record it as current in the state store,
@@ -1591,6 +1640,20 @@ func (c *Controls) Synth() SynthSnapshot {
 func (c *Controls) SelectPatch(name string) error {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
+	c.saveCurrentClapState()
+	if sel, ok := c.reg.(clapStateSelector); ok {
+		if p := findPatch(c.reg.All(), name); p != nil && p.Type == "clap" {
+			blob, err := c.savedClapBlob(name)
+			if err != nil {
+				return err
+			}
+			if err := sel.SelectWithClapState(name, blob); err != nil {
+				return err
+			}
+			c.afterSelect()
+			return nil
+		}
+	}
 	if err := c.reg.Select(name); err != nil {
 		return err
 	}
@@ -1602,6 +1665,21 @@ func (c *Controls) SelectPatch(name string) error {
 func (c *Controls) SelectPatchIndex(i int) error {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
+	c.saveCurrentClapState()
+	if sel, ok := c.reg.(clapStateSelector); ok {
+		ps := c.reg.All()
+		if i >= 0 && i < len(ps) && ps[i].Type == "clap" {
+			blob, err := c.savedClapBlob(ps[i].Name)
+			if err != nil {
+				return err
+			}
+			if err := sel.SelectWithClapState(ps[i].Name, blob); err != nil {
+				return err
+			}
+			c.afterSelect()
+			return nil
+		}
+	}
 	if err := c.reg.SelectIndex(i); err != nil {
 		return err
 	}

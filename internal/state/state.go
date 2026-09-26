@@ -148,9 +148,15 @@ type OscState struct {
 // pointer so its absence survives a round trip — soundfont patches never
 // grow a synth table, and a native patch only gets one after its first
 // synth tweak.
+type ClapState struct {
+	BlobBase64    string `toml:"blob_base64,omitempty"`
+	FormatVersion int    `toml:"format_version,omitempty"`
+}
+
 type PatchState struct {
 	Knob
 	Synth *SynthState `toml:"synth,omitempty"`
+	Clap  *ClapState  `toml:"clap,omitempty"`
 }
 
 // Macro is one Launchkey-style macro-slot assignment: slot 1..8 mapped
@@ -491,6 +497,10 @@ func clonePatches(in map[string]PatchState) map[string]PatchState {
 			syn := *v.Synth
 			v.Synth = &syn
 		}
+		if v.Clap != nil {
+			cl := *v.Clap
+			v.Clap = &cl
+		}
 		out[k] = v
 	}
 	return out
@@ -698,6 +708,32 @@ func (s *Store) UpdatePatchSynth(patchName string, syn SynthState) {
 		p = PatchState{Knob: Defaults()}
 	}
 	p.Synth = &syn
+	s.snap.Patches[patchName] = p
+	s.dirty = true
+	s.mu.Unlock()
+	s.signalWake()
+}
+
+// PatchClap returns the stored CLAP state blob for patchName. ok is false
+// when no blob has ever been saved for the patch.
+func (s *Store) PatchClap(patchName string) (ClapState, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.snap.Patches[patchName]; ok && p.Clap != nil {
+		return *p.Clap, true
+	}
+	return ClapState{}, false
+}
+
+// UpdatePatchClap replaces patchName's persisted CLAP state block and
+// schedules a debounced write. The knob and native-synth blocks are untouched.
+func (s *Store) UpdatePatchClap(patchName string, cl ClapState) {
+	s.mu.Lock()
+	p, ok := s.snap.Patches[patchName]
+	if !ok {
+		p = PatchState{Knob: Defaults()}
+	}
+	p.Clap = &cl
 	s.snap.Patches[patchName] = p
 	s.dirty = true
 	s.mu.Unlock()

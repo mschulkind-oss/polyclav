@@ -87,6 +87,97 @@ pub struct PolyclavAudioMetrics {
     pub max_frames: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PolyclavClapParamInfoC {
+    pub clap_id: u32,
+    pub flags: u32,
+    pub min_value: f64,
+    pub max_value: f64,
+    pub default_value: f64,
+    pub current_value: f64,
+    pub name: [c_char; 256],
+    pub module: [c_char; 1024],
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct PolyclavClapParamInfo {
+    pub clap_id: u32,
+    pub flags: u32,
+    pub min_value: f64,
+    pub max_value: f64,
+    pub default_value: f64,
+    pub current_value: f64,
+    pub name: String,
+    pub module: String,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PolyclavClapFeedbackEvent {
+    pub clap_id: u32,
+    pub value: f64,
+    pub kind: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClapParamWrite {
+    pub clap_id: u32,
+    pub value: f64,
+}
+
+static CLAP_PARAM_QUEUE: OnceLock<Arc<ArrayQueue<ClapParamWrite>>> = OnceLock::new();
+pub(crate) fn clap_param_queue() -> &'static Arc<ArrayQueue<ClapParamWrite>> {
+    CLAP_PARAM_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(1024)))
+}
+
+static CLAP_FEEDBACK_QUEUE: OnceLock<Arc<ArrayQueue<PolyclavClapFeedbackEvent>>> = OnceLock::new();
+pub(crate) fn clap_feedback_queue() -> &'static Arc<ArrayQueue<PolyclavClapFeedbackEvent>> {
+    CLAP_FEEDBACK_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(1024)))
+}
+
+fn copy_str_to_c_array<const N: usize>(dst: &mut [c_char; N], src: &str) {
+    *dst = [0; N];
+    for (i, b) in src
+        .as_bytes()
+        .iter()
+        .copied()
+        .take(N.saturating_sub(1))
+        .enumerate()
+    {
+        dst[i] = b as c_char;
+    }
+}
+
+type ClapStateResponse = mpsc::SyncSender<Result<Vec<u8>, String>>;
+type ClapStateRequestQueue = Arc<ArrayQueue<ClapStateResponse>>;
+
+static CLAP_STATE_REQUEST_QUEUE: OnceLock<ClapStateRequestQueue> = OnceLock::new();
+pub(crate) fn clap_state_request_queue() -> &'static ClapStateRequestQueue {
+    CLAP_STATE_REQUEST_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(8)))
+}
+
+static LAST_CLAP_STATE_BLOB: OnceLock<Mutex<Option<Vec<u8>>>> = OnceLock::new();
+fn last_clap_state_blob() -> &'static Mutex<Option<Vec<u8>>> {
+    LAST_CLAP_STATE_BLOB.get_or_init(|| Mutex::new(None))
+}
+
+fn param_info_to_c(info: &PolyclavClapParamInfo) -> PolyclavClapParamInfoC {
+    let mut out = PolyclavClapParamInfoC {
+        clap_id: info.clap_id,
+        flags: info.flags,
+        min_value: info.min_value,
+        max_value: info.max_value,
+        default_value: info.default_value,
+        current_value: info.current_value,
+        name: [0; 256],
+        module: [0; 1024],
+    };
+    copy_str_to_c_array(&mut out.name, &info.name);
+    copy_str_to_c_array(&mut out.module, &info.module);
+    out
+}
+
 #[derive(Default)]
 struct AudioMetricsAtomics {
     callbacks: AtomicU64,
@@ -220,8 +311,18 @@ impl SynthBackend {
     }
 
     #[cfg(target_os = "linux")]
-    fn load_clap(bundle_path: &Path, plugin_id: &str) -> Result<Self, String> {
-        let inst = ClapInstance::load(bundle_path, plugin_id, f64::from(SAMPLE_RATE), MAX_QUANTUM)?;
+    fn load_clap(
+        bundle_path: &Path,
+        plugin_id: &str,
+        state_blob: Option<&[u8]>,
+    ) -> Result<Self, String> {
+        let inst = ClapInstance::load(
+            bundle_path,
+            plugin_id,
+            f64::from(SAMPLE_RATE),
+            MAX_QUANTUM,
+            state_blob,
+        )?;
         eprintln!(
             "audio-core: CLAP plugin loaded ({} :: {plugin_id})",
             bundle_path.display()
@@ -1457,6 +1558,21 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     bundle_path: *const c_char,
     plugin_id: *const c_char,
 ) -> i32 {
+    unsafe {
+        polyclav_audio_set_clap_plugin_with_state(bundle_path, plugin_id, std::ptr::null(), 0)
+    }
+}
+
+/// # Safety
+/// pointers must be valid C strings; state_blob may be NULL when state_len is 0.
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
+    bundle_path: *const c_char,
+    plugin_id: *const c_char,
+    state_blob: *const u8,
+    state_len: usize,
+) -> i32 {
     if bundle_path.is_null() || plugin_id.is_null() {
         return 2;
     }
@@ -1467,6 +1583,11 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     let plugin_id = match unsafe { CStr::from_ptr(plugin_id) }.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return 2,
+    };
+    let state_blob: Option<Vec<u8>> = if state_blob.is_null() || state_len == 0 {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(state_blob, state_len) }.to_vec())
     };
     if state_cell().lock().unwrap().is_none() {
         eprintln!("audio-core: CLAP load requested but audio not running");
@@ -1486,7 +1607,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
                 "audio-core: background load of CLAP plugin {} :: {plugin_id:?}",
                 bundle_path.display()
             );
-            match SynthBackend::load_clap(&bundle_path, &plugin_id) {
+            match SynthBackend::load_clap(&bundle_path, &plugin_id, state_blob.as_deref()) {
                 Ok(backend) => {
                     let name = backend.name();
                     if enqueue_preloaded_backend_if_current(&queue, generation, loader_epoch, backend) {
@@ -1500,6 +1621,132 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
         })
         .expect("spawn clap load thread");
     0
+}
+
+/// # Safety
+/// pointers must be valid C strings/out buffer when non-NULL.
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
+    bundle_path: *const c_char,
+    plugin_id: *const c_char,
+    out: *mut PolyclavClapParamInfoC,
+    capacity: usize,
+    out_count: *mut usize,
+) -> i32 {
+    if bundle_path.is_null() || plugin_id.is_null() {
+        return 2;
+    }
+    let bundle_path = match unsafe { CStr::from_ptr(bundle_path) }.to_str() {
+        Ok(s) => PathBuf::from(s),
+        Err(_) => return 2,
+    };
+    let plugin_id = match unsafe { CStr::from_ptr(plugin_id) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+    match crate::plugin_clap::discover_params(&bundle_path, plugin_id) {
+        Ok(params) => {
+            if !out_count.is_null() {
+                unsafe {
+                    *out_count = params.len();
+                }
+            }
+            if !out.is_null() {
+                for (i, info) in params.iter().take(capacity).enumerate() {
+                    unsafe {
+                        *out.add(i) = param_info_to_c(info);
+                    }
+                }
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("audio-core: CLAP param discovery failed: {e}");
+            1
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub extern "C" fn polyclav_audio_clap_set_param(clap_id: u32, value: f64) -> i32 {
+    match clap_param_queue().push(ClapParamWrite { clap_id, value }) {
+        Ok(()) => 0,
+        Err(_) => {
+            record_clap_input_event_drop();
+            1
+        }
+    }
+}
+
+/// # Safety
+/// out must be NULL or point to writable storage for one event.
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_poll_feedback(
+    out: *mut PolyclavClapFeedbackEvent,
+) -> i32 {
+    let Some(ev) = clap_feedback_queue().pop() else {
+        return 0;
+    };
+    if !out.is_null() {
+        unsafe {
+            *out = ev;
+        }
+    }
+    1
+}
+
+/// # Safety
+/// out_len must be writable when non-NULL. out may be NULL to request and cache
+/// a state snapshot length; a following call with storage copies that snapshot.
+#[cfg(target_os = "linux")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_save_state(
+    out: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> i32 {
+    if out.is_null() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        if clap_state_request_queue().push(tx).is_err() {
+            return 1;
+        }
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(Ok(blob)) => {
+                if !out_len.is_null() {
+                    unsafe {
+                        *out_len = blob.len();
+                    }
+                }
+                *last_clap_state_blob().lock().unwrap() = Some(blob);
+                0
+            }
+            Ok(Err(e)) => {
+                eprintln!("audio-core: CLAP state save failed: {e}");
+                1
+            }
+            Err(_) => 1,
+        }
+    } else {
+        let guard = last_clap_state_blob().lock().unwrap();
+        let Some(blob) = guard.as_ref() else {
+            return 1;
+        };
+        if !out_len.is_null() {
+            unsafe {
+                *out_len = blob.len();
+            }
+        }
+        if capacity < blob.len() {
+            return 2;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(blob.as_ptr(), out, blob.len());
+        }
+        0
+    }
 }
 
 /// macOS stub: LV2 hosting is Linux-only (livi wraps the lilv C library,
@@ -1530,6 +1777,43 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
 ) -> i32 {
     eprintln!("audio-core: CLAP hosting is unavailable on macOS in v1");
     1
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
+    _bundle_path: *const c_char,
+    _plugin_id: *const c_char,
+    _state_blob: *const u8,
+    _state_len: usize,
+) -> i32 {
+    1
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
+    _bundle_path: *const c_char,
+    _plugin_id: *const c_char,
+    _out: *mut PolyclavClapParamInfoC,
+    _capacity: usize,
+    _out_count: *mut usize,
+) -> i32 {
+    1
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub extern "C" fn polyclav_audio_clap_set_param(_clap_id: u32, _value: f64) -> i32 {
+    1
+}
+
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_poll_feedback(
+    _out: *mut PolyclavClapFeedbackEvent,
+) -> i32 {
+    0
 }
 
 /// Returns 1 if libsfizz is available (SFZ playback possible), else 0.
@@ -2390,7 +2674,7 @@ fn load_synth_by_type(
         "lv2" => SynthBackend::load_lv2(patch_ref),
         "clap" => {
             let id = plugin_id.ok_or_else(|| "clap patch_type requires plugin_id".to_string())?;
-            SynthBackend::load_clap(Path::new(patch_ref), id)
+            SynthBackend::load_clap(Path::new(patch_ref), id, None)
         }
         other => Err(format!("unknown patch_type {other:?}")),
     }

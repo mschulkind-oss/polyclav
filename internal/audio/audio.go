@@ -21,6 +21,11 @@ package audio
 // // declarations).
 // int32_t polyclav_audio_set_lv2_plugin(const char *uri);
 // int32_t polyclav_audio_set_clap_plugin(const char *bundle_path, const char *plugin_id);
+// int32_t polyclav_audio_set_clap_plugin_with_state(const char *bundle_path, const char *plugin_id, const uint8_t *state_blob, uintptr_t state_len);
+// int32_t polyclav_audio_clap_discover_params(const char *bundle_path, const char *plugin_id, PolyclavClapParamInfoC *out, uintptr_t capacity, uintptr_t *out_count);
+// int32_t polyclav_audio_clap_set_param(uint32_t clap_id, double value);
+// int32_t polyclav_audio_clap_poll_feedback(PolyclavClapFeedbackEvent *out);
+// int32_t polyclav_audio_clap_save_state(uint8_t *out, uintptr_t capacity, uintptr_t *out_len);
 // void polyclav_midi_panic(void);
 // // Native synth backend (Phase 1; see docs/ROADMAP.md).
 // int32_t polyclav_audio_set_native_patch(const char *engine);
@@ -47,6 +52,25 @@ import (
 	"os"
 	"unsafe"
 )
+
+// ClapParamInfo is stable CLAP parameter metadata discovered from a plugin.
+type ClapParamInfo struct {
+	ClapID       uint32
+	Flags        uint32
+	MinValue     float64
+	MaxValue     float64
+	DefaultValue float64
+	CurrentValue float64
+	Name         string
+	Module       string
+}
+
+// ClapFeedbackEvent is one plugin-to-host CLAP parameter feedback event.
+type ClapFeedbackEvent struct {
+	ClapID uint32
+	Value  float64
+	Kind   uint32
+}
 
 func Start() error {
 	rc := C.polyclav_audio_start()
@@ -409,6 +433,109 @@ func SetClapPlugin(bundlePath, pluginID string) error {
 		return fmt.Errorf("audio-core set clap plugin %q/%q failed: %d", bundlePath, pluginID, int(rc))
 	}
 	return nil
+}
+
+// SetClapPluginWithState selects a CLAP plugin and passes a saved CLAP state
+// blob to audio-core for load-before-activation restore. An empty blob means
+// factory defaults.
+func SetClapPluginWithState(bundlePath, pluginID string, stateBlob []byte) error {
+	if bundlePath == "" {
+		return fmt.Errorf("audio-core set clap plugin: empty bundle path")
+	}
+	if pluginID == "" {
+		return fmt.Errorf("audio-core set clap plugin: empty plugin id")
+	}
+	if _, err := os.Stat(bundlePath); err != nil {
+		return fmt.Errorf("audio-core set clap plugin %q: %w", bundlePath, err)
+	}
+	cpath := C.CString(bundlePath)
+	defer C.free(unsafe.Pointer(cpath))
+	cid := C.CString(pluginID)
+	defer C.free(unsafe.Pointer(cid))
+	var ptr *C.uint8_t
+	if len(stateBlob) > 0 {
+		ptr = (*C.uint8_t)(unsafe.Pointer(&stateBlob[0]))
+	}
+	rc := C.polyclav_audio_set_clap_plugin_with_state(cpath, cid, ptr, C.uintptr_t(len(stateBlob)))
+	if rc != 0 {
+		return fmt.Errorf("audio-core set clap plugin %q/%q with state failed: %d", bundlePath, pluginID, int(rc))
+	}
+	return nil
+}
+
+// DiscoverClapParams loads a plugin outside the audio callback and returns its
+// CLAP parameter metadata. It does not select the plugin for playback.
+func DiscoverClapParams(bundlePath, pluginID string) ([]ClapParamInfo, error) {
+	if bundlePath == "" || pluginID == "" {
+		return nil, fmt.Errorf("audio-core discover clap params: empty bundle path or plugin id")
+	}
+	cpath := C.CString(bundlePath)
+	defer C.free(unsafe.Pointer(cpath))
+	cid := C.CString(pluginID)
+	defer C.free(unsafe.Pointer(cid))
+	var count C.uintptr_t
+	rc := C.polyclav_audio_clap_discover_params(cpath, cid, nil, 0, &count)
+	if rc != 0 {
+		return nil, fmt.Errorf("audio-core discover clap params failed: %d", int(rc))
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	buf := make([]C.PolyclavClapParamInfoC, int(count))
+	rc = C.polyclav_audio_clap_discover_params(cpath, cid, &buf[0], count, &count)
+	if rc != 0 {
+		return nil, fmt.Errorf("audio-core discover clap params failed: %d", int(rc))
+	}
+	out := make([]ClapParamInfo, 0, int(count))
+	for i := 0; i < int(count) && i < len(buf); i++ {
+		p := buf[i]
+		out = append(out, ClapParamInfo{
+			ClapID:       uint32(p.clap_id),
+			Flags:        uint32(p.flags),
+			MinValue:     float64(p.min_value),
+			MaxValue:     float64(p.max_value),
+			DefaultValue: float64(p.default_value),
+			CurrentValue: float64(p.current_value),
+			Name:         C.GoString(&p.name[0]),
+			Module:       C.GoString(&p.module[0]),
+		})
+	}
+	return out, nil
+}
+
+func SetClapParam(clapID uint32, value float64) error {
+	rc := C.polyclav_audio_clap_set_param(C.uint32_t(clapID), C.double(value))
+	if rc != 0 {
+		return fmt.Errorf("audio-core set clap param %d failed: %d", clapID, int(rc))
+	}
+	return nil
+}
+
+func PollClapFeedback() (ClapFeedbackEvent, bool) {
+	var ev C.PolyclavClapFeedbackEvent
+	if C.polyclav_audio_clap_poll_feedback(&ev) == 0 {
+		return ClapFeedbackEvent{}, false
+	}
+	return ClapFeedbackEvent{ClapID: uint32(ev.clap_id), Value: float64(ev.value), Kind: uint32(ev.kind)}, true
+}
+
+// SaveClapState asks the active CLAP plugin for its binary state blob. It
+// returns an error when no active plugin/state extension responds.
+func SaveClapState() ([]byte, error) {
+	var n C.uintptr_t
+	rc := C.polyclav_audio_clap_save_state(nil, 0, &n)
+	if rc != 0 {
+		return nil, fmt.Errorf("audio-core save clap state failed: %d", int(rc))
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	out := make([]byte, int(n))
+	rc = C.polyclav_audio_clap_save_state((*C.uint8_t)(unsafe.Pointer(&out[0])), n, &n)
+	if rc != 0 {
+		return nil, fmt.Errorf("audio-core copy clap state failed: %d", int(rc))
+	}
+	return out, nil
 }
 
 // SetNativePatch selects a pure-Rust native synth patch by engine name.

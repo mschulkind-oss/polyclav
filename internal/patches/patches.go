@@ -58,6 +58,7 @@ type audioBackend interface {
 	SetPatchGain(linear float32)
 	SetLv2Plugin(uri string) error
 	SetClapPlugin(bundlePath, pluginID string) error
+	SetClapPluginWithState(bundlePath, pluginID string, stateBlob []byte) error
 	SetNativePatch(engine string) error
 }
 
@@ -72,6 +73,9 @@ func (realAudioBackend) SetPatchGain(linear float32)   { audio.SetPatchGain(line
 func (realAudioBackend) SetLv2Plugin(uri string) error { return audio.SetLv2Plugin(uri) }
 func (realAudioBackend) SetClapPlugin(bundlePath, pluginID string) error {
 	return audio.SetClapPlugin(bundlePath, pluginID)
+}
+func (realAudioBackend) SetClapPluginWithState(bundlePath, pluginID string, stateBlob []byte) error {
+	return audio.SetClapPluginWithState(bundlePath, pluginID, stateBlob)
 }
 func (realAudioBackend) SetNativePatch(engine string) error { return audio.SetNativePatch(engine) }
 
@@ -150,6 +154,28 @@ func (r *Registry) Select(name string) error {
 // i is out of bounds, if the soundfont file is missing, or if the audio
 // engine rejects the reload.
 func (r *Registry) SelectIndex(i int) error {
+	return r.selectIndex(i, nil)
+}
+
+// SelectWithClapState applies a named CLAP patch with a saved CLAP state blob.
+// For non-CLAP patches the blob is ignored.
+func (r *Registry) SelectWithClapState(name string, stateBlob []byte) error {
+	r.mu.Lock()
+	idx := -1
+	for i, p := range r.patches {
+		if p.Name == name {
+			idx = i
+			break
+		}
+	}
+	r.mu.Unlock()
+	if idx < 0 {
+		return fmt.Errorf("patch %q not found", name)
+	}
+	return r.selectIndex(idx, stateBlob)
+}
+
+func (r *Registry) selectIndex(i int, clapStateBlob []byte) error {
 	r.mu.Lock()
 	if i < 0 || i >= len(r.patches) {
 		r.mu.Unlock()
@@ -188,7 +214,13 @@ func (r *Registry) SelectIndex(i int) error {
 			return fmt.Errorf("patch %q: clap plugin_path %q: %w", p.Name, p.PluginPath, err)
 		}
 		backend.Panic()
-		if err := backend.SetClapPlugin(p.PluginPath, p.PluginID); err != nil {
+		var err error
+		if clapStateBlob != nil {
+			err = backend.SetClapPluginWithState(p.PluginPath, p.PluginID, clapStateBlob)
+		} else {
+			err = backend.SetClapPlugin(p.PluginPath, p.PluginID)
+		}
+		if err != nil {
 			return fmt.Errorf("patch %q: set clap plugin: %w", p.Name, err)
 		}
 	case "native":

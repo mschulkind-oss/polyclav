@@ -1000,3 +1000,50 @@ func TestSetMacrosRoundTrip(t *testing.T) {
 		t.Errorf("macros did not round-trip: got %+v want %+v", got.Macros, macros)
 	}
 }
+func TestPatchClapRoundTrip(t *testing.T) {
+	store := NewStore("", time.Second, slog.Default(), Snapshot{})
+	st := ClapState{BlobBase64: "YWJj", FormatVersion: 1}
+	store.UpdatePatchClap("organ", st)
+	got, ok := store.PatchClap("organ")
+	if !ok {
+		t.Fatal("PatchClap ok=false, want true")
+	}
+	if got != st {
+		t.Fatalf("PatchClap = %+v, want %+v", got, st)
+	}
+}
+
+func TestLoadOldStateWithoutClapBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	if err := os.WriteFile(path, []byte("[patches.organ]\nvolume = 0.8\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if snap.Patches["organ"].Clap != nil {
+		t.Fatalf("legacy state grew clap block: %+v", snap.Patches["organ"].Clap)
+	}
+}
+
+func TestClapStatePersistsToDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+	store := NewStore(path, time.Hour, slog.Default(), Snapshot{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = store.Run(ctx); close(done) }()
+	store.UpdatePatchClap("organ", ClapState{BlobBase64: "c3RhdGU=", FormatVersion: 1})
+	cancel()
+	<-done
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := snap.Patches["organ"].Clap
+	if got == nil || got.BlobBase64 != "c3RhdGU=" || got.FormatVersion != 1 {
+		t.Fatalf("clap state = %+v", got)
+	}
+}

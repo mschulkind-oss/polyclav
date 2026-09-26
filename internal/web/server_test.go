@@ -91,6 +91,8 @@ func (f *fakeAudio) SetFxOrder(p uint32) {
 	defer f.mu.Unlock()
 	f.fxOrder = p
 }
+
+func (f *fakeAudio) SaveClapState() ([]byte, error) { return nil, nil }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -341,6 +343,7 @@ type fakeStore struct {
 	mu           sync.Mutex
 	knobs        map[string]state.Knob
 	synths       map[string]state.SynthState
+	claps        map[string]state.ClapState
 	currentPatch string
 	pedalOrder   []string
 	macros       []state.Macro
@@ -350,6 +353,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		knobs:  map[string]state.Knob{},
 		synths: map[string]state.SynthState{},
+		claps:  map[string]state.ClapState{},
 	}
 }
 
@@ -455,6 +459,19 @@ func (f *fakeStore) UpdatePatchSynth(name string, syn state.SynthState) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.synths[name] = syn
+}
+
+func (f *fakeStore) PatchClap(name string) (state.ClapState, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cl, ok := f.claps[name]
+	return cl, ok
+}
+
+func (f *fakeStore) UpdatePatchClap(name string, cl state.ClapState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.claps[name] = cl
 }
 
 func (f *fakeStore) SetCurrentPatch(name string) {

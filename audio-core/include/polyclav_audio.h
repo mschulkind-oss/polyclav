@@ -73,6 +73,32 @@ int32_t polyclav_audio_set_lv2_plugin(const char *uri);
  * Returns 0 if load was scheduled, 1 if audio is not running, 2 if
  * either argument is NULL or not valid UTF-8. */
 int32_t polyclav_audio_set_clap_plugin(const char *bundle_path, const char *plugin_id);
+int32_t polyclav_audio_set_clap_plugin_with_state(const char *bundle_path, const char *plugin_id,
+                                                  const uint8_t *state_blob, uintptr_t state_len);
+
+typedef struct {
+    uint32_t clap_id;
+    uint32_t flags;
+    double min_value;
+    double max_value;
+    double default_value;
+    double current_value;
+    char name[256];
+    char module[1024];
+} PolyclavClapParamInfoC;
+
+typedef struct {
+    uint32_t clap_id;
+    double value;
+    uint32_t kind;
+} PolyclavClapFeedbackEvent;
+
+int32_t polyclav_audio_clap_discover_params(const char *bundle_path, const char *plugin_id,
+                                            PolyclavClapParamInfoC *out, uintptr_t capacity,
+                                            uintptr_t *out_count);
+int32_t polyclav_audio_clap_set_param(uint32_t clap_id, double value);
+int32_t polyclav_audio_clap_poll_feedback(PolyclavClapFeedbackEvent *out);
+int32_t polyclav_audio_clap_save_state(uint8_t *out, uintptr_t capacity, uintptr_t *out_len);
 
 /* Load and switch to a native pure-Rust synth patch. `engine` selects
  * one of the factory-preset names baked into audio-core. Phase 1 only

@@ -76,8 +76,9 @@ func (f *fakeAudio) SetAnalogDelayFeedback(v float32) {
 	f.rec("SetAnalogDelayFeedback")
 	f.delayFeedback = v
 }
-func (f *fakeAudio) SetAnalogDelayMix(v float32) { f.rec("SetAnalogDelayMix"); f.delayMix = v }
-func (f *fakeAudio) SetFxOrder(p uint32)         { f.rec("SetFxOrder"); f.fxOrder = p }
+func (f *fakeAudio) SetAnalogDelayMix(v float32)    { f.rec("SetAnalogDelayMix"); f.delayMix = v }
+func (f *fakeAudio) SetFxOrder(p uint32)            { f.rec("SetFxOrder"); f.fxOrder = p }
+func (f *fakeAudio) SaveClapState() ([]byte, error) { return nil, nil }
 func (f *fakeAudio) SetNativeCutoffHz(hz float32) {
 	f.rec("SetNativeCutoffHz")
 	f.cutoffHz = hz
@@ -172,13 +173,14 @@ func (f *fakeRegistry) SelectIndex(i int) error {
 type fakeStore struct {
 	knobs        map[string]state.Knob
 	synths       map[string]state.SynthState
+	claps        map[string]state.ClapState
 	currentPatch string
 	pedalOrder   []string
 	macros       []state.Macro
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{knobs: map[string]state.Knob{}, synths: map[string]state.SynthState{}}
+	return &fakeStore{knobs: map[string]state.Knob{}, synths: map[string]state.SynthState{}, claps: map[string]state.ClapState{}}
 }
 
 func (f *fakeStore) PatchKnob(name string) state.Knob {
@@ -254,6 +256,13 @@ func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
 }
 
 func (f *fakeStore) UpdatePatchSynth(name string, syn state.SynthState) { f.synths[name] = syn }
+
+func (f *fakeStore) PatchClap(name string) (state.ClapState, bool) {
+	cl, ok := f.claps[name]
+	return cl, ok
+}
+
+func (f *fakeStore) UpdatePatchClap(name string, cl state.ClapState) { f.claps[name] = cl }
 
 func (f *fakeStore) SetCurrentPatch(name string) { f.currentPatch = name }
 
