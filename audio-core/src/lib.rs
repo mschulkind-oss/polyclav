@@ -64,6 +64,65 @@ const MIN_QUANTUM: u32 = 16;
 /// Default audio buffer size (frames) when none is configured — ~2.7 ms at
 /// 48 kHz, the historical polyclav quantum.
 const DEFAULT_QUANTUM: u32 = 128;
+const BACKEND_DISPOSAL_QUEUE_CAPACITY: usize = 32;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PolyclavAudioMetrics {
+    pub callbacks: u64,
+    pub midi_drops: u64,
+    pub reload_queue_full: u64,
+    pub reload_coalesced: u64,
+    pub stale_backends: u64,
+    pub backend_swaps: u64,
+    pub null_buffers: u64,
+    pub callback_over_max_quantum: u64,
+    pub backend_disposal_overflow: u64,
+    pub last_frames: u32,
+    pub max_frames: u32,
+}
+
+#[derive(Default)]
+struct AudioMetricsAtomics {
+    callbacks: AtomicU64,
+    midi_drops: AtomicU64,
+    reload_queue_full: AtomicU64,
+    reload_coalesced: AtomicU64,
+    stale_backends: AtomicU64,
+    backend_swaps: AtomicU64,
+    null_buffers: AtomicU64,
+    callback_over_max_quantum: AtomicU64,
+    backend_disposal_overflow: AtomicU64,
+    last_frames: AtomicU32,
+    max_frames: AtomicU32,
+}
+
+static AUDIO_METRICS: OnceLock<AudioMetricsAtomics> = OnceLock::new();
+fn audio_metrics() -> &'static AudioMetricsAtomics {
+    AUDIO_METRICS.get_or_init(AudioMetricsAtomics::default)
+}
+
+fn update_max_atomic(max: &AtomicU32, value: u32) {
+    let mut current = max.load(Ordering::Relaxed);
+    while value > current {
+        match max.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(next) => current = next,
+        }
+    }
+}
+
+pub(crate) fn record_audio_callback(frames: usize) {
+    let metrics = audio_metrics();
+    metrics.callbacks.fetch_add(1, Ordering::Relaxed);
+    metrics.last_frames.store(frames as u32, Ordering::Relaxed);
+    update_max_atomic(&metrics.max_frames, frames as u32);
+    if frames > MAX_QUANTUM {
+        metrics
+            .callback_over_max_quantum
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 pub(crate) enum SynthBackend {
     Oxi(Box<OxiSynth>),
@@ -126,6 +185,19 @@ impl SynthBackend {
         let synth = NativeSynth::new(engine, SAMPLE_RATE)?;
         eprintln!("audio-core: native synth loaded (engine={engine})");
         Ok(SynthBackend::Native(Box::new(synth)))
+    }
+
+    fn render_silence(&mut self, samples: &mut [f32]) {
+        samples.fill(0.0);
+        match self {
+            SynthBackend::Oxi(s) => s.write(samples),
+            SynthBackend::Sfizz(s) => s.render(samples),
+            #[cfg(target_os = "linux")]
+            SynthBackend::Lv2(s) => s.render(samples),
+            #[cfg(target_os = "linux")]
+            SynthBackend::Clap(s) => s.render(samples),
+            SynthBackend::Native(s) => s.render(samples),
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -194,6 +266,88 @@ pub(crate) static LATENCY_FRAMES: AtomicU32 = AtomicU32::new(DEFAULT_QUANTUM);
 static SYNTH_RELOAD_QUEUE: OnceLock<Arc<ArrayQueue<(u64, SynthBackend)>>> = OnceLock::new();
 fn synth_reload_queue() -> &'static Arc<ArrayQueue<(u64, SynthBackend)>> {
     SYNTH_RELOAD_QUEUE.get_or_init(|| Arc::new(ArrayQueue::new(4)))
+}
+
+static BACKEND_DISPOSAL_QUEUE: OnceLock<Arc<ArrayQueue<SynthBackend>>> = OnceLock::new();
+fn backend_disposal_queue() -> &'static Arc<ArrayQueue<SynthBackend>> {
+    BACKEND_DISPOSAL_QUEUE
+        .get_or_init(|| Arc::new(ArrayQueue::new(BACKEND_DISPOSAL_QUEUE_CAPACITY)))
+}
+
+fn dispose_backend_off_rt(backend: SynthBackend) {
+    drop(backend);
+}
+
+fn enqueue_backend_disposal(backend: SynthBackend) {
+    if let Err(backend) = backend_disposal_queue().push(backend) {
+        audio_metrics()
+            .backend_disposal_overflow
+            .fetch_add(1, Ordering::Relaxed);
+        // Never run an arbitrary backend destructor in the real-time callback.
+        // Overflow means patch churn exceeded the non-RT disposal path; leak the
+        // backend and surface the event via metrics rather than risking an xrun.
+        std::mem::forget(backend);
+    }
+}
+
+fn prewarm_backend(backend: &mut SynthBackend) {
+    let mut samples = vec![0.0_f32; MAX_QUANTUM * 2];
+    backend.render_silence(&mut samples);
+}
+
+fn enqueue_preloaded_backend(
+    queue: &ArrayQueue<(u64, SynthBackend)>,
+    generation: u64,
+    mut backend: SynthBackend,
+) -> bool {
+    prewarm_backend(&mut backend);
+    let backend = match queue.push((generation, backend)) {
+        Ok(()) => return true,
+        Err((_generation, backend)) => backend,
+    };
+
+    audio_metrics()
+        .reload_queue_full
+        .fetch_add(1, Ordering::Relaxed);
+
+    let current_generation = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
+    while let Some((queued_gen, queued_backend)) = queue.pop() {
+        audio_metrics()
+            .reload_coalesced
+            .fetch_add(1, Ordering::Relaxed);
+        if queued_gen < current_generation || queued_gen <= generation {
+            dispose_backend_off_rt(queued_backend);
+        } else {
+            // A newer worker won the race. Preserve it and dispose this older
+            // backend on the loader thread rather than churning the queue.
+            let _ = queue.push((queued_gen, queued_backend));
+            dispose_backend_off_rt(backend);
+            return false;
+        }
+    }
+
+    match queue.push((generation, backend)) {
+        Ok(()) => true,
+        Err((_generation, backend)) => {
+            audio_metrics()
+                .reload_queue_full
+                .fetch_add(1, Ordering::Relaxed);
+            dispose_backend_off_rt(backend);
+            false
+        }
+    }
+}
+
+fn drain_backend_disposal_queue() {
+    while let Some(backend) = backend_disposal_queue().pop() {
+        dispose_backend_off_rt(backend);
+    }
+}
+
+fn drain_synth_reload_queue_off_rt() {
+    while let Some((_generation, backend)) = synth_reload_queue().pop() {
+        dispose_backend_off_rt(backend);
+    }
 }
 
 /// Lock-free DSP parameter struct, read by the audio thread every callback,
@@ -834,18 +988,12 @@ fn dsp_params() -> &'static Arc<DspParams> {
 
 struct State {
     thread: thread::JoinHandle<()>,
+    disposal_thread: thread::JoinHandle<()>,
     quit_flag: Arc<AtomicBool>,
 }
 
 pub(crate) struct UserData {
     sine_phase: f32,
-    // Only process_audio's (Linux/PipeWire) periodic debug logging reads
-    // these; the macOS backend tracks its own local counters instead, so
-    // these would otherwise be "never read" dead code there.
-    #[cfg(target_os = "linux")]
-    callback_count: u32,
-    #[cfg(target_os = "linux")]
-    last_frames: usize,
     synth: Option<SynthBackend>,
     midi_queue: Arc<ArrayQueue<MidiEvent>>,
     reload_queue: Arc<ArrayQueue<(u64, SynthBackend)>>,
@@ -888,10 +1036,23 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
         eprintln!("audio-core: start (already running)");
         return 0;
     }
+    drain_synth_reload_queue_off_rt();
 
     let quit_flag = Arc::new(AtomicBool::new(false));
     let quit_for_thread = Arc::clone(&quit_flag);
+    let quit_for_disposal = Arc::clone(&quit_flag);
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+
+    let disposal_thread = thread::Builder::new()
+        .name("polyclav-backend-dispose".into())
+        .spawn(move || {
+            while !quit_for_disposal.load(Ordering::Relaxed) {
+                drain_backend_disposal_queue();
+                thread::sleep(Duration::from_millis(20));
+            }
+            drain_backend_disposal_queue();
+        })
+        .expect("spawn backend disposal thread");
 
     let handle = thread::Builder::new()
         .name("polyclav-audio".into())
@@ -915,6 +1076,7 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
         Ok(Ok(())) => {
             *state_guard = Some(State {
                 thread: handle,
+                disposal_thread,
                 quit_flag,
             });
             0
@@ -922,6 +1084,7 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
         Ok(Err(_)) | Err(_) => {
             quit_flag.store(true, Ordering::SeqCst);
             let _ = handle.join();
+            let _ = disposal_thread.join();
             eprintln!("audio-core: start failed");
             1
         }
@@ -934,6 +1097,9 @@ pub extern "C" fn polyclav_audio_stop() {
     if let Some(state) = state_guard.take() {
         state.quit_flag.store(true, Ordering::SeqCst);
         let _ = state.thread.join();
+        drain_synth_reload_queue_off_rt();
+        let _ = state.disposal_thread.join();
+        drain_backend_disposal_queue();
         eprintln!("audio-core: stopped");
     }
 }
@@ -972,6 +1138,50 @@ pub extern "C" fn polyclav_audio_set_latency_frames(frames: u32) {
     LATENCY_FRAMES.store(clamped, Ordering::Relaxed);
 }
 
+/// Copy the current audio health counters into `out`.
+///
+/// # Safety
+/// `out` must be either NULL or a valid, writable pointer to a
+/// [`PolyclavAudioMetrics`] struct.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_get_metrics(out: *mut PolyclavAudioMetrics) {
+    if out.is_null() {
+        return;
+    }
+    let m = audio_metrics();
+    unsafe {
+        *out = PolyclavAudioMetrics {
+            callbacks: m.callbacks.load(Ordering::Relaxed),
+            midi_drops: m.midi_drops.load(Ordering::Relaxed),
+            reload_queue_full: m.reload_queue_full.load(Ordering::Relaxed),
+            reload_coalesced: m.reload_coalesced.load(Ordering::Relaxed),
+            stale_backends: m.stale_backends.load(Ordering::Relaxed),
+            backend_swaps: m.backend_swaps.load(Ordering::Relaxed),
+            null_buffers: m.null_buffers.load(Ordering::Relaxed),
+            callback_over_max_quantum: m.callback_over_max_quantum.load(Ordering::Relaxed),
+            backend_disposal_overflow: m.backend_disposal_overflow.load(Ordering::Relaxed),
+            last_frames: m.last_frames.load(Ordering::Relaxed),
+            max_frames: m.max_frames.load(Ordering::Relaxed),
+        };
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_audio_reset_metrics() {
+    let m = audio_metrics();
+    m.callbacks.store(0, Ordering::Relaxed);
+    m.midi_drops.store(0, Ordering::Relaxed);
+    m.reload_queue_full.store(0, Ordering::Relaxed);
+    m.reload_coalesced.store(0, Ordering::Relaxed);
+    m.stale_backends.store(0, Ordering::Relaxed);
+    m.backend_swaps.store(0, Ordering::Relaxed);
+    m.null_buffers.store(0, Ordering::Relaxed);
+    m.callback_over_max_quantum.store(0, Ordering::Relaxed);
+    m.backend_disposal_overflow.store(0, Ordering::Relaxed);
+    m.last_frames.store(0, Ordering::Relaxed);
+    m.max_frames.store(0, Ordering::Relaxed);
+}
+
 /// Reload the soundfont set by `polyclav_audio_set_soundfont`. Loads on a
 /// background thread; the audio thread picks up the new backend on the
 /// next callback. Returns 0 if reload was scheduled, 1 if no soundfont is
@@ -1002,10 +1212,10 @@ pub extern "C" fn polyclav_audio_reload_soundfont() -> i32 {
             match SynthBackend::load(&path) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if queue.push((generation, backend)).is_err() {
-                        eprintln!("audio-core: reload queue full; dropping new backend");
-                    } else {
+                    if enqueue_preloaded_backend(&queue, generation, backend) {
                         eprintln!("audio-core: reload queued backend={name}");
+                    } else {
+                        eprintln!("audio-core: reload queue full after coalescing; dropped backend={name}");
                     }
                 }
                 Err(e) => {
@@ -1051,10 +1261,10 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
             match SynthBackend::load_lv2(&uri) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if queue.push((generation, backend)).is_err() {
-                        eprintln!("audio-core: reload queue full; dropping new backend");
-                    } else {
+                    if enqueue_preloaded_backend(&queue, generation, backend) {
                         eprintln!("audio-core: reload queued backend={name} gen={generation}");
+                    } else {
+                        eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
                     }
                 }
                 Err(e) => eprintln!("audio-core: LV2 load failed: {e}"),
@@ -1106,10 +1316,10 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
             match SynthBackend::load_clap(&bundle_path, &plugin_id) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if queue.push((generation, backend)).is_err() {
-                        eprintln!("audio-core: reload queue full; dropping new backend");
-                    } else {
+                    if enqueue_preloaded_backend(&queue, generation, backend) {
                         eprintln!("audio-core: reload queued backend={name} gen={generation}");
+                    } else {
+                        eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
                     }
                 }
                 Err(e) => eprintln!("audio-core: CLAP load failed: {e}"),
@@ -1201,10 +1411,10 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
             match SynthBackend::load_native(&engine) {
                 Ok(backend) => {
                     let name = backend.name();
-                    if queue.push((generation, backend)).is_err() {
-                        eprintln!("audio-core: reload queue full; dropping new backend");
-                    } else {
+                    if enqueue_preloaded_backend(&queue, generation, backend) {
                         eprintln!("audio-core: reload queued backend={name} gen={generation}");
+                    } else {
+                        eprintln!("audio-core: reload queue full after coalescing; dropped backend={name} gen={generation}");
                     }
                 }
                 Err(e) => eprintln!("audio-core: native load failed: {e}"),
@@ -1215,31 +1425,48 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
 }
 
 #[no_mangle]
+fn push_midi_event(queue: &ArrayQueue<MidiEvent>, event: MidiEvent) -> bool {
+    match queue.push(event) {
+        Ok(()) => true,
+        Err(_) => {
+            audio_metrics().midi_drops.fetch_add(1, Ordering::Relaxed);
+            false
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn polyclav_midi_note_on(channel: u8, note: u8, velocity: u8) {
-    let _ = midi_queue().push(MidiEvent::NoteOn {
-        channel,
-        note,
-        velocity,
-    });
+    push_midi_event(
+        midi_queue(),
+        MidiEvent::NoteOn {
+            channel,
+            note,
+            velocity,
+        },
+    );
 }
 
 #[no_mangle]
 pub extern "C" fn polyclav_midi_note_off(channel: u8, note: u8, _velocity: u8) {
-    let _ = midi_queue().push(MidiEvent::NoteOff { channel, note });
+    push_midi_event(midi_queue(), MidiEvent::NoteOff { channel, note });
 }
 
 #[no_mangle]
 pub extern "C" fn polyclav_midi_cc(channel: u8, controller: u8, value: u8) {
-    let _ = midi_queue().push(MidiEvent::ControlChange {
-        channel,
-        controller,
-        value,
-    });
+    push_midi_event(
+        midi_queue(),
+        MidiEvent::ControlChange {
+            channel,
+            controller,
+            value,
+        },
+    );
 }
 
 #[no_mangle]
 pub extern "C" fn polyclav_midi_pitch_bend(channel: u8, bend: u16) {
-    let _ = midi_queue().push(MidiEvent::PitchBend { channel, bend });
+    push_midi_event(midi_queue(), MidiEvent::PitchBend { channel, bend });
 }
 
 #[no_mangle]
@@ -1701,10 +1928,6 @@ pub(crate) fn build_user_data() -> UserData {
 
     UserData {
         sine_phase: 0.0,
-        #[cfg(target_os = "linux")]
-        callback_count: 0,
-        #[cfg(target_os = "linux")]
-        last_frames: 0,
         synth,
         midi_queue: Arc::clone(midi_queue()),
         reload_queue: Arc::clone(synth_reload_queue()),
@@ -1753,10 +1976,6 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     tremolo.set_depth(params.tremolo_depth());
     UserData {
         sine_phase: 0.0,
-        #[cfg(target_os = "linux")]
-        callback_count: 0,
-        #[cfg(target_os = "linux")]
-        last_frames: 0,
         synth,
         midi_queue: Arc::new(ArrayQueue::new(64)),
         reload_queue: Arc::new(ArrayQueue::new(4)),
@@ -2238,19 +2457,33 @@ fn run_audio(
 /// Portable — no OS audio API; shared by the PipeWire callback (Linux) and
 /// the CoreAudio backend (macOS).
 pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
-    if let Some((gen, new_backend)) = user_data.reload_queue.pop() {
-        let current_gen = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
+    let current_gen = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
+    let mut selected: Option<(u64, SynthBackend)> = None;
+
+    while let Some((gen, backend)) = user_data.reload_queue.pop() {
         if gen == current_gen {
-            let name = new_backend.name();
-            user_data.synth = Some(new_backend);
-            eprintln!("audio-core: synth swapped to backend={name} gen={gen}");
+            if let Some((_old_gen, old_backend)) = selected.replace((gen, backend)) {
+                audio_metrics()
+                    .reload_coalesced
+                    .fetch_add(1, Ordering::Relaxed);
+                enqueue_backend_disposal(old_backend);
+            }
         } else {
-            let name = new_backend.name();
-            eprintln!(
-                "audio-core: dropping stale backend={name} gen={gen} current_gen={current_gen}"
-            );
-            // new_backend dropped here — Rust will free underlying resources
+            audio_metrics()
+                .stale_backends
+                .fetch_add(1, Ordering::Relaxed);
+            enqueue_backend_disposal(backend);
         }
+    }
+
+    if let Some((_gen, new_backend)) = selected {
+        if let Some(old_backend) = user_data.synth.take() {
+            enqueue_backend_disposal(old_backend);
+        }
+        user_data.synth = Some(new_backend);
+        audio_metrics()
+            .backend_swaps
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -2519,11 +2752,13 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
 
     let raw = unsafe { stream.dequeue_raw_buffer() };
     if raw.is_null() {
+        audio_metrics().null_buffers.fetch_add(1, Ordering::Relaxed);
         return;
     }
     let pw_buf = unsafe { &mut *raw };
     let spa_buf = unsafe { &mut *pw_buf.buffer };
     if spa_buf.n_datas == 0 {
+        audio_metrics().null_buffers.fetch_add(1, Ordering::Relaxed);
         unsafe { stream.queue_raw_buffer(raw) };
         return;
     }
@@ -2532,11 +2767,12 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
     let stride = std::mem::size_of::<f32>() * 2;
     let max_frames = (data.maxsize as usize) / stride;
     let requested = pw_buf.requested as usize;
-    let n_frames = if requested == 0 {
-        max_frames.min(MAX_QUANTUM)
-    } else {
-        requested.min(max_frames)
-    };
+    let n_frames = clamp_callback_frames(requested, max_frames);
+    if requested > MAX_QUANTUM || max_frames > MAX_QUANTUM {
+        audio_metrics()
+            .callback_over_max_quantum
+            .fetch_add(1, Ordering::Relaxed);
+    }
 
     if !data.data.is_null() && n_frames > 0 {
         let samples =
@@ -2552,23 +2788,18 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
     }
     pw_buf.size = n_frames as u64;
 
-    let n = user_data.callback_count;
-    let frames_changed = n_frames != user_data.last_frames;
-    if n < 10 || frames_changed {
-        let backend = match user_data.synth {
-            Some(SynthBackend::Oxi(_)) => "oxisynth",
-            Some(SynthBackend::Sfizz(_)) => "sfizz",
-            Some(SynthBackend::Lv2(_)) => "lv2",
-            Some(SynthBackend::Clap(_)) => "clap",
-            Some(SynthBackend::Native(_)) => "native",
-            None => "sine-fallback",
-        };
-        eprintln!("audio-core: callback#{n} frames={n_frames} backend={backend}");
-    }
-    user_data.callback_count = n + 1;
-    user_data.last_frames = n_frames;
+    record_audio_callback(n_frames);
 
     unsafe { stream.queue_raw_buffer(raw) };
+}
+
+fn clamp_callback_frames(requested: usize, max_frames: usize) -> usize {
+    let available = max_frames.min(MAX_QUANTUM);
+    if requested == 0 {
+        available
+    } else {
+        requested.min(available)
+    }
 }
 
 #[cfg(test)]
@@ -2591,6 +2822,151 @@ mod tests {
         assert_eq!(LATENCY_FRAMES.load(Ordering::Relaxed), 256);
         // Restore the default so a subsequent real start uses 128.
         polyclav_audio_set_latency_frames(0);
+    }
+
+    #[test]
+    fn callback_frame_clamp_caps_requested_to_max_quantum() {
+        assert_eq!(clamp_callback_frames(0, MAX_QUANTUM + 512), MAX_QUANTUM);
+        assert_eq!(
+            clamp_callback_frames(MAX_QUANTUM + 256, MAX_QUANTUM + 512),
+            MAX_QUANTUM
+        );
+        assert_eq!(clamp_callback_frames(128, MAX_QUANTUM), 128);
+        assert_eq!(clamp_callback_frames(512, 256), 256);
+        assert_eq!(clamp_callback_frames(0, 0), 0);
+        assert_eq!(clamp_callback_frames(128, 0), 0);
+    }
+
+    #[test]
+    fn metrics_ffi_is_null_safe_and_resettable() {
+        polyclav_audio_reset_metrics();
+        unsafe { polyclav_audio_get_metrics(std::ptr::null_mut()) };
+        record_audio_callback(128);
+        let mut metrics = PolyclavAudioMetrics::default();
+        unsafe { polyclav_audio_get_metrics(&mut metrics) };
+        assert_eq!(metrics.callbacks, 1);
+        assert_eq!(metrics.last_frames, 128);
+        assert_eq!(metrics.max_frames, 128);
+
+        polyclav_audio_reset_metrics();
+        unsafe { polyclav_audio_get_metrics(&mut metrics) };
+        assert_eq!(metrics, PolyclavAudioMetrics::default());
+    }
+
+    #[test]
+    fn full_midi_queue_increments_drop_metric() {
+        polyclav_audio_reset_metrics();
+        let queue = ArrayQueue::new(1);
+        assert!(push_midi_event(
+            &queue,
+            MidiEvent::NoteOn {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+        ));
+        assert!(!push_midi_event(
+            &queue,
+            MidiEvent::NoteOff {
+                channel: 0,
+                note: 60,
+            },
+        ));
+        let mut metrics = PolyclavAudioMetrics::default();
+        unsafe { polyclav_audio_get_metrics(&mut metrics) };
+        assert_eq!(metrics.midi_drops, 1);
+    }
+
+    #[test]
+    fn enqueue_preloaded_backend_coalesces_full_queue_preserving_newest() {
+        polyclav_audio_reset_metrics();
+        let queue = ArrayQueue::new(1);
+        queue
+            .push((1, SynthBackend::load_native("minimoog").unwrap()))
+            .ok()
+            .unwrap();
+
+        assert!(enqueue_preloaded_backend(
+            &queue,
+            2,
+            SynthBackend::load_native("minimoog").unwrap(),
+        ));
+        let (gen, backend) = queue.pop().unwrap();
+        assert_eq!(gen, 2);
+        dispose_backend_off_rt(backend);
+
+        let mut metrics = PolyclavAudioMetrics::default();
+        unsafe { polyclav_audio_get_metrics(&mut metrics) };
+        assert_eq!(metrics.reload_queue_full, 1);
+        assert_eq!(metrics.reload_coalesced, 1);
+    }
+
+    #[test]
+    fn enqueue_preloaded_backend_preserves_newer_queued_backend() {
+        polyclav_audio_reset_metrics();
+        SOUNDFONT_GENERATION.store(3, Ordering::SeqCst);
+        let queue = ArrayQueue::new(1);
+        queue
+            .push((3, SynthBackend::load_native("minimoog").unwrap()))
+            .ok()
+            .unwrap();
+
+        assert!(!enqueue_preloaded_backend(
+            &queue,
+            2,
+            SynthBackend::load_native("minimoog").unwrap(),
+        ));
+        let (gen, backend) = queue.pop().unwrap();
+        assert_eq!(gen, 3);
+        dispose_backend_off_rt(backend);
+    }
+
+    #[test]
+    fn swap_pending_backend_drains_and_disposes_without_callback_logging() {
+        polyclav_audio_reset_metrics();
+        drain_backend_disposal_queue();
+        SOUNDFONT_GENERATION.store(10, Ordering::SeqCst);
+
+        let old = SynthBackend::load_native("minimoog").unwrap();
+        let mut user_data = build_offline_user_data(Some(old));
+        user_data
+            .reload_queue
+            .push((9, SynthBackend::load_native("minimoog").unwrap()))
+            .ok()
+            .unwrap();
+        user_data
+            .reload_queue
+            .push((10, SynthBackend::load_native("minimoog").unwrap()))
+            .ok()
+            .unwrap();
+        user_data
+            .reload_queue
+            .push((10, SynthBackend::load_native("minimoog").unwrap()))
+            .ok()
+            .unwrap();
+
+        swap_pending_backend(&mut user_data);
+
+        assert!(matches!(user_data.synth, Some(SynthBackend::Native(_))));
+        assert!(user_data.reload_queue.is_empty());
+        assert_eq!(backend_disposal_queue().len(), 3);
+
+        let mut metrics = PolyclavAudioMetrics::default();
+        unsafe { polyclav_audio_get_metrics(&mut metrics) };
+        assert_eq!(metrics.stale_backends, 1);
+        assert_eq!(metrics.reload_coalesced, 1);
+        assert_eq!(metrics.backend_swaps, 1);
+        drain_backend_disposal_queue();
+    }
+
+    #[test]
+    fn prewarm_native_backend_is_silent_and_finite() {
+        let mut backend = SynthBackend::load_native("minimoog").unwrap();
+        prewarm_backend(&mut backend);
+        let mut samples = vec![0.0_f32; 128 * 2];
+        backend.render_silence(&mut samples);
+        assert!(samples.iter().all(|s| s.is_finite()));
+        assert!(samples.iter().all(|s| s.abs() < 1.0e-6));
     }
 
     /// Build an isolated `UserData` (no globals, no PipeWire) around a synth

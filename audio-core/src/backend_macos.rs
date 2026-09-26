@@ -30,7 +30,10 @@ use cpal::{BufferSize, OutputCallbackInfo, SampleFormat, StreamConfig, Supported
 //                          (computes n_frames = samples.len()/2 internally)
 //   LATENCY_FRAMES       : the shared, already-clamped ([16,8192], 0->128)
 //                          latency request from polyclav_audio_set_latency_frames
-use crate::{build_user_data, drain_midi, render_block, swap_pending_backend, LATENCY_FRAMES};
+use crate::{
+    build_user_data, drain_midi, record_audio_callback, render_block, swap_pending_backend,
+    LATENCY_FRAMES,
+};
 
 /// Hard target format. 48 kHz is a compile-time const across audio-core — there
 /// is no runtime sample-rate conversion — so the CoreAudio device must expose a
@@ -123,8 +126,6 @@ pub(crate) fn run_audio(
     //    macOS SynthBackend ∈ {Oxi, Sfizz, Native}, all Send. The closure does no
     //    heap alloc / lock in the RT path.
     let mut user_data = build_user_data();
-    let mut logged: u32 = 0;
-    let mut last_frames: usize = 0;
 
     let err_quit = Arc::clone(&quit_flag);
     let stream = device
@@ -138,12 +139,7 @@ pub(crate) fn run_audio(
                 drain_midi(&mut user_data);
                 render_block(&mut user_data, samples);
 
-                let n = samples.len() / CHANNELS as usize;
-                if logged < 10 || n != last_frames {
-                    eprintln!("audio-core: coreaudio callback frames={n}");
-                    logged = logged.saturating_add(1);
-                    last_frames = n;
-                }
+                record_audio_callback(samples.len() / CHANNELS as usize);
             },
             // Error callback: treat a stream error as fatal — flip quit so the
             // park loop below exits and start() can be retried.

@@ -25,6 +25,26 @@ int32_t polyclav_audio_set_soundfont(const char *path);
  * thread starts. */
 void polyclav_audio_set_latency_frames(uint32_t frames);
 
+/* Low-overhead audio health counters. These are process-local diagnostics
+ * collected with atomics from the audio callback and loader threads; they are
+ * not server-reported PipeWire/CoreAudio xrun counts. */
+typedef struct {
+    uint64_t callbacks;
+    uint64_t midi_drops;
+    uint64_t reload_queue_full;
+    uint64_t reload_coalesced;
+    uint64_t stale_backends;
+    uint64_t backend_swaps;
+    uint64_t null_buffers;
+    uint64_t callback_over_max_quantum;
+    uint64_t backend_disposal_overflow;
+    uint32_t last_frames;
+    uint32_t max_frames;
+} PolyclavAudioMetrics;
+
+void polyclav_audio_get_metrics(PolyclavAudioMetrics *out);
+void polyclav_audio_reset_metrics(void);
+
 /* Reload the soundfont set by polyclav_audio_set_soundfont(). Loads on a
  * background thread; the audio thread picks up the new backend on the
  * next callback. Returns 0 if reload was scheduled, 1 if no soundfont
