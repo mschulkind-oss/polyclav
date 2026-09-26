@@ -405,6 +405,13 @@ fn enqueue_backend_disposal(backend: SynthBackend) {
     }
 }
 
+fn reload_pressure_allows_new_backend() -> bool {
+    audio_metrics()
+        .backend_disposal_overflow
+        .load(Ordering::Relaxed)
+        == 0
+}
+
 fn prewarm_backend(backend: &mut SynthBackend) {
     let mut samples = vec![0.0_f32; MAX_QUANTUM * 2];
     backend.render_silence(&mut samples);
@@ -467,6 +474,7 @@ fn enqueue_preloaded_backend_if_current(
 ) -> bool {
     if !LOADERS_ACCEPTED.load(Ordering::Acquire)
         || LOADER_EPOCH.load(Ordering::Acquire) != loader_epoch
+        || !reload_pressure_allows_new_backend()
     {
         dispose_backend_off_rt(backend);
         return false;
@@ -1353,6 +1361,10 @@ pub extern "C" fn polyclav_audio_reload_soundfont() -> i32 {
         eprintln!("audio-core: reload requested but audio not running");
         return 1;
     }
+    if !reload_pressure_allows_new_backend() {
+        eprintln!("audio-core: reload rejected after backend disposal overflow");
+        return 1;
+    }
     let queue = Arc::clone(synth_reload_queue());
     let generation = SOUNDFONT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let loader_epoch = LOADER_EPOCH.load(Ordering::Acquire);
@@ -1401,6 +1413,10 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
     };
     if state_cell().lock().unwrap().is_none() {
         eprintln!("audio-core: LV2 load requested but audio not running");
+        return 1;
+    }
+    if !reload_pressure_allows_new_backend() {
+        eprintln!("audio-core: LV2 load rejected after backend disposal overflow");
         return 1;
     }
     let queue = Arc::clone(synth_reload_queue());
@@ -1454,6 +1470,10 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     };
     if state_cell().lock().unwrap().is_none() {
         eprintln!("audio-core: CLAP load requested but audio not running");
+        return 1;
+    }
+    if !reload_pressure_allows_new_backend() {
+        eprintln!("audio-core: CLAP load rejected after backend disposal overflow");
         return 1;
     }
     let queue = Arc::clone(synth_reload_queue());
@@ -1547,6 +1567,10 @@ pub unsafe extern "C" fn polyclav_audio_set_native_patch(engine: *const c_char) 
     };
     if state_cell().lock().unwrap().is_none() {
         eprintln!("audio-core: native load requested but audio not running");
+        return 1;
+    }
+    if !reload_pressure_allows_new_backend() {
+        eprintln!("audio-core: native load rejected after backend disposal overflow");
         return 1;
     }
     // Validate engine name synchronously so a typo at config-load time
@@ -3196,6 +3220,27 @@ mod tests {
         }));
 
         assert!(held.panic_events().is_empty());
+    }
+
+    #[test]
+    fn disposal_overflow_metric_gates_late_loader_enqueue() {
+        polyclav_audio_reset_metrics();
+        audio_metrics()
+            .backend_disposal_overflow
+            .store(1, Ordering::Relaxed);
+        LOADERS_ACCEPTED.store(true, Ordering::Release);
+        LOADER_EPOCH.store(10, Ordering::Release);
+        let queue = ArrayQueue::new(1);
+        assert!(!enqueue_preloaded_backend_if_current(
+            &queue,
+            1,
+            10,
+            SynthBackend::load_native("minimoog").unwrap(),
+        ));
+        assert!(queue.is_empty());
+        LOADERS_ACCEPTED.store(false, Ordering::Release);
+        LOADER_EPOCH.store(0, Ordering::Release);
+        polyclav_audio_reset_metrics();
     }
 
     #[test]
