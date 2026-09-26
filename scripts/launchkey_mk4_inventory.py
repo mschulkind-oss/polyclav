@@ -46,6 +46,12 @@ class MidiEvent:
     raw_values: dict[str, int | str]
 
 
+@dataclass(frozen=True)
+class CaptureResult:
+    events: list[MidiEvent]
+    error: dict[str, int | str] | None = None
+
+
 def note_name(num: int) -> str:
     return f"{NOTE_NAMES[num % 12]}{num // 12 - 1}"
 
@@ -123,6 +129,17 @@ def parse_aseqdump_line(
     if channel_match:
         # ALSA aseqdump prints channels as 0-based. Store human MIDI channel 1-16.
         channel = int(channel_match.group(1) or channel_match.group(2)) + 1
+    else:
+        # Normal aseqdump rows use a header column named "Ch" and then place
+        # the 0-based MIDI channel as the first comma-separated value in the
+        # event body, e.g. "Note on 0, note 60, velocity 100".
+        leading_channel = re.match(
+            r"^(?:Note on|Note off|Control change|Controller|Pitch bend)\s+(-?\d+)\s*,", body, re.I
+        )
+        if leading_channel:
+            raw_channel = int(leading_channel.group(1))
+            if 0 <= raw_channel <= 15:
+                channel = raw_channel + 1
 
     if re.search(r"Note on", body, re.I):
         kind = "note_on"
@@ -265,7 +282,7 @@ def iter_controls(selected_groups: set[str] | None = None) -> Iterable[dict[str,
             yield {"group": group, "control": control}
 
 
-def capture_once(port_csv: str, role_by_source: dict[str, str], seconds: float) -> list[MidiEvent]:
+def capture_once(port_csv: str, role_by_source: dict[str, str], seconds: float) -> CaptureResult:
     proc = subprocess.Popen(
         ["aseqdump", "-p", port_csv], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
@@ -273,6 +290,8 @@ def capture_once(port_csv: str, role_by_source: dict[str, str], seconds: float) 
     started = time.monotonic()
     try:
         while time.monotonic() - started < seconds:
+            if proc.poll() is not None:
+                break
             if proc.stdout is None:
                 break
             ready, _, _ = select.select([proc.stdout], [], [], 0.1)
@@ -286,12 +305,20 @@ def capture_once(port_csv: str, role_by_source: dict[str, str], seconds: float) 
                 events.append(event)
                 print(format_event(event))
     finally:
-        proc.terminate()
+        if proc.poll() is None:
+            proc.terminate()
         try:
-            proc.wait(timeout=1)
+            return_code = proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             proc.kill()
-    return events
+            return_code = proc.wait(timeout=1)
+
+    stderr = ""
+    if proc.stderr is not None:
+        stderr = proc.stderr.read().strip()
+    if return_code != 0:
+        return CaptureResult(events, {"returncode": return_code, "stderr": stderr})
+    return CaptureResult(events)
 
 
 def format_event(event: MidiEvent) -> str:
@@ -354,11 +381,16 @@ def run_inventory(args: argparse.Namespace) -> int:
             record["summary"] = {"event_count": 0, "paired_press_release_count": 0, "pairs": []}
             report["controls"].append(record)
             continue
-        events = capture_once(port_csv, role_by_source, args.seconds)
+        capture = capture_once(port_csv, role_by_source, args.seconds)
+        events = capture.events
         record["events"] = [asdict(e) for e in events]
-        record["status"] = "no_event" if not events else "captured"
+        record["status"] = "capture_error" if capture.error else ("no_event" if not events else "captured")
+        if capture.error:
+            record["capture_error"] = capture.error
         record["summary"] = summarize_pairs(events)
-        if not events:
+        if capture.error:
+            print(f"  capture error from aseqdump: {capture.error}")
+        elif not events:
             print("  no MIDI event observed in this capture window")
         report["controls"].append(record)
 

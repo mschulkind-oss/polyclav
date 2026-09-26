@@ -61,11 +61,19 @@ been observed on this particular unit:
 | Play, Stop, Record, Loop, Rewind, Fast-forward, Shift | Play toggles audition; the rest are decoded but unused | Check button note numbers 115, 116, 117, 118, 113, 114, 106 respectively. |
 | Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Capture messages before assigning host actions; some alter device behavior rather than emit a distinct DAW button. |
 
-On the host, `python3 ~/projects/hw_hacking/monitor_midi.py` can display
-messages from both Launchkey ports while pressing one control at a time.
-The script's auto-detected ALSA port numbers should be checked against
-`aconnect -l` if messages are missing. Report the printed label, port,
-channel, message type and number for each control Polyclav does not use.
+Use the committed read-only inventory probe to capture one Launchkey control at
+a time and save a JSON report:
+
+```sh
+python3 scripts/launchkey_mk4_inventory.py --output scratch/launchkey-mk4-inventory.json
+```
+
+The probe auto-detects Launchkey ALSA ports with `aconnect -l`. If messages are
+missing, compare the displayed capture sources with `aconnect -l` and rerun with
+`--midi-port CLIENT:PORT` and/or `--daw-port CLIENT:PORT`. Send back
+`scratch/launchkey-mk4-inventory.json`; for any surprising result, also mention
+the physical label pressed and whether the probe recorded `captured`,
+`no_event`, `skipped`, or `capture_error`.
 
 ## How to report back
 

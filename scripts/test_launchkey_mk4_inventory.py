@@ -6,9 +6,13 @@ Run: python3 scripts/test_launchkey_mk4_inventory.py
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import launchkey_mk4_inventory as inv  # noqa: E402
@@ -65,6 +69,18 @@ class AseqdumpParserTest(unittest.TestCase):
         self.assertEqual(sysex.kind, "sysex")
         self.assertIsNone(clock)
 
+    def test_parse_normal_aseqdump_header_channel_column_body(self):
+        roles = {"32:0": "midi", "32:1": "daw"}
+        note = inv.parse_aseqdump_line("32:0   Note on                0, note 60, velocity 100", roles, 10, 9)
+        cc = inv.parse_aseqdump_line("32:1   Control change         15, controller 85, value 65", roles, 10, 9)
+
+        self.assertIsNotNone(note)
+        self.assertEqual(note.channel, 1)
+        self.assertEqual(note.kind, "note_on")
+        self.assertIsNotNone(cc)
+        self.assertEqual(cc.channel, 16)
+        self.assertEqual(cc.kind, "cc")
+
     def test_press_release_pairing_is_evidence_not_inference(self):
         roles = {"32:1": "daw"}
         events = [
@@ -76,6 +92,34 @@ class AseqdumpParserTest(unittest.TestCase):
         summary = inv.summarize_pairs([e for e in events if e is not None])
         self.assertEqual(summary["event_count"], 4)
         self.assertEqual(summary["paired_press_release_count"], 2)
+
+
+class InventoryRunTest(unittest.TestCase):
+    def test_capture_failure_is_recorded_as_capture_error_not_no_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.json"
+            args = argparse.Namespace(
+                device_regex="Launchkey MK4",
+                midi_port=None,
+                daw_port=None,
+                seconds=0.1,
+                output=str(output),
+            )
+            port = inv.Port("32:0", 32, 0, "Launchkey MK4", "Launchkey MK4 MIDI 1", "midi")
+            capture = inv.CaptureResult([], {"returncode": 1, "stderr": "invalid port"})
+
+            with (
+                mock.patch.object(inv, "discover_ports", return_value=[port]),
+                mock.patch.object(inv, "capture_once", return_value=capture),
+                mock.patch.object(inv, "prompt_choice", side_effect=["", "q"]),
+            ):
+                self.assertEqual(inv.run_inventory(args), 0)
+
+            report = json.loads(output.read_text())
+            first = report["controls"][0]
+            self.assertEqual(first["status"], "capture_error")
+            self.assertEqual(first["capture_error"], {"returncode": 1, "stderr": "invalid port"})
+            self.assertEqual(first["summary"]["event_count"], 0)
 
 
 class PromptListTest(unittest.TestCase):
