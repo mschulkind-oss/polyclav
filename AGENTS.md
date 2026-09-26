@@ -3,19 +3,9 @@
 `polyclav` is a self-contained Go + Rust project: a Linux live-piano host
 that maps a MIDI keyboard through soundfont synthesis to a PipeWire sink.
 
-### Conventions
+### Toolchain
 
-- **mise** for toolchains (Go + Rust here).
-- **just** for tasks — everything goes through this directory's `Justfile`.
-- **TDD** — red, green, refactor.
-
-### Committing
-
-1. Run `just format` before committing
-2. Use conventional commits: feat:, fix:, docs:, chore:, refactor:, test:
-3. Commit straight to main
-4. If the commit is rejected by the pre-commit hook, fix and retry — do
-   not bypass the hook
+- **mise** manages the Go and Rust toolchains.
 
 ### Polyclav-specific
 
