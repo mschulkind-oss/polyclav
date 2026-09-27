@@ -385,6 +385,25 @@ func main() {
 	var faderRouter *organFaderRouter
 	pedalRouter := &organPedalRouter{registry: registry, cache: clapParams, setter: realClapParamSetter{}, expression: cfg.MIDI.OrganExpression}
 
+	var leslieLEDMu sync.Mutex
+	leslieLEDKnown, leslieLEDOn := false, false
+	syncLeslieLED := func() {
+		on := pedalRouter.LeslieOn()
+		leslieLEDMu.Lock()
+		defer leslieLEDMu.Unlock()
+		if leslieLEDKnown && leslieLEDOn == on {
+			return
+		}
+		if sup.Launchkey().State() != "active" {
+			leslieLEDKnown = false
+			return
+		}
+		if err := sup.Launchkey().SetFaderButtonLED(9, on); err != nil {
+			logger.Warn("launchkey leslie LED", "err", err)
+			return
+		}
+		leslieLEDKnown, leslieLEDOn = true, on
+	}
 	patchBank := 0
 	pushPadColors := func() {
 		lk := sup.Launchkey()
@@ -415,6 +434,7 @@ func main() {
 
 	onMIDIEvent := func(ev midi.Event) {
 		if pedalRouter.Handle(ev) {
+			syncLeslieLED()
 			return
 		}
 		pushSynth(ev)
@@ -461,8 +481,9 @@ func main() {
 				faderRouter.HandleFader(e)
 			}
 		case driver.FaderButtonEvent:
-			// Fader buttons are decoded, but expression/rotary/percussion routing is
-			// deliberately left inert until their physical MIDI behavior is verified.
+			if e.Index == 9 && pedalRouter.HandleLeslieButton(e.Pressed) {
+				syncLeslieLED()
+			}
 		case driver.TransportEvent:
 			// ROADMAP §2.5 transport table — status as shipped:
 			//
@@ -556,9 +577,16 @@ func main() {
 			// reading it here is race-free.
 			OnReconnect: func() {
 				pushPadColors()
+				leslieLEDMu.Lock()
+				leslieLEDKnown = false
+				leslieLEDMu.Unlock()
+				syncLeslieLED()
 				publishDeviceState("launchkey", sup.Launchkey().State())
 			},
 			OnDisconnect: func() {
+				leslieLEDMu.Lock()
+				leslieLEDKnown = false
+				leslieLEDMu.Unlock()
 				logger.Info("launchkey gone")
 				publishDeviceState("launchkey", sup.Launchkey().State())
 			},
@@ -670,6 +698,7 @@ func main() {
 			followVelocity()
 			followDisplay()
 			followPages()
+			syncLeslieLED()
 		}
 	}()
 
@@ -726,6 +755,7 @@ func main() {
 						break
 					}
 					clapParams.Update(ev.ClapID, ev.Value)
+					syncLeslieLED()
 					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
 			}

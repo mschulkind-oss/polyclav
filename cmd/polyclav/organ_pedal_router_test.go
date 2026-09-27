@@ -112,6 +112,45 @@ func TestPotatoKeysPedalParametersOffline(t *testing.T) {
 	}
 }
 
+func TestLeslieFaderButtonTracksRotary(t *testing.T) {
+	r, set, p := testPedalRouter()
+	if !r.LeslieOn() {
+		t.Fatal("slow rotary is running and should light LED")
+	}
+	if !r.HandleLeslieButton(true) || !set.called || set.id != 202 || set.value != 1 || r.LeslieOn() {
+		t.Fatalf("first press should stop rotary: %+v", set)
+	}
+	set.called = false
+	if !r.HandleLeslieButton(true) || set.called {
+		t.Fatal("repeated press toggled")
+	}
+	if !r.HandleLeslieButton(false) || set.called {
+		t.Fatal("release changed rotary")
+	}
+	if !r.HandleLeslieButton(true) || !set.called || set.value != 3 || !r.LeslieOn() {
+		t.Fatal("second press should select fast")
+	}
+	// The LED follows plugin feedback and sustain changes, not just button presses.
+	r.cache.Update(202, 1)
+	if r.LeslieOn() {
+		t.Fatal("plugin stop feedback not reflected")
+	}
+	r.cache.Update(202, 2)
+	if !r.LeslieOn() {
+		t.Fatal("plugin slow feedback not reflected")
+	}
+	r.HandleLeslieButton(false)
+	p.LaunchkeyOrgan.LeslieMode = "off" // disables sustain, not the button
+	if !r.HandleLeslieButton(true) || set.value != 1 || r.LeslieOn() {
+		t.Fatal("button should work with sustain mode off")
+	}
+	r.registry = fakeOrganRegistry{}
+	set.called = false
+	if r.HandleLeslieButton(true) || r.LeslieOn() || set.called {
+		t.Fatal("inactive patch must not control Leslie or light LED")
+	}
+}
+
 func TestLeslieSustainToggleMomentaryAndOff(t *testing.T) {
 	r, set, p := testPedalRouter()
 	ev := midi.Event{SourcePort: "Launchkey MK4 61:Launchkey MK4 61 MIDI In", Kind: midi.ControlChange, CC: 64, Value: 127}

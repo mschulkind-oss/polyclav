@@ -73,6 +73,23 @@ func TestParseFaders(t *testing.T) {
 	}
 }
 
+func TestFaderButtonLED(t *testing.T) {
+	for _, tc := range []struct {
+		index int
+		on    bool
+		want  []byte
+	}{
+		{9, true, []byte{0xB0, 45, 21}},
+		{9, false, []byte{0xB0, 45, 0}},
+		{0, true, nil},
+		{10, true, nil},
+	} {
+		if got := faderButtonLED(tc.index, tc.on); !bytes.Equal(got, tc.want) {
+			t.Errorf("button %d on=%t: % X, want % X", tc.index, tc.on, got, tc.want)
+		}
+	}
+}
+
 func TestParseFaderButtons(t *testing.T) {
 	tests := []struct {
 		name string
@@ -82,6 +99,8 @@ func TestParseFaderButtons(t *testing.T) {
 		{"btn 1 pressed", []byte{0xBF, 37, 127}, FaderButtonEvent{Index: 1, Pressed: true}},
 		{"btn 1 released", []byte{0xBF, 37, 0}, FaderButtonEvent{Index: 1, Pressed: false}},
 		{"btn 8 pressed", []byte{0xBF, 44, 127}, FaderButtonEvent{Index: 8, Pressed: true}},
+		{"btn 9 pressed", []byte{0xB0, 45, 127}, FaderButtonEvent{Index: 9, Pressed: true}},
+		{"btn 9 released", []byte{0xB0, 45, 0}, FaderButtonEvent{Index: 9, Pressed: false}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

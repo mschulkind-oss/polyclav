@@ -16,13 +16,15 @@ import (
 // without turning either into a global volume control. It is called before
 // synth and mixer dispatch; true means the input has been consumed.
 type organPedalRouter struct {
-	registry   organRegistry
-	cache      *clapcache.Cache
-	setter     clapParamSetter
-	expression config.OrganExpressionConfig
-	mu         sync.Mutex
-	held       bool // debounces repeated CC64 presses in toggle mode
-	heldPatch  string
+	registry    organRegistry
+	cache       *clapcache.Cache
+	setter      clapParamSetter
+	expression  config.OrganExpressionConfig
+	mu          sync.Mutex
+	held        bool // debounces repeated CC64 presses in toggle mode
+	heldPatch   string
+	buttonHeld  bool
+	buttonPatch string
 }
 
 func (r *organPedalRouter) Handle(ev midi.Event) bool {
@@ -85,6 +87,54 @@ func (r *organPedalRouter) Handle(ev midi.Event) bool {
 	}
 	r.held = pressed
 	return true
+}
+
+// HandleLeslieButton switches the active organ's Rotary between Stop and Fast.
+// It returns false when the button has no compatible organ to control.
+func (r *organPedalRouter) HandleLeslieButton(pressed bool) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.activeOrgan() {
+		r.buttonHeld = false
+		r.buttonPatch = ""
+		return false
+	}
+	patchName := r.registry.Current().Name
+	if r.buttonPatch != patchName {
+		r.buttonHeld = false
+		r.buttonPatch = patchName
+	}
+	param, ok := r.namedParam("Rotary", 0, 3)
+	if !ok {
+		r.buttonHeld = false
+		return false
+	}
+	if pressed && !r.buttonHeld {
+		next := 3.0
+		if param.CurrentValue != 1 {
+			next = 1
+		}
+		r.setParam(param, next)
+	}
+	r.buttonHeld = pressed
+	return true
+}
+
+// LeslieOn reports whether the active organ's rotary is running (Slow or Fast).
+func (r *organPedalRouter) LeslieOn() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.activeOrgan() {
+		return false
+	}
+	param, ok := r.namedParam("Rotary", 0, 3)
+	return ok && (param.CurrentValue == 2 || param.CurrentValue == 3)
 }
 
 func (r *organPedalRouter) activePatch() *patches.Patch {

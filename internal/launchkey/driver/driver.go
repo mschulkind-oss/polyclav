@@ -407,11 +407,15 @@ func parseMessage(msg []byte) (Event, bool) {
 		if len(msg) < 3 {
 			return nil, false
 		}
+		cc := msg[1]
+		val := msg[2]
+		// DAW-mode fader buttons report on channel 1 on the MK4 61.
+		if channel == 0 && cc >= ccFaderButtonBase && cc < ccFaderButtonBase+9 {
+			return FaderButtonEvent{Index: int(cc-ccFaderButtonBase) + 1, Pressed: val >= 64}, true
+		}
 		if channel != 0x0F {
 			return nil, false
 		}
-		cc := msg[1]
-		val := msg[2]
 		switch {
 		case cc >= ccKnobBase && cc < ccKnobBase+8:
 			var delta int8
@@ -426,7 +430,7 @@ func parseMessage(msg []byte) (Event, bool) {
 			return KnobEvent{Index: int(cc-ccKnobBase) + 1, Delta: delta}, true
 		case cc >= ccFaderBase && cc < ccFaderBase+9:
 			return FaderEvent{Index: int(cc-ccFaderBase) + 1, Value: val}, true
-		case cc >= ccFaderButtonBase && cc < ccFaderButtonBase+8:
+		case cc >= ccFaderButtonBase && cc < ccFaderButtonBase+9:
 			return FaderButtonEvent{Index: int(cc-ccFaderButtonBase) + 1, Pressed: val >= 64}, true
 		}
 		return nil, false

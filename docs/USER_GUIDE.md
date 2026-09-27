@@ -385,7 +385,7 @@ Lookup is keyed by `(source_kind, channel, controller)`; **NoteOff is ignored**
 toggle itself — to unmute, re-press and it receives `1` again.
 
 The Launchkey 61 MK4 in DAW mode (from its Programmer's Reference) lays out:
-8 knobs CC 21..28 ch16, 9 faders CC 5..13 ch16, fader buttons CC 37..45 ch16,
+8 knobs CC 21..28 ch16, 9 faders CC 5..13 ch16, fader buttons CC 37..45 ch1,
 top pads notes 96..103 ch1, bottom pads notes 112..119 ch1.
 
 See `polyclav.example.toml` for commented fader and pad binding examples; fresh installs leave them inactive until you uncomment and configure a host.
@@ -957,7 +957,11 @@ if another plugin uses different values for its rotary modes, set
 `leslie_mode = "off"` rather than assuming that 2 and 3 mean Slow and Fast.
 Piano and other non-organ patches retain normal sustain behavior. The
 switching happens in software, so a momentary physical footswitch suffices
-for either mode.
+for either mode. The ninth (rightmost) fader button toggles the rotary
+between Stop (1) and Fast (3) on an active organ, independently of
+`leslie_mode`. Its light is on when the rotary is running (Slow or Fast),
+and off when stopped or when no organ is active. Changes from the pedal
+or plugin update the light too.
 
 ## Troubleshooting
 
