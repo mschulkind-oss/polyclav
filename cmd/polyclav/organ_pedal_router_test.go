@@ -148,6 +148,12 @@ func TestLeslieSustainToggleMomentaryAndOff(t *testing.T) {
 	if r.Handle(ev) {
 		t.Fatal("off captured sustain")
 	}
+	p.LaunchkeyOrgan.LeslieMode = "toggle"
+	r.cache.Replace([]audio.ClapParamInfo{{ClapID: 201, Name: "Expression", MinValue: 0, MaxValue: 100}})
+	set.called = false
+	if r.Handle(ev) || set.called {
+		t.Fatal("organ without a compatible Rotary parameter swallowed sustain")
+	}
 	if r.Handle(midi.Event{SourcePort: "Expression Pedal:Expression Pedal MIDI 1 28:0", Kind: midi.ControlChange, CC: 64, Value: 127}) == false {
 		t.Fatal("dedicated pedal CC leaked")
 	}

@@ -301,7 +301,7 @@ func Load(path string) (*Config, error) {
 		if c.LaunchkeyOrgan.Ownership == "" {
 			c.LaunchkeyOrgan.Ownership = "mixer"
 		}
-		if c.LaunchkeyOrgan.LeslieMode == "" && c.LaunchkeyOrgan.Enabled && c.LaunchkeyOrgan.Ownership == "organ" && c.PluginID == "com.littlepotato.keys" {
+		if c.LaunchkeyOrgan.LeslieMode == "" && c.LaunchkeyOrgan.Enabled && c.LaunchkeyOrgan.Ownership == "organ" {
 			c.LaunchkeyOrgan.LeslieMode = "toggle"
 		}
 		switch c.Type {

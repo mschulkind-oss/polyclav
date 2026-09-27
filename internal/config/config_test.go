@@ -326,6 +326,20 @@ ownership = "organ"
 	if e.Device != "Expression Pedal:Expression Pedal MIDI 1" || e.CC != 11 || e.Min != 0 || e.Max != 127 || cfg.Patches[0].LaunchkeyOrgan.LeslieMode != "toggle" {
 		t.Fatalf("pedal defaults = %+v, organ = %+v", e, cfg.Patches[0].LaunchkeyOrgan)
 	}
+	other := mustLoadTOML(t, `
+[[patches]]
+name = "custom-organ"
+type = "clap"
+plugin_path = "/tmp/custom.clap"
+plugin_id = "org.example.organ"
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+drawbar_clap_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+`)
+	if got := other.Patches[0].LaunchkeyOrgan.LeslieMode; got != "toggle" {
+		t.Fatalf("custom organ default Leslie mode = %q, want toggle", got)
+	}
 	_, err := loadTOML(t, `[midi.organ_expression]
 device = "Expression Pedal"
 cc = 128

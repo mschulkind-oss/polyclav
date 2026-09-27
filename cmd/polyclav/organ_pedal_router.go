@@ -57,27 +57,31 @@ func (r *organPedalRouter) Handle(ev midi.Event) bool {
 		r.heldPatch = ""
 		return false
 	}
+	param, ok := r.namedParam("Rotary", 0, 3)
+	if !ok {
+		// An organ without the expected control keeps its ordinary sustain.
+		r.held = false
+		r.heldPatch = ""
+		return false
+	}
 	if r.heldPatch != p.Name {
 		r.held = false
 		r.heldPatch = p.Name
 	}
 	pressed := ev.Value >= 64
 	if mode == "momentary" {
-		// The plugin's four choices are Direct=0, Stop=1, Slow=2, Fast=3.
+		// A compatible Rotary parameter uses Direct=0, Stop=1, Slow=2, Fast=3.
 		value := 2.0
 		if pressed {
 			value = 3
 		}
-		r.setNamedParam("Rotary", 0, 3, value)
+		r.setParam(param, value)
 	} else if pressed && !r.held {
-		param, ok := r.namedParam("Rotary", 0, 3)
-		if ok {
-			next := 3.0
-			if param.CurrentValue == 3 {
-				next = 2
-			}
-			r.setParam(param, next)
+		next := 3.0
+		if param.CurrentValue == 3 {
+			next = 2
 		}
+		r.setParam(param, next)
 	}
 	r.held = pressed
 	return true

@@ -928,16 +928,17 @@ is the observed heel value and `max` the toe value (defaults: 0 and 127).
 Values outside the calibrated endpoints clamp to 0 or 100; a reversed
 pedal can use `min > max`. An empty `device` disables the binding.
 
-On the opted-in Potato Keys organ patch, Launchkey sustain CC64 switches the
-`Rotary` parameter between Slow (2) and Fast (3), if that parameter has the
-expected 0–3 range. **Toggle** (the default on Potato Keys) means one press chooses
+On an organ-owned CLAP patch, Launchkey sustain CC64 switches a compatible
+`Rotary` parameter between Slow (2) and Fast (3), if the parameter has the
+expected 0–3 range. **Toggle** (the default for organ-owned patches) means one press chooses
 Fast and the next chooses Slow; releases do not change speed. **Momentary**
 means Fast while held and Slow on release. To choose explicitly, add
 `leslie_mode = "toggle"`, `"momentary"`, or `"off"` to the patch's
 `[patches.launchkey_organ]` block; `off` leaves sustain CC64 untouched.
-Other CLAP organs start with Leslie switching off; opt in explicitly if they
-expose the same `Rotary` choices. Piano and other non-organ patches retain
-normal sustain behavior. The
+An organ without a compatible `Rotary` parameter keeps ordinary sustain;
+if another plugin uses different values for its rotary modes, set
+`leslie_mode = "off"` rather than assuming that 2 and 3 mean Slow and Fast.
+Piano and other non-organ patches retain normal sustain behavior. The
 switching happens in software, so a momentary physical footswitch suffices
 for either mode.
 
