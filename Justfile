@@ -50,7 +50,7 @@ lint-ci: build-rust
 test *args: build-rust
     cargo test --manifest-path audio-core/Cargo.toml {{args}}
     go test ./... {{args}}
-    @if command -v python3 >/dev/null 2>&1; then python3 scripts/test_build_wheel.py && python3 scripts/test_launchkey_mk4_inventory.py; else echo "warning: python3 not found — skipping Python script tests"; fi
+    @if command -v python3 >/dev/null 2>&1; then python3 scripts/test_build_wheel.py && python3 scripts/test_launchkey_mk4_inventory.py && python3 scripts/test_dev_log.py; else echo "warning: python3 not found — skipping Python script tests"; fi
 
 # Local dev gate: format → lint → test → build everything.
 check: format lint test
@@ -100,7 +100,7 @@ dev:
     @echo "  WARNING:  :8666 serves the daemon's EMBEDDED web build — it does"
     @echo "            NOT auto-reload. Always browse :5100 during just dev."
     @echo "────────────────────────────────────────────────────────────────────"
-    exec hivemind Procfile.dev
+    exec python3 scripts/dev_log.py hivemind Procfile.dev
 
 # Build and install both binaries to PREFIX/bin (default ~/.local/bin).
 # Override the location with `PREFIX=/usr/local just install`.

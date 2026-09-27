@@ -69,7 +69,17 @@ func TestDevJustHivemindAirReloadAndInterrupt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Procfile.dev"), []byte("daemon: exec "+airPath+" -c .air.toml\nweb: exec sleep 3600\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "Justfile"), []byte("dev:\n    exec hivemind Procfile.dev\n"), 0o644); err != nil {
+	launcher, err := os.ReadFile(filepath.Join("..", "..", "scripts", "dev_log.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "dev_log.py"), launcher, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Justfile"), []byte("dev:\n    exec python3 scripts/dev_log.py hivemind Procfile.dev\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	logFile, err := os.Create(filepath.Join(dir, "supervisor.log"))
@@ -115,6 +125,19 @@ func TestDevJustHivemindAirReloadAndInterrupt(t *testing.T) {
 	for _, pid := range all {
 		if processExistsAfter(pid, 3*time.Second) {
 			t.Fatalf("Ctrl-C left PID %d running (all=%v)", pid, all)
+		}
+	}
+	logs, err := filepath.Glob(filepath.Join(dir, ".dev-logs", "*.log"))
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("persistent dev logs = %v, err = %v", logs, err)
+	}
+	logged, err := os.ReadFile(logs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"hivemind_pid=", "air pid=", "processes:", "signal=SIGINT", "hivemind_exit="} {
+		if !strings.Contains(string(logged), expected) {
+			t.Errorf("persistent dev log missing %q", expected)
 		}
 	}
 }

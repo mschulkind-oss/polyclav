@@ -207,7 +207,16 @@ when backend source changes, while Next.js serves the live web UI. Air runs
 the daemon directly; there is no extra wrapper that starts a detached session.
 To stop the loop, press Ctrl-C in the same terminal. Stop a separately
 running overmind daemon first, since only one Polyclav can hold the audio and
-MIDI devices at once.
+MIDI devices at once. The logging launcher (`scripts/dev_log.py`) copies
+Hivemind, Air, build, and daemon output to a separate, timestamped file under
+`.dev-logs/` in the workspace while still printing it in the terminal. It
+also records changes to Air and daemon process identities (PID, parent PID,
+process group, session, and Linux start time) and a final snapshot after
+Hivemind exits. It does not start a detached session or manage the daemon.
+The directory is ignored by Git and excluded from Air's source watcher; logs
+remain until you remove them. Run `ls -lt .dev-logs/` to find the latest log.
+These logs may contain application output and local paths, so review them
+before sharing.
 
 A **process group** is a set of processes the OS can signal together. The
 pinned [Air v1.65.3 Linux implementation](https://github.com/air-verse/air/blob/v1.65.3/runner/util_linux.go)
@@ -226,6 +235,7 @@ stopping anything:
 ps -eo pid,ppid,pgid,sid,stat,args | grep -E '[h]ivemind|[a]ir|[p]olyclav'
 ```
 
+Compare the remaining PID and start time with the last `.dev-logs/` file.
 Record the remaining PID, parent PID, process group, and session; a daemon
 launched by overmind or a manual terminal is not owned by `just dev`. The
 singleton lock prevents a second daemon from starting but cannot stop an

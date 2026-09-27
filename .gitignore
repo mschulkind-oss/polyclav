@@ -1,6 +1,7 @@
 bin/
 target/
 .air/
+.dev-logs/
 soundfonts/
 scratch/
 .gocache/

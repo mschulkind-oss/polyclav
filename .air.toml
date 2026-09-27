@@ -14,6 +14,7 @@ tmp_dir = ".air"
   include_ext = ["go", "rs", "toml", "h", "mod", "sum"]
   exclude_dir = [
     ".air",
+    ".dev-logs",
     ".cargo",
     ".git",
     ".gocache",
