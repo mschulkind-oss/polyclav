@@ -383,6 +383,7 @@ func main() {
 	var pg *pages.Pages
 	clapParams := clapcache.New()
 	var faderRouter *organFaderRouter
+	pedalRouter := &organPedalRouter{registry: registry, cache: clapParams, setter: realClapParamSetter{}, expression: cfg.MIDI.OrganExpression}
 
 	patchBank := 0
 	pushPadColors := func() {
@@ -413,6 +414,9 @@ func main() {
 	}
 
 	onMIDIEvent := func(ev midi.Event) {
+		if pedalRouter.Handle(ev) {
+			return
+		}
 		pushSynth(ev)
 		if mapper != nil {
 			// The mapper always sees the RAW event — OSC bindings key on

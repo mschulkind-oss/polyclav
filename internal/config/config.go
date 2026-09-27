@@ -87,6 +87,20 @@ type MIDIConfig struct {
 	// (Curve == "") means linear passthrough. Per-patch overrides live on
 	// PatchConfig (velocity_curve / velocity_gamma) and win over this.
 	Velocity VelocityConfig `toml:"velocity"`
+	// OrganExpression binds one explicitly named MIDI port to the active
+	// opted-in CLAP organ's Expression parameter, never to master volume.
+	OrganExpression OrganExpressionConfig `toml:"organ_expression"`
+}
+
+// OrganExpressionConfig calibrates a dedicated USB swell pedal. Device is a
+// case-insensitive port-name substring (without its volatile ALSA address).
+// The port must also be selected in midi.allow_devices. An empty Device
+// disables the binding; it never guesses which controller is a pedal.
+type OrganExpressionConfig struct {
+	Device string `toml:"device"`
+	CC     int    `toml:"cc"`  // MIDI controller number; default 11
+	Min    int    `toml:"min"` // pedal's heel endpoint; default 0
+	Max    int    `toml:"max"` // pedal's toe endpoint; default 127
 }
 
 // VelocityConfig is the [midi.velocity] block: the global default velocity
@@ -190,6 +204,9 @@ type PatchConfig struct {
 	VelocityGamma  float32              `toml:"velocity_gamma"` // required iff velocity_curve = "custom"
 	VelocityPoints [][]int              `toml:"velocity_points"`
 	LaunchkeyOrgan LaunchkeyOrganConfig `toml:"launchkey_organ"`
+	// SwellPedal opts a CLAP instrument into the dedicated Expression pedal.
+	// Unset defaults on only for enabled organ-owned patches.
+	SwellPedal *bool `toml:"swell_pedal"`
 }
 
 // LaunchkeyOrganConfig is a per-CLAP-patch opt-in for organ performance
@@ -201,6 +218,9 @@ type LaunchkeyOrganConfig struct {
 	Ownership       string   `toml:"ownership"`
 	DrawbarParamIDs []string `toml:"drawbar_param_ids"` // legacy string contract; informational until CLAP exposes string IDs
 	DrawbarClapIDs  []uint32 `toml:"drawbar_clap_ids"`  // explicit discovered numeric CLAP ids, in drawbar order
+	// Sustain Leslie mode: toggle (default on organ-owned patches),
+	// momentary (fast only while held), or off (pass through CC64).
+	LeslieMode string `toml:"leslie_mode"`
 }
 
 const (
@@ -213,7 +233,7 @@ const (
 func Defaults() *Config {
 	return &Config{
 		Soundfont: SoundfontConfig{Path: ""},
-		MIDI:      MIDIConfig{}, // no AllowDevices = no keyboard selected, so no notes
+		MIDI:      MIDIConfig{OrganExpression: OrganExpressionConfig{CC: 11, Min: 0, Max: 127}}, // no AllowDevices = no keyboard selected
 		OSC: OSCConfig{
 			XR18: XR18Config{
 				// Empty host = OSC mixer control disabled by default. A
@@ -281,6 +301,9 @@ func Load(path string) (*Config, error) {
 		if c.LaunchkeyOrgan.Ownership == "" {
 			c.LaunchkeyOrgan.Ownership = "mixer"
 		}
+		if c.LaunchkeyOrgan.LeslieMode == "" && c.LaunchkeyOrgan.Enabled && c.LaunchkeyOrgan.Ownership == "organ" && c.PluginID == "com.littlepotato.keys" {
+			c.LaunchkeyOrgan.LeslieMode = "toggle"
+		}
 		switch c.Type {
 		case PatchTypeSoundfont:
 			if c.Soundfont == "" {
@@ -334,6 +357,10 @@ func Load(path string) (*Config, error) {
 	// user fixes the config in one pass (the "errors not warnings" rule,
 	// same philosophy as MissingDepsError).
 	errs := velocityConfigErrors(cfg)
+	e := cfg.MIDI.OrganExpression
+	if e.CC < 0 || e.CC > 127 || e.Min < 0 || e.Min > 127 || e.Max < 0 || e.Max > 127 || e.Min == e.Max {
+		errs = append(errs, "midi.organ_expression: cc and endpoints must be 0..127 with distinct min and max")
+	}
 	errs = append(errs, heartbeatConfigErrors(cfg, oscBlock)...)
 	errs = append(errs, launchkeyOrganConfigErrors(cfg)...)
 	if len(errs) > 0 {
@@ -482,8 +509,18 @@ func launchkeyOrganConfigErrors(cfg *Config) []string {
 	var errs []string
 	for _, p := range cfg.Patches {
 		o := p.LaunchkeyOrgan.Ownership
+		mode := p.LaunchkeyOrgan.LeslieMode
+		if mode != "" && mode != "toggle" && mode != "momentary" && mode != "off" {
+			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: leslie_mode must be toggle, momentary, or off", p.Name))
+		}
+		if (mode == "toggle" || mode == "momentary") && (!p.LaunchkeyOrgan.Enabled || o != "organ") {
+			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: leslie_mode requires enabled organ ownership", p.Name))
+		}
 		if o != "" && o != "mixer" && o != "organ" {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: ownership must be mixer or organ", p.Name))
+		}
+		if p.SwellPedal != nil && *p.SwellPedal && p.Type != PatchTypeCLAP {
+			errs = append(errs, fmt.Sprintf("patch %q: swell_pedal requires type=clap", p.Name))
 		}
 		if p.LaunchkeyOrgan.Enabled && p.Type != PatchTypeCLAP {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: enabled requires type=clap", p.Name))

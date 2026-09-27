@@ -308,6 +308,21 @@ func TestSelectIndexBounds(t *testing.T) {
 	}
 }
 
+func TestFromConfigSwellOptIn(t *testing.T) {
+	yes, no := true, false
+	ps := FromConfig([]config.PatchConfig{
+		{Name: "organ", Type: "clap", LaunchkeyOrgan: config.LaunchkeyOrganConfig{Enabled: true, Ownership: "organ"}},
+		{Name: "opted-out organ", Type: "clap", LaunchkeyOrgan: config.LaunchkeyOrganConfig{Enabled: true, Ownership: "organ"}, SwellPedal: &no},
+		{Name: "other swell", Type: "clap", SwellPedal: &yes},
+		{Name: "piano", Type: "soundfont"},
+	})
+	for i, want := range []bool{true, false, true, false} {
+		if ps[i].SwellPedal != want {
+			t.Errorf("%s swell = %t, want %t", ps[i].Name, ps[i].SwellPedal, want)
+		}
+	}
+}
+
 func TestFromConfig(t *testing.T) {
 	cfgs := []config.PatchConfig{
 		{Name: "a", Display: "A", Soundfont: "/path/a.sf2", PadColor: 3},

@@ -309,6 +309,57 @@ soundfont = "/tmp/piano.sf2"
 	}
 }
 
+func TestOrganPedalConfigDefaultsAndValidation(t *testing.T) {
+	cfg := mustLoadTOML(t, `
+[midi.organ_expression]
+device = "Expression Pedal:Expression Pedal MIDI 1"
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/Potato Keys.clap"
+plugin_id = "com.littlepotato.keys"
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+`)
+	e := cfg.MIDI.OrganExpression
+	if e.Device != "Expression Pedal:Expression Pedal MIDI 1" || e.CC != 11 || e.Min != 0 || e.Max != 127 || cfg.Patches[0].LaunchkeyOrgan.LeslieMode != "toggle" {
+		t.Fatalf("pedal defaults = %+v, organ = %+v", e, cfg.Patches[0].LaunchkeyOrgan)
+	}
+	_, err := loadTOML(t, `[midi.organ_expression]
+device = "Expression Pedal"
+cc = 128
+min = 40
+max = 40
+`)
+	if err == nil || !strings.Contains(err.Error(), "midi.organ_expression") {
+		t.Fatalf("invalid calibration: %v", err)
+	}
+	_, err = loadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/Potato Keys.clap"
+plugin_id = "com.littlepotato.keys"
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+leslie_mode = "mystery"
+`)
+	if err == nil || !strings.Contains(err.Error(), "leslie_mode") {
+		t.Fatalf("invalid Leslie mode: %v", err)
+	}
+	_, err = loadTOML(t, `
+[[patches]]
+name = "piano"
+soundfont = "/tmp/piano.sf2"
+swell_pedal = true
+`)
+	if err == nil || !strings.Contains(err.Error(), "swell_pedal requires type=clap") {
+		t.Fatalf("invalid swell binding: %v", err)
+	}
+}
+
 func TestLoadRejectsInvalidLaunchkeyOrganBinding(t *testing.T) {
 	_, err := loadTOML(t, `
 [[patches]]

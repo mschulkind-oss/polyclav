@@ -22,13 +22,16 @@ import (
 // (notes, CC, pitch bend). Other message types (aftertouch, etc.) are
 // dropped silently.
 type Event struct {
-	Kind    Kind
-	Channel byte
-	Note    byte
-	Vel     byte
-	CC      byte
-	Value   byte
-	Bend    uint16
+	// SourcePort is the full input port name stamped by the multiplexer.
+	// Directly parsed events have an empty source until a listener supplies it.
+	SourcePort string
+	Kind       Kind
+	Channel    byte
+	Note       byte
+	Vel        byte
+	CC         byte
+	Value      byte
+	Bend       uint16
 }
 
 type Kind uint8

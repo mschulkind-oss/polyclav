@@ -34,7 +34,9 @@ panel; see "Web dashboard" below.
   bit-exact bypass; only the drive pedal currently has a Launchkey knob
   (MAIN knob 4) — the other three are implemented and controllable via
   the Rust/Go APIs but not yet exposed on a knob, REST field, or
-  per-patch save (see `docs/VISION.md` §1b–1d).
+  per-patch save (see [delay](./VISION.md#1b-analog-style-delay-pedal),
+  [chorus](./VISION.md#1c-chorus-pedal), and
+  [tremolo](./VISION.md#1d-tremolo-pedal)).
 - Launchkey live control surface:
   - Top-row pads select patches; the lit pad tracks the current patch.
   - Five knob pages (MAIN / OSC / FILTER / AMP / LFO/MOD) switched with
@@ -890,6 +892,54 @@ order. The optional Potato Keys integration test runs without an audio device:
 
 When this capture is active, fader 9 changes the ninth drawbar only; it does
 not also send the mixer L/R fader OSC binding.
+
+### Organ swell and Leslie pedal
+
+A **swell** is the organ's expression control: it changes the organ's own
+expression parameter, not Polyclav's master volume. An explicitly named USB
+pedal can control it only while an active CLAP patch opts in and exposes an
+`Expression` parameter with a 0–100 range. Patches with
+`launchkey_organ = { enabled = true, ownership = "organ" }` opt in by default.
+Set `swell_pedal = false` in the organ's `[[patches]]` entry (before its
+`[patches.launchkey_organ]` block) to disable it, or
+`swell_pedal = true` in another CLAP instrument's entry to opt in. A piano
+has no automatic swell binding. Notes and other messages from that
+dedicated pedal port are not forwarded to instruments or the mixer.
+For example:
+
+```toml
+[midi]
+allow_devices = ["Launchkey MK4 61:Launchkey MK4 61 MIDI In", "Expression Pedal:Expression Pedal MIDI 1"]
+
+[midi.organ_expression]
+device = "Expression Pedal:Expression Pedal MIDI 1"
+cc = 11
+min = 0
+max = 127
+```
+
+Use the stable part of the input port name, **not** its changing ALSA address
+(such as `28:0`). Both the allowlist entry and `device` are required. `cc`
+is the MIDI controller number the pedal actually sends; **11 is only the
+standard default, not a measurement of your pedal**. Use `aconnect -l` to
+find the source port and `aseqdump -p CLIENT:PORT` while sweeping the pedal
+to confirm its controller number and endpoints without sending MIDI. `min`
+is the observed heel value and `max` the toe value (defaults: 0 and 127).
+Values outside the calibrated endpoints clamp to 0 or 100; a reversed
+pedal can use `min > max`. An empty `device` disables the binding.
+
+On the opted-in Potato Keys organ patch, Launchkey sustain CC64 switches the
+`Rotary` parameter between Slow (2) and Fast (3), if that parameter has the
+expected 0–3 range. **Toggle** (the default on Potato Keys) means one press chooses
+Fast and the next chooses Slow; releases do not change speed. **Momentary**
+means Fast while held and Slow on release. To choose explicitly, add
+`leslie_mode = "toggle"`, `"momentary"`, or `"off"` to the patch's
+`[patches.launchkey_organ]` block; `off` leaves sustain CC64 untouched.
+Other CLAP organs start with Leslie switching off; opt in explicitly if they
+expose the same `Rotary` choices. Piano and other non-organ patches retain
+normal sustain behavior. The
+switching happens in software, so a momentary physical footswitch suffices
+for either mode.
 
 ## Troubleshooting
 

@@ -48,6 +48,7 @@ type Patch struct {
 	// precedence order; nil = no point override.
 	VelocityPoints [][]int
 	LaunchkeyOrgan LaunchkeyOrgan
+	SwellPedal     bool // dedicated expression pedal, never master volume
 }
 
 // LaunchkeyOrgan is the runtime copy of a patch's explicit Launchkey organ
@@ -57,6 +58,7 @@ type LaunchkeyOrgan struct {
 	Ownership       string
 	DrawbarParamIDs []string
 	DrawbarClapIDs  []uint32
+	LeslieMode      string
 }
 
 // LoadState is the registry-visible readiness state for a selectable patch.
@@ -354,7 +356,9 @@ func FromConfig(cfgs []config.PatchConfig) []Patch {
 				Ownership:       c.LaunchkeyOrgan.Ownership,
 				DrawbarParamIDs: append([]string(nil), c.LaunchkeyOrgan.DrawbarParamIDs...),
 				DrawbarClapIDs:  append([]uint32(nil), c.LaunchkeyOrgan.DrawbarClapIDs...),
+				LeslieMode:      c.LaunchkeyOrgan.LeslieMode,
 			},
+			SwellPedal: c.SwellPedal != nil && *c.SwellPedal || c.SwellPedal == nil && c.LaunchkeyOrgan.Enabled && c.LaunchkeyOrgan.Ownership == "organ",
 		})
 	}
 	return out

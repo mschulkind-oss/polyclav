@@ -176,6 +176,30 @@ func TestMultiplexerRawSinkIncludesPerformancePortIdentity(t *testing.T) {
 	}
 }
 
+func TestMultiplexerStampsParsedEventSource(t *testing.T) {
+	seen := make(chan Event, 1)
+	opener := func(ctx context.Context, _ *slog.Logger, _ string, sink Sink, _ func([]byte)) error {
+		sink(Event{Kind: ControlChange, CC: 11, Value: 127})
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	m := NewMultiplexer(slog.New(slog.NewTextHandler(io.Discard, nil)), MultiplexerConfig{
+		Allow: []string{"Expression Pedal"}, PollInterval: 5 * time.Millisecond,
+		PortLister: func() ([]string, error) { return []string{"Expression Pedal:Expression Pedal MIDI 1 28:0"}, nil },
+		Opener:     opener, Sink: func(ev Event) { seen <- ev },
+	})
+	cancel, done := runMultiplexer(t, m)
+	defer stopMultiplexer(t, cancel, done)
+	select {
+	case ev := <-seen:
+		if ev.SourcePort != "Expression Pedal:Expression Pedal MIDI 1 28:0" || ev.CC != 11 {
+			t.Fatalf("source stamp: %+v", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no parsed event")
+	}
+}
+
 func TestMultiplexerHandlesMultipleDevicesIndependently(t *testing.T) {
 	rig := newFakeMuxRig()
 	m := newTestMultiplexer(rig, allowKeyboards, nil)

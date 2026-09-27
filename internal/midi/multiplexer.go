@@ -397,6 +397,7 @@ func (m *Multiplexer) open(ctx context.Context, name string) {
 	wrappedSink := func(ev Event) {
 		stampActivity()
 		if m.cfg.Sink != nil {
+			ev.SourcePort = name
 			m.cfg.Sink(ev)
 		}
 	}
