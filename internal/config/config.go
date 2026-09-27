@@ -214,10 +214,11 @@ type PatchConfig struct {
 // behavior. Ownership is "mixer" (default, no capture) or "organ" (capture
 // DAW faders 1-9 for drawbars while this patch is selected).
 type LaunchkeyOrganConfig struct {
-	Enabled         bool     `toml:"enabled"`
-	Ownership       string   `toml:"ownership"`
-	DrawbarParamIDs []string `toml:"drawbar_param_ids"` // legacy string contract; informational until CLAP exposes string IDs
-	DrawbarClapIDs  []uint32 `toml:"drawbar_clap_ids"`  // explicit discovered numeric CLAP ids, in drawbar order
+	Enabled           bool     `toml:"enabled"`
+	Ownership         string   `toml:"ownership"`
+	DrawbarParamIDs   []string `toml:"drawbar_param_ids"`   // legacy informational field; prefer drawbar_param_names
+	DrawbarParamNames []string `toml:"drawbar_param_names"` // optional exact CLAP names, in fader order
+	DrawbarClapIDs    []uint32 `toml:"drawbar_clap_ids"`    // legacy numeric override, in fader order
 	// Sustain Leslie mode: toggle (default on organ-owned patches),
 	// momentary (fast only while held), or off (pass through CC64).
 	LeslieMode string `toml:"leslie_mode"`
@@ -525,11 +526,24 @@ func launchkeyOrganConfigErrors(cfg *Config) []string {
 		if p.LaunchkeyOrgan.Enabled && p.Type != PatchTypeCLAP {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: enabled requires type=clap", p.Name))
 		}
-		if p.LaunchkeyOrgan.Enabled && p.LaunchkeyOrgan.Ownership == "organ" && len(p.LaunchkeyOrgan.DrawbarClapIDs) == 0 && p.PluginID != "com.littlepotato.keys" {
-			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: organ ownership requires drawbar_clap_ids", p.Name))
-		}
 		if len(p.LaunchkeyOrgan.DrawbarParamIDs) != 0 && len(p.LaunchkeyOrgan.DrawbarParamIDs) != 9 {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_param_ids must list exactly 9 IDs", p.Name))
+		}
+		if names := p.LaunchkeyOrgan.DrawbarParamNames; len(names) != 0 {
+			if len(names) != 9 {
+				errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_param_names must list exactly nine distinct names", p.Name))
+			}
+			seen := make(map[string]bool, len(names))
+			for _, name := range names {
+				if strings.TrimSpace(name) == "" || seen[name] {
+					errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_param_names must list exactly nine distinct nonempty names", p.Name))
+					break
+				}
+				seen[name] = true
+			}
+			if len(p.LaunchkeyOrgan.DrawbarClapIDs) != 0 {
+				errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: choose drawbar_param_names or drawbar_clap_ids, not both", p.Name))
+			}
 		}
 		if len(p.LaunchkeyOrgan.DrawbarClapIDs) != 0 && len(p.LaunchkeyOrgan.DrawbarClapIDs) != 9 {
 			errs = append(errs, fmt.Sprintf("patch %q launchkey_organ: drawbar_clap_ids must list exactly 9 IDs", p.Name))

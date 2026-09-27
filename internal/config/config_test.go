@@ -424,8 +424,8 @@ ownership = "organ"
 	}
 }
 
-func TestLoadRejectsUnknownOrganWithoutDrawbarIDs(t *testing.T) {
-	_, err := loadTOML(t, `
+func TestLoadOrganUsesNamesWithoutPluginID(t *testing.T) {
+	cfg := mustLoadTOML(t, `
 [[patches]]
 name = "organ"
 type = "clap"
@@ -436,8 +436,39 @@ plugin_id = "com.other.organ"
 enabled = true
 ownership = "organ"
 `)
-	if err == nil || !strings.Contains(err.Error(), "organ ownership requires drawbar_clap_ids") {
-		t.Fatalf("err = %v, want drawbar_clap_ids validation", err)
+	if got := cfg.Patches[0].LaunchkeyOrgan; !got.Enabled || len(got.DrawbarClapIDs) != 0 {
+		t.Fatalf("default name binding = %+v", got)
+	}
+}
+
+func TestLoadOrganCustomParamNames(t *testing.T) {
+	cfg := mustLoadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/other.clap"
+plugin_id = "com.other.organ"
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+drawbar_param_names = ["bar1", "bar2", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8", "bar9"]
+`)
+	if got := cfg.Patches[0].LaunchkeyOrgan.DrawbarParamNames; len(got) != 9 || got[8] != "bar9" {
+		t.Fatalf("parameter names = %v", got)
+	}
+	_, err := loadTOML(t, `
+[[patches]]
+name = "organ"
+type = "clap"
+plugin_path = "/tmp/other.clap"
+plugin_id = "com.other.organ"
+[patches.launchkey_organ]
+enabled = true
+ownership = "organ"
+drawbar_param_names = ["bar1", "bar1", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8", "bar9"]
+`)
+	if err == nil || !strings.Contains(err.Error(), "nine distinct") {
+		t.Fatalf("duplicate names: %v", err)
 	}
 }
 

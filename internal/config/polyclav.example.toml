@@ -210,8 +210,9 @@ port = 10024
 # Fader 9 → main L/R fader (the "room volume" pattern). CLAP organ
 # patches can opt in to capture DAW faders 1-9 with
 # [patches.launchkey_organ] enabled=true, ownership="organ". Potato Keys
-# drawbars are resolved from exact labels on the active plugin; other CLAP
-# plugins need explicit drawbar_clap_ids. Captured faders never send mixer OSC.
+# footage names (16′ through 1′) are resolved from the active CLAP plugin
+# regardless of plugin ID. Other labels can use drawbar_param_names (nine
+# exact parameter names, in fader order). Captured faders never send mixer OSC.
 # [[osc.mixer.bindings]]
 # source_kind = "cc"
 # channel     = 16

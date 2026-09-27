@@ -866,10 +866,13 @@ mixer's web UI). The XR18 must be reachable on the LAN at the configured
 
 ### Launchkey organ drawbars
 
-Launchkey DAW faders are not mapped to the mixer unless you configure OSC bindings. For Potato Keys, opt in
-to drawbars 1–9 without copying numeric CLAP IDs. Polyclav resolves the
-nine exact footage labels (16′ through 1′) from the active plugin and checks
-that each has a distinct ID and a 0–8 range:
+Launchkey DAW faders are not mapped to the mixer unless you configure OSC
+bindings. For an organ patch, opt in to drawbars 1–9 without copying numeric
+CLAP parameter IDs. A parameter ID is the plugin's numeric handle for a
+control; its **name** is the human-readable label. By default, Polyclav
+matches the nine exact footage names (16′ through 1′) on the active CLAP
+plugin, regardless of its plugin ID. It checks that every name resolves to
+one distinct numeric ID with a 0–8 range:
 
 ```toml
 [[patches]]
@@ -886,8 +889,22 @@ ownership = "organ"
 
 If discovery is incomplete or ambiguous, the organ faders do nothing and
 the Launchkey displays `CHECK LABELS`; they do not unexpectedly move mixer
-volume. Other CLAP organs still require nine explicit `drawbar_clap_ids` in
-order. The optional Potato Keys integration test runs without an audio device:
+volume. For a plugin with different labels, set this in that patch's
+`[patches.launchkey_organ]` block:
+
+```toml
+drawbar_param_names = [
+  "bar1", "bar2", "bar3", "bar4", "bar5",
+  "bar6", "bar7", "bar8", "bar9",
+]
+```
+
+Supply nine distinct, exact parameter names in fader order, each with a 0–8
+range; a missing or ambiguous name captures the faders but changes neither
+the organ nor the mixer. Old
+`drawbar_clap_ids` numeric bindings remain supported but are no longer
+required for other plugins. The optional Potato Keys integration test runs
+without an audio device:
 `POLYCLAV_KEYS_CLAP_PATH="$HOME/.clap/Potato Keys.clap" just test`.
 
 When this capture is active, fader 9 changes the ninth drawbar only; it does

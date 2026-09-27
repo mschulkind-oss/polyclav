@@ -308,6 +308,15 @@ func TestSelectIndexBounds(t *testing.T) {
 	}
 }
 
+func TestFromConfigCopiesDrawbarParamNames(t *testing.T) {
+	names := []string{"bar1", "bar2", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8", "bar9"}
+	ps := FromConfig([]config.PatchConfig{{Name: "organ", LaunchkeyOrgan: config.LaunchkeyOrganConfig{Enabled: true, Ownership: "organ", DrawbarParamNames: names}}})
+	names[0] = "changed"
+	if len(ps[0].LaunchkeyOrgan.DrawbarParamNames) != 9 || ps[0].LaunchkeyOrgan.DrawbarParamNames[0] != "bar1" {
+		t.Fatalf("drawbar name copy = %v", ps[0].LaunchkeyOrgan.DrawbarParamNames)
+	}
+}
+
 func TestFromConfigSwellOptIn(t *testing.T) {
 	yes, no := true, false
 	ps := FromConfig([]config.PatchConfig{

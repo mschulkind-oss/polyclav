@@ -65,9 +65,9 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 		return false
 	}
 	ids := cur.LaunchkeyOrgan.DrawbarClapIDs
-	if len(ids) == 0 && cur.PluginID == "com.littlepotato.keys" {
+	if len(ids) == 0 {
 		var ok bool
-		ids, ok = discoverPotatoKeysDrawbars(r.cache.All())
+		ids, ok = discoverOrganDrawbars(r.cache.All(), cur.LaunchkeyOrgan.DrawbarParamNames)
 		if !ok {
 			// Organ ownership must not unexpectedly move mixer fader 9 when
 			// discovery fails. Keep the controls inert and show the problem.
@@ -85,7 +85,12 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 			r.show("ORGAN", fmt.Sprintf("MISSING %d", id))
 			return true
 		}
-		if !looksLikeDrawbarParam(i+1, param) {
+		if len(cur.LaunchkeyOrgan.DrawbarParamNames) == 9 {
+			if param.Name != cur.LaunchkeyOrgan.DrawbarParamNames[i] || !drawbarRange(param) {
+				r.show("ORGAN", fmt.Sprintf("CHECK %d", id))
+				return true
+			}
+		} else if !looksLikeDrawbarParam(i+1, param) {
 			r.show("ORGAN", fmt.Sprintf("CHECK %d", id))
 			return true
 		}
@@ -103,19 +108,28 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 	return true
 }
 
-// discoverPotatoKeysDrawbars resolves the CLAP numeric IDs from the active
-// instance's exact nine footage labels. Duplicate labels, IDs, or changed
-// ranges disable capture rather than silently controlling the wrong knob.
-func discoverPotatoKeysDrawbars(params []audio.ClapParamInfo) ([]uint32, bool) {
+// discoverOrganDrawbars resolves runtime CLAP IDs from exact parameter
+// names. With no explicit names, the nine standard footage labels apply.
+// Duplicate names, IDs, or unexpected ranges disable capture instead of
+// silently controlling a different parameter.
+func discoverOrganDrawbars(params []audio.ClapParamInfo, names []string) ([]uint32, bool) {
+	if len(names) == 0 {
+		for _, label := range drawbarLabels() {
+			names = append(names, strings.TrimSuffix(label, " drawbar"))
+		}
+	}
+	if len(names) != 9 {
+		return nil, false
+	}
 	ids := make([]uint32, 9)
 	found := make([]bool, 9)
 	seen := make(map[uint32]bool, 9)
 	for _, p := range params {
 		for i := range ids {
-			if p.Name != strings.TrimSuffix(drawbarLabel(i+1), " drawbar") {
+			if p.Name != names[i] {
 				continue
 			}
-			if found[i] || seen[p.ClapID] || math.IsNaN(p.MinValue) || math.IsNaN(p.MaxValue) || math.Abs(p.MinValue) > 0.0001 || math.Abs(p.MaxValue-8) > 0.0001 {
+			if found[i] || seen[p.ClapID] || !drawbarRange(p) {
 				return nil, false
 			}
 			ids[i] = p.ClapID
@@ -129,6 +143,10 @@ func discoverPotatoKeysDrawbars(params []audio.ClapParamInfo) ([]uint32, bool) {
 		}
 	}
 	return ids, true
+}
+
+func drawbarRange(p audio.ClapParamInfo) bool {
+	return !math.IsNaN(p.MinValue) && !math.IsNaN(p.MaxValue) && math.Abs(p.MinValue) <= 0.0001 && math.Abs(p.MaxValue-8) <= 0.0001
 }
 
 func patchType(typ string) string {

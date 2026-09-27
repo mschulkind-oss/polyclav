@@ -54,11 +54,12 @@ type Patch struct {
 // LaunchkeyOrgan is the runtime copy of a patch's explicit Launchkey organ
 // binding policy. Disabled patches never capture faders from mixer OSC.
 type LaunchkeyOrgan struct {
-	Enabled         bool
-	Ownership       string
-	DrawbarParamIDs []string
-	DrawbarClapIDs  []uint32
-	LeslieMode      string
+	Enabled           bool
+	Ownership         string
+	DrawbarParamIDs   []string
+	DrawbarParamNames []string
+	DrawbarClapIDs    []uint32
+	LeslieMode        string
 }
 
 // LoadState is the registry-visible readiness state for a selectable patch.
@@ -352,11 +353,12 @@ func FromConfig(cfgs []config.PatchConfig) []Patch {
 			VelocityGamma:  c.VelocityGamma,
 			VelocityPoints: c.VelocityPoints,
 			LaunchkeyOrgan: LaunchkeyOrgan{
-				Enabled:         c.LaunchkeyOrgan.Enabled,
-				Ownership:       c.LaunchkeyOrgan.Ownership,
-				DrawbarParamIDs: append([]string(nil), c.LaunchkeyOrgan.DrawbarParamIDs...),
-				DrawbarClapIDs:  append([]uint32(nil), c.LaunchkeyOrgan.DrawbarClapIDs...),
-				LeslieMode:      c.LaunchkeyOrgan.LeslieMode,
+				Enabled:           c.LaunchkeyOrgan.Enabled,
+				Ownership:         c.LaunchkeyOrgan.Ownership,
+				DrawbarParamIDs:   append([]string(nil), c.LaunchkeyOrgan.DrawbarParamIDs...),
+				DrawbarParamNames: append([]string(nil), c.LaunchkeyOrgan.DrawbarParamNames...),
+				DrawbarClapIDs:    append([]uint32(nil), c.LaunchkeyOrgan.DrawbarClapIDs...),
+				LeslieMode:        c.LaunchkeyOrgan.LeslieMode,
 			},
 			SwellPedal: c.SwellPedal != nil && *c.SwellPedal || c.SwellPedal == nil && c.LaunchkeyOrgan.Enabled && c.LaunchkeyOrgan.Ownership == "organ",
 		})

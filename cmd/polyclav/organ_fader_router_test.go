@@ -70,9 +70,9 @@ func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testin
 	}
 }
 
-func TestPotatoKeysAutoBindsExactFootageLabels(t *testing.T) {
+func TestOrganAutoBindsExactFootageLabelsWithoutPluginID(t *testing.T) {
 	p := organPatch()
-	p.PluginID = "com.littlepotato.keys"
+	p.PluginID = "com.example.tonewheel"
 	p.LaunchkeyOrgan.DrawbarClapIDs = nil
 	params := drawbarParams()
 	for i, label := range []string{"16′", "5⅓′", "8′", "4′", "2⅔′", "2′", "1⅗′", "1⅓′", "1′"} {
@@ -94,7 +94,32 @@ func TestPotatoKeysAutoBindsExactFootageLabels(t *testing.T) {
 	}
 }
 
-func TestPotatoKeysAutoBindingRejectsAmbiguousOrInvalidParams(t *testing.T) {
+func TestOrganFaderBindsExplicitParameterNames(t *testing.T) {
+	p := organPatch()
+	p.PluginID = "com.example.tonewheel"
+	p.LaunchkeyOrgan.DrawbarClapIDs = nil
+	p.LaunchkeyOrgan.DrawbarParamNames = []string{"bar1", "bar2", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8", "bar9"}
+	params := drawbarParams()
+	for i := range params {
+		params[i].Name = p.LaunchkeyOrgan.DrawbarParamNames[i]
+	}
+	cache := clapcache.New()
+	cache.Replace(params)
+	setter, mapper := &fakeSetter{}, &fakeMapper{}
+	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
+	r.HandleFader(driver.FaderEvent{Index: 3, Value: 127})
+	if !setter.called || setter.id != 103 || setter.value != 8 || len(mapper.events) != 0 {
+		t.Fatalf("custom name binding: setter=%+v mapper=%+v", setter, mapper)
+	}
+	cache.Replace(append(params, audio.ClapParamInfo{ClapID: 999, Name: "bar3", MinValue: 0, MaxValue: 8}))
+	setter.called = false
+	r.HandleFader(driver.FaderEvent{Index: 3, Value: 0})
+	if setter.called || len(mapper.events) != 0 {
+		t.Fatal("ambiguous parameter name moved an organ drawbar or mixer fader")
+	}
+}
+
+func TestOrganAutoBindingRejectsAmbiguousOrInvalidParams(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		edit func([]audio.ClapParamInfo) []audio.ClapParamInfo
@@ -111,7 +136,7 @@ func TestPotatoKeysAutoBindingRejectsAmbiguousOrInvalidParams(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := organPatch()
-			p.PluginID = "com.littlepotato.keys"
+			p.PluginID = "com.example.tonewheel"
 			p.LaunchkeyOrgan.DrawbarClapIDs = nil
 			params := drawbarParams()
 			for i, label := range []string{"16′", "5⅓′", "8′", "4′", "2⅔′", "2′", "1⅗′", "1⅓′", "1′"} {
