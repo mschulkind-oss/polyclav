@@ -1,6 +1,5 @@
 # polyclav scripts
 
-- [`dev-air-wrapper`](dev-air-wrapper) — Linux-only development wrapper used by `.air.toml` for `just dev`. It starts `bin/polyclav` in its own process group and performs bounded INT→TERM→KILL cleanup during Air reloads so stale daemon descendants do not keep MIDI/audio devices open.
 - [`components-capture.js`](components-capture.js) — browser shim that logs WebMIDI traffic to/from a Launchkey. Usage is documented in its own header comment.
 - [`launchkey_mk4_inventory.py`](launchkey_mk4_inventory.py) — guided, non-invasive Launchkey MK4 control inventory. It uses `aconnect -l` for discovery and `aseqdump -p` for read-only capture; it never sends MIDI, starts audio, or changes device settings.
 

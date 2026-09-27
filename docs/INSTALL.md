@@ -1,7 +1,7 @@
 # polyclav — Install
 
 A from-zero install guide for someone who just cloned this repo. For the
-day-to-day "configure and play" side, see `USER_GUIDE.md` instead.
+day-to-day "configure and play" side, see [USER_GUIDE.md](./USER_GUIDE.md) instead.
 
 ## Platform
 
@@ -198,6 +198,40 @@ api.alsa.headroom=0
 That gets ~8 ms round-trip at 48 kHz. See PipeWire/WirePlumber upstream
 docs for the full rule syntax.
 
+## Development loop and shutdown
+
+`just dev` runs [Hivemind](https://github.com/DarthSim/hivemind) as the
+foreground supervisor. Hivemind launches two processes from `Procfile.dev`:
+[Air](https://github.com/air-verse/air) rebuilds and restarts the Go daemon
+when backend source changes, while Next.js serves the live web UI. Air runs
+the daemon directly; there is no extra wrapper that starts a detached session.
+To stop the loop, press Ctrl-C in the same terminal. Stop a separately
+running overmind daemon first, since only one Polyclav can hold the audio and
+MIDI devices at once.
+
+A **process group** is a set of processes the OS can signal together. The
+pinned [Air v1.65.3 Linux implementation](https://github.com/air-verse/air/blob/v1.65.3/runner/util_linux.go)
+puts its command in a process group and signals that group and its children
+on reload and shutdown. [Hivemind's process management](https://github.com/DarthSim/hivemind/blob/master/process.go)
+signals each supervised group when it receives Ctrl-C. These are the reasons
+for relying on those two tools instead of maintaining a second daemon
+supervisor. The no-audio development lifecycle test exercises reload and
+Ctrl-C through `just` → Hivemind → Air using a fake daemon and child processes.
+Upstream behavior reviewed 2026-09-27; check it again if updating Air.
+
+If a real host still has a daemon after Ctrl-C, inspect its ancestry before
+stopping anything:
+
+```sh
+ps -eo pid,ppid,pgid,sid,stat,args | grep -E '[h]ivemind|[a]ir|[p]olyclav'
+```
+
+Record the remaining PID, parent PID, process group, and session; a daemon
+launched by overmind or a manual terminal is not owned by `just dev`. The
+singleton lock prevents a second daemon from starting but cannot stop an
+existing one. A supervisor forcibly killed with SIGKILL cannot perform a
+normal cleanup; verify ownership before sending signals to any leftover PID.
+
 ## First run
 
 The daemon enforces a "functioning config or refuse" startup rule:
@@ -236,7 +270,7 @@ second long-running daemon. Offline commands such as `polyclav doctor`,
 
 ## Where to go next
 
-- `USER_GUIDE.md` — full config schema, every key explained.
-- `AGENTS.md` — developer / agent workflow, current milestone state.
-- `ROADMAP.md` — what's shipped and what's planned next.
-- `HARDWARE_TESTS.md` — hardware verification checklist.
+- [USER_GUIDE.md](./USER_GUIDE.md) — full config schema, every key explained.
+- [AGENTS.md](../AGENTS.md) — developer / agent workflow, current milestone state.
+- [ROADMAP.md](./ROADMAP.md) — what's shipped and what's planned next.
+- [HARDWARE_TESTS.md](./HARDWARE_TESTS.md) — hardware verification checklist.

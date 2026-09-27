@@ -7,8 +7,10 @@ tmp_dir = ".air"
 
 [build]
   cmd = "just build-bin"
-  bin = "scripts/dev-air-wrapper"
-  args_bin = ["./bin/polyclav", "--web", "on"]
+  # Air v1.65.3 manages the launched process group and Linux descendants;
+  # don't detach the daemon into another session or add a second supervisor.
+  bin = "./bin/polyclav"
+  args_bin = ["--web", "on"]
   include_ext = ["go", "rs", "toml", "h", "mod", "sum"]
   exclude_dir = [
     ".air",
@@ -29,8 +31,7 @@ tmp_dir = ".air"
   ]
   exclude_file = [".air.toml", ".mise.local.toml"]
   # Debounce bursts of saves; give the daemon time to release audio + MIDI
-  # devices gracefully before a hard kill. The wrapper finishes
-  # INT→TERM→KILL process-group cleanup inside this Air budget.
+  # devices on SIGINT before Air sends SIGKILL to its process tree.
   delay = 300
   send_interrupt = true
   kill_delay = "4s"

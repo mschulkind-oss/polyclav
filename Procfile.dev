@@ -10,5 +10,5 @@
 #   auto-reloads (only `just build` refreshes it). Use :5100 during just dev.
 # If the daemon line dies instantly, air is probably not installed yet
 # (`mise install`); hivemind then kills the web process too by design.
-daemon: air
-web: cd web && pnpm dev
+daemon: exec air
+web: cd web && exec pnpm dev

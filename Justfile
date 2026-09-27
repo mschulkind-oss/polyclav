@@ -100,7 +100,7 @@ dev:
     @echo "  WARNING:  :8666 serves the daemon's EMBEDDED web build — it does"
     @echo "            NOT auto-reload. Always browse :5100 during just dev."
     @echo "────────────────────────────────────────────────────────────────────"
-    hivemind Procfile.dev
+    exec hivemind Procfile.dev
 
 # Build and install both binaries to PREFIX/bin (default ~/.local/bin).
 # Override the location with `PREFIX=/usr/local just install`.
