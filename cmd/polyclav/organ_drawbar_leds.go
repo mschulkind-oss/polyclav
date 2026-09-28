@@ -74,15 +74,15 @@ func (m DrawbarColorMode) Colors() [9]components.Color {
 		}
 	case DrawbarColorModeRegisters:
 		return [9]components.Color{
-			components.ColorVibrantRed,   // 16' (Low)
-			components.ColorVibrantRed,   // 5⅓' (Low)
-			components.ColorVibrantRed,   // 8'  (Low)
-			components.ColorVibrantGreen, // 4'  (Mid)
-			components.ColorVibrantGreen, // 2⅔' (Mid)
-			components.ColorVibrantGreen, // 2'  (Mid)
-			components.ColorVibrantCyan,  // 1⅗' (High)
-			components.ColorVibrantCyan,  // 1⅓' (High)
-			components.ColorVibrantCyan,  // 1'  (High)
+			components.ColorVibrantRed,  // 16' (Low)
+			components.ColorVibrantRed,  // 5⅓' (Low)
+			components.ColorVibrantRed,  // 8'  (Low)
+			components.ColorGreen,       // 4'  (Mid)
+			components.ColorGreen,       // 2⅔' (Mid)
+			components.ColorGreen,       // 2'  (Mid)
+			components.ColorVibrantCyan, // 1⅗' (High)
+			components.ColorVibrantCyan, // 1⅓' (High)
+			components.ColorVibrantCyan, // 1'  (High)
 		}
 	case DrawbarColorModeHarmonics:
 		return [9]components.Color{
@@ -98,9 +98,9 @@ func (m DrawbarColorMode) Colors() [9]components.Color {
 		}
 	case DrawbarColorModePerformance:
 		return [9]components.Color{
-			components.ColorVibrantGreen,  // 16' (First 3)
-			components.ColorVibrantGreen,  // 5⅓' (First 3)
-			components.ColorVibrantGreen,  // 8'  (First 3)
+			components.ColorGreen,         // 16' (First 3)
+			components.ColorGreen,         // 5⅓' (First 3)
+			components.ColorGreen,         // 8'  (First 3)
 			components.ColorDimWhite,      // 4'  (Mid body)
 			components.ColorDimWhite,      // 2⅔' (Mid body)
 			components.ColorDimWhite,      // 2'  (Mid body)
@@ -235,7 +235,7 @@ func (s *organDrawbarSync) Reset() {
 
 // Sync pushes the appropriate button LED colors if state has changed.
 // On organ patches, buttons 1–8 reflect the active drawbar color mode, while
-// button 9 acts as a dedicated Leslie indicator (Vibrant Green when running, Off when stopped).
+// button 9 acts as a dedicated Leslie indicator (Green when running, Off when stopped).
 func (s *organDrawbarSync) Sync() error {
 	if s == nil || s.setter == nil {
 		return nil
@@ -259,7 +259,7 @@ func (s *organDrawbarSync) Sync() error {
 		}
 		leslieColor := components.ColorOff
 		if leslieOn {
-			leslieColor = components.ColorVibrantGreen
+			leslieColor = components.ColorGreen
 		}
 		if err := s.setter.SetFaderButtonColor(9, leslieColor); err != nil {
 			return err

@@ -20,7 +20,7 @@ func faderButtonColor(index int, color components.Color) []byte {
 func faderButtonLED(index int, on bool) []byte {
 	color := components.ColorOff
 	if on {
-		color = 21 // green in the Launchkey palette
+		color = components.ColorGreen // green in the Launchkey palette
 	}
 	return faderButtonColor(index, color)
 }

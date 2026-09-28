@@ -15,6 +15,7 @@ const (
 	ColorVibrantOrange Color = 9
 	ColorBrown         Color = 11
 	ColorVibrantYellow Color = 13
+	ColorGreen         Color = 21
 	ColorVibrantGreen  Color = 25
 	ColorVibrantCyan   Color = 33
 	ColorVibrantBlue   Color = 41
@@ -43,6 +44,7 @@ var palette = [128][3]uint8{
 	17:  {172, 254, 41},
 	18:  {118, 197, 34},
 	19:  {90, 156, 7},
+	21:  {51, 255, 51},
 	24:  {147, 255, 177},
 	25:  {75, 253, 88},
 	26:  {51, 192, 78},
