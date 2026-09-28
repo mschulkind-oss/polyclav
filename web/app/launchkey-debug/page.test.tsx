@@ -58,7 +58,7 @@ describe("Launchkey debugger", () => {
     const css = readFileSync("app/launchkey-debug/style.css", "utf8");
     expect(css).toMatch(/\.lk-debug\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
     expect(css).toMatch(
-      /\.lk-pad-row\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*minmax\(0,\s*1fr\)\)/s,
+      /\.lk-pad-row\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*minmax\(65px,\s*1fr\)\)/s,
     );
   });
 
@@ -66,6 +66,15 @@ describe("Launchkey debugger", () => {
     Reflect.deleteProperty(navigator, "requestMIDIAccess");
     Reflect.deleteProperty(globalThis, "EventSource");
     FakeEventSource.instances = [];
+  });
+
+  it("keeps dense rows readable with local scrolling and reflows the main surface", () => {
+    const css = readFileSync("app/launchkey-debug/style.css", "utf8");
+    expect(css).not.toMatch(/min-width:\s*900px/);
+    expect(css).toMatch(/\.lk-dense-scroll\s*\{[^}]*overflow-x:\s*auto/s);
+    expect(css).toMatch(/@media \(max-width: 980px\)[\s\S]*?\.lk-body\s*\{/);
+    expect(css).toMatch(/@media \(max-width: 650px\)[\s\S]*?\.lk-body\s*\{/);
+    expect(css).not.toMatch(/text-overflow:\s*ellipsis/);
   });
 
   it("renders source selector and a compact physical control surface", () => {
@@ -88,6 +97,21 @@ describe("Launchkey debugger", () => {
     expect(container.querySelector('[data-control="play"]')).toBeInTheDocument();
     expect(container.querySelector('[data-control="track-left"]')).toBeInTheDocument();
     expect(screen.getByText("Recent raw input").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Waiting for input")).toBeInTheDocument();
+    const guidance = container.querySelector(".lk-source-note");
+    expect(guidance).toHaveTextContent(/just web-dev.*localhost:3000/i);
+    expect(guidance).toHaveTextContent(/just dev.*localhost:5100/i);
+    expect(guidance).toHaveTextContent(/daemon.*DAW mode.*startup/i);
+    expect(guidance).toHaveTextContent(/page cannot turn on DAW mode/i);
+    expect(guidance).toHaveTextContent(/offline.*neither the daemon nor MIDI permission/i);
+    expect(container.querySelector('[data-control="fader-1"] span')).toHaveAttribute(
+      "aria-label",
+      "Fader 1",
+    );
+    expect(container.querySelector('[data-control="pad-top-1"] span')).toHaveAttribute(
+      "aria-label",
+      "Pad top 1",
+    );
   });
 
   it("listens to both MIDI and DAW browser ports without opening outputs or sending messages", async () => {
@@ -109,6 +133,10 @@ describe("Launchkey debugger", () => {
     expect(container.querySelector('[data-control="key-60"]')).toHaveClass("held");
     expect(request).toHaveBeenCalledWith({ sysex: false });
     expect(send).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /Browser Web MIDI.*key 60.*note-on.*90.*MIDI/i,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/channel 4/i);
   });
 
   it("does not reopen browser MIDI if permission resolves after switching away", async () => {
@@ -164,8 +192,12 @@ describe("Launchkey debugger", () => {
         raw: "d245",
       });
     });
+    expect(es.url).toBe("/api/events");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /daemon raw SSE.*unmapped.*aftertouch.*69.*Launchkey MK4 61 MIDI In.*channel 3/i,
+    );
     fireEvent.click(screen.getByText("Recent raw input"));
-    expect(screen.getByText(/Launchkey MK4 61 MIDI In/)).toBeInTheDocument();
+    expect(screen.getByText(/Launchkey MK4 61 MIDI In.*MIDI ch3/)).toBeInTheDocument();
     expect(screen.getByText(/MIDI ch3 aftertouch unmapped/)).toBeInTheDocument();
     expect(screen.getByText(/d2 45/)).toBeInTheDocument();
   });
@@ -183,6 +215,7 @@ describe("Launchkey debugger", () => {
       });
     });
     expect(container.querySelector('[data-control="pad-top-1"]')).not.toHaveClass("held");
+    expect(screen.getByText("Waiting for input")).toBeInTheDocument();
   });
 
   it("replays a local report and lights a press until release", async () => {

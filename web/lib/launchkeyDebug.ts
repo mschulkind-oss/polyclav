@@ -179,6 +179,9 @@ export function decodeBackendRaw(payload: unknown, now = Date.now()): DebugEvent
     control: null,
     raw: normalizeRaw(data.raw),
   };
+  if ((kind === "aftertouch" || kind === "program-change") && typeof data.data1 === "number") {
+    event.value = data.data1;
+  }
   if (kind === "pitch-bend" && typeof data.bend === "number") event.value = data.bend;
   event.control = controlForMessage(event);
   return event;

@@ -51,6 +51,7 @@ describe("Launchkey debug decoding", () => {
       kind: "aftertouch",
       channel: 3,
       number: 69,
+      value: 69,
       raw: "d2 45",
       control: null,
     });

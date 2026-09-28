@@ -57,6 +57,18 @@ const modeControls = [
 ];
 
 const label = (name: string) => name.replaceAll("-", " ");
+const shortLabel = (id: string) => {
+  const numbered = /^(fader|fader-button|encoder|pad-(top|bottom))-(\d+)$/.exec(id);
+  if (!numbered) return label(id);
+  const prefix: Record<string, string> = {
+    fader: "F",
+    "fader-button": "FB",
+    encoder: "E",
+    "pad-top": "Top",
+    "pad-bottom": "Bottom",
+  };
+  return `${prefix[numbered[1]]}${numbered[3]}`;
+};
 const faders = Array.from({ length: 9 }, (_, i) => `fader-${i + 1}`);
 const faderButtons = Array.from({ length: 9 }, (_, i) => `fader-button-${i + 1}`);
 const encoders = Array.from({ length: 8 }, (_, i) => `encoder-${i + 1}`);
@@ -69,6 +81,7 @@ export default function LaunchkeyDebugPage() {
   const [error, setError] = useState("");
   const [inputs, setInputs] = useState<string[]>([]);
   const [history, setHistory] = useState<(DebugEvent & { seq: number })[]>([]);
+  const [firstInputAnnouncement, setFirstInputAnnouncement] = useState("");
   const sequence = useRef(0);
   const [last, setLast] = useState<Record<string, DebugEvent>>({});
   const [held, setHeld] = useState<Record<string, boolean>>({});
@@ -83,6 +96,7 @@ export default function LaunchkeyDebugPage() {
     setHeld({});
     setLast({});
     setHistory([]);
+    setFirstInputAnnouncement("");
     sequence.current = 0;
   }, []);
 
@@ -109,6 +123,7 @@ export default function LaunchkeyDebugPage() {
       }
     }
     setHistory((prev) => [{ ...event, seq: ++sequence.current }, ...prev].slice(0, 80));
+    if (sequence.current === 1) setFirstInputAnnouncement("First input detected");
   }, []);
 
   const disconnectBrowser = useCallback(() => {
@@ -289,7 +304,9 @@ export default function LaunchkeyDebugPage() {
         className={`lk-control ${className}${held[id] ? " held" : hot ? " recent" : ""}`}
         data-control={id}
       >
-        <span>{label(id)}</span>
+        <span role="img" aria-label={label(id).replace(/^./, (c) => c.toUpperCase())}>
+          {shortLabel(id)}
+        </span>
         <small>{recent ? `${recent.kind} · ${valueText(id, recent)}` : "—"}</small>
       </div>
     );
@@ -344,11 +361,45 @@ export default function LaunchkeyDebugPage() {
             <span className={`lk-dot ${browserLive || daemonLive ? "on" : ""}`} />
             <span className="lk-ports">{status}</span>
           </div>
-          <p className="hint lk-source-note">
-            Read-only debug view. Browser mode opens input ports only and never sends MIDI. Daemon
-            mode listens to the daemon's existing <code>midi-raw</code> SSE stream, including
-            unsupported raw events and port names, without opening another ALSA connection.
-          </p>
+          <div className="lk-latest" role="status" aria-live="off">
+            <strong>Latest input</strong>
+            {history.length ? (
+              <span>
+                {sourceLabels[history[0].source ?? sourceMode]} ·{" "}
+                {history[0].control ? label(history[0].control) : "unmapped"} · {history[0].kind} ·
+                value {history[0].value} · {history[0].portName ?? history[0].port} (
+                {history[0].port}) ·{" "}
+                {history[0].channel ? `channel ${history[0].channel}` : "system"}
+              </span>
+            ) : (
+              <span>Waiting for input</span>
+            )}
+          </div>
+          <span className="lk-sr-only" aria-live="polite">
+            {firstInputAnnouncement}
+          </span>
+          <div className="lk-source-note">
+            <p>
+              <strong>Read-only: this page cannot turn on DAW mode.</strong> Browser Web MIDI reads
+              input ports only; it never sends MIDI. The daemon activates DAW mode when it opens the
+              Launchkey DAW ports at startup; this page cannot confirm the keyboard's current DAW
+              mode from a port listing. DAW ports appearing does not mean DAW mode is on.
+            </p>
+            <p>
+              For browser input alone, run <code>just web-dev</code> and open{" "}
+              <code>http://localhost:3000/app/launchkey-debug/</code>; click Browser Web MIDI and
+              allow permission. This does not start the daemon. For daemon raw SSE, run{" "}
+              <code>just dev</code> and open <code>http://localhost:5100/app/launchkey-debug/</code>
+              ; select daemon raw SSE to read its existing event stream. Offline report replay needs
+              neither the daemon nor MIDI permission.
+            </p>
+            <p>
+              If nothing arrives, play a key or move a control, check the selected source and port
+              status above, and confirm the keyboard is connected. DAW controls require the daemon
+              to have opened its DAW ports; browser permission alone cannot enable them. Raw bytes
+              remain under Recent raw input.
+            </p>
+          </div>
           {error && <p role="alert">{error}</p>}
 
           <div className="lk-body">
@@ -367,10 +418,16 @@ export default function LaunchkeyDebugPage() {
 
             <section className="lk-block lk-mixer" aria-label="Mixer block">
               <h2>9 faders</h2>
-              <div className="lk-faders">{faders.map((id) => tile(id, "fader"))}</div>
-              <div className="lk-fader-buttons">
-                {faderButtons.map((id) => tile(id, "fader-button"))}
-              </div>
+              <p className="lk-scroll-hint">Scroll sideways for all nine faders and buttons →</p>
+              <section
+                className="lk-dense-scroll"
+                aria-label="Faders and buttons, scroll horizontally"
+              >
+                <div className="lk-faders">{faders.map((id) => tile(id, "fader"))}</div>
+                <div className="lk-fader-buttons">
+                  {faderButtons.map((id) => tile(id, "fader-button"))}
+                </div>
+              </section>
             </section>
 
             <section className="lk-block lk-nav" aria-label="Display and navigation block">
@@ -382,7 +439,9 @@ export default function LaunchkeyDebugPage() {
 
             <section className="lk-block lk-encoders" aria-label="Encoder block">
               <h2>8 encoders · relative steps</h2>
-              <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
+              <section className="lk-dense-scroll" aria-label="Encoders, scroll horizontally">
+                <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
+              </section>
               <p className="hint">
                 Values are displayed as signed steps around center 64, not speed.
               </p>
@@ -390,13 +449,16 @@ export default function LaunchkeyDebugPage() {
 
             <section className="lk-block lk-pads" aria-label="Pads and transport block">
               <h2>16 pads + transport</h2>
-              <div className="lk-pad-matrix">
-                {padRows.map((row) => (
-                  <div className="lk-pad-row" key={row}>
-                    {Array.from({ length: 8 }, (_, i) => tile(`pad-${row}-${i + 1}`, "pad"))}
-                  </div>
-                ))}
-              </div>
+              <p className="lk-scroll-hint">Scroll sideways for all eight pads per row →</p>
+              <section className="lk-dense-scroll" aria-label="Pads, scroll horizontally">
+                <div className="lk-pad-matrix">
+                  {padRows.map((row) => (
+                    <div className="lk-pad-row" key={row}>
+                      {Array.from({ length: 8 }, (_, i) => tile(`pad-${row}-${i + 1}`, "pad"))}
+                    </div>
+                  ))}
+                </div>
+              </section>
               <div className="lk-transport">{transport.map((id) => tile(id))}</div>
               <div className="lk-daw-commands">{dawCommands.map((id) => tile(id))}</div>
             </section>
