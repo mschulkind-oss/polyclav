@@ -112,6 +112,40 @@ func TestPotatoKeysPedalParametersOffline(t *testing.T) {
 	}
 }
 
+func TestLeslieStatusUsesActualRotarySpeed(t *testing.T) {
+	r, _, _ := testPedalRouter()
+	for _, tc := range []struct {
+		value float64
+		want  string
+	}{
+		{1, "STOP"}, {2, "SLOW"}, {3, "FAST"}, {0, "DIRECT"},
+	} {
+		r.cache.Update(202, tc.value)
+		if got := r.LeslieStatus(); got != tc.want {
+			t.Errorf("rotary %v: status = %q, want %q", tc.value, got, tc.want)
+		}
+	}
+}
+
+func TestLesliePedalReleaseDisplaysSlow(t *testing.T) {
+	r, _, patch := testPedalRouter()
+	patch.LaunchkeyOrgan.LeslieMode = "momentary"
+	ev := midi.Event{SourcePort: "Launchkey MK4 61 MIDI In", Kind: midi.ControlChange, CC: 64, Value: 127}
+	if !r.Handle(ev) {
+		t.Fatal("pedal press not consumed")
+	}
+	if status, ok := lesliePedalStatus(ev, r); !ok || status != "FAST" {
+		t.Fatalf("press: status %q, show %v", status, ok)
+	}
+	ev.Value = 0
+	if !r.Handle(ev) {
+		t.Fatal("pedal release not consumed")
+	}
+	if status, ok := lesliePedalStatus(ev, r); !ok || status != "SLOW" {
+		t.Fatalf("release: status %q, show %v", status, ok)
+	}
+}
+
 func TestLeslieFaderButtonTracksRotary(t *testing.T) {
 	r, set, p := testPedalRouter()
 	if !r.LeslieOn() {

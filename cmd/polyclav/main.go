@@ -448,11 +448,7 @@ func main() {
 
 	onMIDIEvent := func(ev midi.Event) {
 		if pedalRouter.Handle(ev) {
-			if ev.Kind == midi.ControlChange && ev.CC == 64 && ev.Value >= 64 {
-				status := "STOP"
-				if pedalRouter.LeslieOn() {
-					status = "FAST"
-				}
+			if status, show := lesliePedalStatus(ev, pedalRouter); show {
 				if sup != nil && sup.Launchkey() != nil && sup.Launchkey().State() == "active" {
 					if err := sup.Launchkey().SetDisplayText("LESLIE", status); err != nil {
 						logger.Warn("launchkey leslie display", "err", err)

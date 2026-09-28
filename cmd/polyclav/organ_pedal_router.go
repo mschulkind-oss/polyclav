@@ -123,6 +123,43 @@ func (r *organPedalRouter) HandleLeslieButton(pressed bool) bool {
 	return true
 }
 
+// lesliePedalStatus reports every consumed sustain transition, including the
+// release that restores Slow in momentary mode.
+func lesliePedalStatus(ev midi.Event, r *organPedalRouter) (string, bool) {
+	if ev.Kind != midi.ControlChange || ev.CC != 64 {
+		return "", false
+	}
+	return r.LeslieStatus(), true
+}
+
+// LeslieStatus names the active organ's current rotary speed for display.
+func (r *organPedalRouter) LeslieStatus() string {
+	if r == nil {
+		return "STOP"
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.activeOrgan() {
+		return "STOP"
+	}
+	param, ok := r.namedParam("Rotary", 0, 3)
+	if !ok {
+		return "STOP"
+	}
+	switch param.CurrentValue {
+	case 0:
+		return "DIRECT"
+	case 1:
+		return "STOP"
+	case 2:
+		return "SLOW"
+	case 3:
+		return "FAST"
+	default:
+		return "STOP"
+	}
+}
+
 // LeslieOn reports whether the active organ's rotary is running (Slow or Fast).
 func (r *organPedalRouter) LeslieOn() bool {
 	if r == nil {
