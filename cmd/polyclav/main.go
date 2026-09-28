@@ -385,25 +385,17 @@ func main() {
 	var faderRouter *organFaderRouter
 	pedalRouter := &organPedalRouter{registry: registry, cache: clapParams, setter: realClapParamSetter{}, expression: cfg.MIDI.OrganExpression}
 
-	var leslieLEDMu sync.Mutex
-	leslieLEDKnown, leslieLEDOn := false, false
-	syncLeslieLED := func() {
-		on := pedalRouter.LeslieOn()
-		leslieLEDMu.Lock()
-		defer leslieLEDMu.Unlock()
-		if leslieLEDKnown && leslieLEDOn == on {
-			return
-		}
-		if sup.Launchkey().State() != "active" {
-			leslieLEDKnown = false
-			return
-		}
-		if err := sup.Launchkey().SetFaderButtonLED(9, on); err != nil {
-			logger.Warn("launchkey leslie LED", "err", err)
-			return
-		}
-		leslieLEDKnown, leslieLEDOn = true, on
+	drawbarLEDs := newOrganDrawbarLEDs()
+	activeOrgan := func() bool {
+		cur, active, st := registry.Current(), registry.Active(), registry.Status()
+		return cur != nil && active != nil && cur.Name == active.Name && st.State == patches.LoadStateActive && patchType(cur.Type) == "clap" && cur.LaunchkeyOrgan.Enabled && cur.LaunchkeyOrgan.Ownership == "organ"
 	}
+	drawbarSync := newOrganDrawbarSync(drawbarLEDs, launchkeyFaderButtonSetter{get: func() *launchkey.Reconciler {
+		if sup == nil {
+			return nil
+		}
+		return sup.Launchkey()
+	}}, activeOrgan)
 	patchBank := 0
 	pushPadColors := func() {
 		lk := sup.Launchkey()
@@ -432,19 +424,6 @@ func main() {
 		hub.Publish(controls.Change{Type: "midi-raw", Data: ev.Data()})
 	}
 
-	onMIDIEvent := func(ev midi.Event) {
-		if pedalRouter.Handle(ev) {
-			syncLeslieLED()
-			return
-		}
-		pushSynth(ev)
-		if mapper != nil {
-			// The mapper always sees the RAW event — OSC bindings key on
-			// unremapped velocity (docs/VELOCITY_CURVES.md).
-			mapper.Dispatch(ev)
-		}
-	}
-
 	var (
 		knobMu           sync.Mutex
 		knobRestoreTimer *time.Timer
@@ -467,6 +446,30 @@ func main() {
 		knobMu.Unlock()
 	}
 
+	onMIDIEvent := func(ev midi.Event) {
+		if pedalRouter.Handle(ev) {
+			if ev.Kind == midi.ControlChange && ev.CC == 64 && ev.Value >= 64 {
+				status := "STOP"
+				if pedalRouter.LeslieOn() {
+					status = "FAST"
+				}
+				if sup != nil && sup.Launchkey() != nil && sup.Launchkey().State() == "active" {
+					if err := sup.Launchkey().SetDisplayText("LESLIE", status); err != nil {
+						logger.Warn("launchkey leslie display", "err", err)
+					}
+					armScreenRestore()
+				}
+			}
+			return
+		}
+		pushSynth(ev)
+		if mapper != nil {
+			// The mapper always sees the RAW event — OSC bindings key on
+			// unremapped velocity (docs/VELOCITY_CURVES.md).
+			mapper.Dispatch(ev)
+		}
+	}
+
 	onDAWEvent := func(ev driver.Event) {
 		switch e := ev.(type) {
 		case driver.KnobEvent:
@@ -481,8 +484,15 @@ func main() {
 				faderRouter.HandleFader(e)
 			}
 		case driver.FaderButtonEvent:
-			if e.Index == 9 && pedalRouter.HandleLeslieButton(e.Pressed) {
-				syncLeslieLED()
+			if dispatchFaderButton(e, activeOrgan(), drawbarLEDs, drawbarSync, pedalRouter, organScreenFunc(func(line1, line2 string) {
+				if sup != nil && sup.Launchkey() != nil && sup.Launchkey().State() == "active" {
+					if err := sup.Launchkey().SetDisplayText(line1, line2); err != nil {
+						logger.Warn("launchkey fader button display", "err", err)
+					}
+					armScreenRestore()
+				}
+			})) {
+				return
 			}
 		case driver.TransportEvent:
 			// ROADMAP §2.5 transport table — status as shipped:
@@ -577,16 +587,14 @@ func main() {
 			// reading it here is race-free.
 			OnReconnect: func() {
 				pushPadColors()
-				leslieLEDMu.Lock()
-				leslieLEDKnown = false
-				leslieLEDMu.Unlock()
-				syncLeslieLED()
+				drawbarSync.Reset()
+				if err := drawbarSync.Sync(); err != nil {
+					logger.Warn("launchkey drawbar LED sync", "err", err)
+				}
 				publishDeviceState("launchkey", sup.Launchkey().State())
 			},
 			OnDisconnect: func() {
-				leslieLEDMu.Lock()
-				leslieLEDKnown = false
-				leslieLEDMu.Unlock()
+				drawbarSync.Reset()
 				logger.Info("launchkey gone")
 				publishDeviceState("launchkey", sup.Launchkey().State())
 			},
@@ -698,7 +706,9 @@ func main() {
 			followVelocity()
 			followDisplay()
 			followPages()
-			syncLeslieLED()
+			if err := drawbarSync.Sync(); err != nil {
+				logger.Warn("launchkey drawbar LED sync", "err", err)
+			}
 		}
 	}()
 
@@ -755,7 +765,6 @@ func main() {
 						break
 					}
 					clapParams.Update(ev.ClapID, ev.Value)
-					syncLeslieLED()
 					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
 			}

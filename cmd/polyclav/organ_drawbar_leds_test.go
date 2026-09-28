@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
+	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 )
 
 func TestDrawbarColorModesCycle(t *testing.T) {
@@ -116,5 +117,160 @@ func TestDrawbarColorModeColors(t *testing.T) {
 	}
 	if perf != wantPerf {
 		t.Fatalf("Performance colors = %v, want %v", perf, wantPerf)
+	}
+}
+
+type fakeButtonColorSetter struct {
+	colors [9]components.Color
+	counts [9]int
+}
+
+func (f *fakeButtonColorSetter) SetFaderButtonColor(index int, color components.Color) error {
+	if index >= 1 && index <= 9 {
+		f.colors[index-1] = color
+		f.counts[index-1]++
+	}
+	return nil
+}
+
+func TestOrganDrawbarSync(t *testing.T) {
+	leds := newOrganDrawbarLEDs()
+	setter := &fakeButtonColorSetter{}
+	isOrgan := false
+	sync := newOrganDrawbarSync(leds, setter, func() bool { return isOrgan })
+
+	// Initially not an organ: should turn off buttons.
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	for i, c := range setter.colors {
+		if c != components.ColorOff {
+			t.Errorf("button %d = %v, want ColorOff", i+1, c)
+		}
+	}
+
+	// Repeated sync without change should do nothing.
+	setter.counts = [9]int{}
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if setter.counts != [9]int{} {
+		t.Fatalf("repeated sync sent updates: %v", setter.counts)
+	}
+
+	// Switch to organ: should send B3 colors.
+	isOrgan = true
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if setter.colors != DrawbarColorModeB3Standard.Colors() {
+		t.Fatalf("organ sync colors = %v, want %v", setter.colors, DrawbarColorModeB3Standard.Colors())
+	}
+
+	// Cycle mode: should update colors.
+	leds.Cycle()
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if setter.colors != DrawbarColorModeRegisters.Colors() {
+		t.Fatalf("cycle sync colors = %v, want %v", setter.colors, DrawbarColorModeRegisters.Colors())
+	}
+
+	// Reset: forces repaint.
+	sync.Reset()
+	setter.colors = [9]components.Color{}
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if setter.colors != DrawbarColorModeRegisters.Colors() {
+		t.Fatalf("repaint sync colors = %v, want %v", setter.colors, DrawbarColorModeRegisters.Colors())
+	}
+
+	// Switch away from organ: should turn off buttons.
+	isOrgan = false
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	for i, c := range setter.colors {
+		if c != components.ColorOff {
+			t.Errorf("button %d = %v, want ColorOff after leaving organ", i+1, c)
+		}
+	}
+}
+
+type fakeLeslieHandler struct {
+	handled bool
+	on      bool
+}
+
+func (f *fakeLeslieHandler) HandleLeslieButton(pressed bool) bool {
+	if pressed {
+		f.on = !f.on
+	}
+	return f.handled
+}
+
+func (f *fakeLeslieHandler) LeslieOn() bool {
+	return f.on
+}
+
+func TestDispatchFaderButton(t *testing.T) {
+	leds := newOrganDrawbarLEDs()
+	setter := &fakeButtonColorSetter{}
+	isOrgan := true
+	sync := newOrganDrawbarSync(leds, setter, func() bool { return isOrgan })
+	screen := &fakeScreen{}
+	leslie := &fakeLeslieHandler{handled: true, on: false}
+
+	// 1. Button 1 on organ: cycles mode, calls sync and screen.
+	ev1 := driver.FaderButtonEvent{Index: 1, Pressed: true}
+	if !dispatchFaderButton(ev1, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 1 on organ should be handled")
+	}
+	if leds.Mode() != DrawbarColorModeRegisters {
+		t.Fatalf("mode = %v, want Registers", leds.Mode())
+	}
+	if screen.line1 != "DRAWBARS" || screen.line2 != "LOW / MID / HIGH" {
+		t.Fatalf("screen = (%q, %q)", screen.line1, screen.line2)
+	}
+
+	// 2. Button 1 when not an organ: should return false, no mode change.
+	isOrgan = false
+	screen.line1, screen.line2 = "", ""
+	if dispatchFaderButton(ev1, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 1 when not an organ should not be handled")
+	}
+	if leds.Mode() != DrawbarColorModeRegisters {
+		t.Fatalf("mode changed when not an organ: %v", leds.Mode())
+	}
+
+	// 3. Button 9 on organ: toggles Leslie, updates screen.
+	isOrgan = true
+	ev9 := driver.FaderButtonEvent{Index: 9, Pressed: true}
+	if !dispatchFaderButton(ev9, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 9 should be handled")
+	}
+	if !leslie.on {
+		t.Fatal("leslie should have toggled on")
+	}
+	if screen.line1 != "LESLIE" || screen.line2 != "FAST" {
+		t.Fatalf("screen = (%q, %q), want (LESLIE, FAST)", screen.line1, screen.line2)
+	}
+
+	// Button 9 second press: toggles off.
+	if !dispatchFaderButton(ev9, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 9 should be handled")
+	}
+	if leslie.on {
+		t.Fatal("leslie should have toggled off")
+	}
+	if screen.line1 != "LESLIE" || screen.line2 != "STOP" {
+		t.Fatalf("screen = (%q, %q), want (LESLIE, STOP)", screen.line1, screen.line2)
+	}
+
+	// 4. Other button (e.g. Button 5): returns false.
+	ev5 := driver.FaderButtonEvent{Index: 5, Pressed: true}
+	if dispatchFaderButton(ev5, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 5 should not be handled")
 	}
 }

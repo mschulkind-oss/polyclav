@@ -910,6 +910,35 @@ without an audio device:
 When this capture is active, fader 9 changes the ninth drawbar only; it does
 not also send the mixer L/R fader OSC binding.
 
+### Launchkey organ drawbar buttons and coloring
+
+The nine buttons directly below the drawbar sliders illuminate to reflect the
+drawbars. By default, they emulate the coloring of the drawbars on a classic Hammond B3:
+
+- **16′ & 5⅓′:** Brown (amber)
+- **8′ & 4′:** White (foundation and 2nd harmonic)
+- **2⅔′:** Off (black mutation)
+- **2′:** White (4th harmonic)
+- **1⅗′ & 1⅓′:** Off (black mutations)
+- **1′:** White (8th harmonic)
+
+Pressing the **first button** (button 1, below the 16′ drawbar slider) cycles through
+three additional coloring modes that illustrate how organists group and use
+drawbars together, before returning to the B3 standard coloring on the fourth press:
+
+1. **Registers (`LOW / MID / HIGH`):** Groups the nine bars into three 3-bar
+   frequency zones: Low/Bass (red), Mid/Body (green), and High/Brilliance (cyan).
+2. **Harmonics (`OCTAVE / MUTATION`):** Highlights the distinction between
+   pure consonant octaves (16′, 8′, 4′, 2′, 1′ in white) and harmonic color mutations
+   (5⅓′, 2⅔′, 1⅗′, 1⅓′ in orange).
+3. **Performance (`FIRST 3 + WHISTLER`):** Highlights classic performance groupings:
+   the legendary "first three" jazz/blues foundation (16′, 5⅓′, 8′ in green),
+   the mid-body fill (dim white), and "the whistler" solo lead (1′ in yellow).
+4. **B3 Standard (`B3 STANDARD`):** Cycles back to the classic console drawbar coloring.
+
+The Launchkey screen displays the active coloring mode name for 800 ms on each cycle.
+When leaving an organ patch, all nine fader button lights turn off.
+
 ### Organ swell and Leslie pedal
 
 A **swell** is the organ's expression control: it changes the organ's own
@@ -959,9 +988,8 @@ Piano and other non-organ patches retain normal sustain behavior. The
 switching happens in software, so a momentary physical footswitch suffices
 for either mode. The ninth (rightmost) fader button toggles the rotary
 between Stop (1) and Fast (3) on an active organ, independently of
-`leslie_mode`. Its light is on when the rotary is running (Slow or Fast),
-and off when stopped or when no organ is active. Changes from the pedal
-or plugin update the light too.
+`leslie_mode`, and flashes the rotary state (`LESLIE: FAST` or `LESLIE: STOP`)
+on the screen.
 
 ## Troubleshooting
 

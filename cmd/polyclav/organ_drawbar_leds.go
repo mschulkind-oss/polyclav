@@ -3,7 +3,9 @@ package main
 import (
 	"sync"
 
+	"github.com/mschulkind-oss/polyclav/internal/launchkey"
 	"github.com/mschulkind-oss/polyclav/internal/launchkey/components"
+	"github.com/mschulkind-oss/polyclav/internal/launchkey/driver"
 )
 
 // DrawbarColorMode selects how the nine fader button LEDs are colored on an
@@ -174,4 +176,126 @@ func (o *organDrawbarLEDs) HandleButton(index int, pressed bool) (handled bool, 
 	}
 	_, line1, line2 = o.Cycle()
 	return true, line1, line2
+}
+
+type faderButtonColorSetter interface {
+	SetFaderButtonColor(index int, color components.Color) error
+}
+
+type launchkeyFaderButtonSetter struct {
+	get func() *launchkey.Reconciler
+}
+
+func (s launchkeyFaderButtonSetter) SetFaderButtonColor(index int, color components.Color) error {
+	if s.get == nil {
+		return nil
+	}
+	lk := s.get()
+	if lk == nil || lk.State() != "active" {
+		return nil
+	}
+	return lk.SetFaderButtonColor(index, color)
+}
+
+// organDrawbarSync coordinates updating the hardware button LEDs when the mode
+// changes or when switching between organ and non-organ patches.
+type organDrawbarSync struct {
+	leds    *organDrawbarLEDs
+	setter  faderButtonColorSetter
+	isOrgan func() bool
+
+	mu              sync.Mutex
+	lastOrgan       bool
+	lastMode        DrawbarColorMode
+	lastInitialized bool
+}
+
+func newOrganDrawbarSync(leds *organDrawbarLEDs, setter faderButtonColorSetter, isOrgan func() bool) *organDrawbarSync {
+	return &organDrawbarSync{
+		leds:    leds,
+		setter:  setter,
+		isOrgan: isOrgan,
+	}
+}
+
+// Reset clears cached hardware state so the next Sync repaints all LEDs.
+func (s *organDrawbarSync) Reset() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastInitialized = false
+}
+
+// Sync pushes the appropriate button LED colors if state has changed.
+func (s *organDrawbarSync) Sync() error {
+	if s == nil || s.setter == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	organ := s.isOrgan != nil && s.isOrgan()
+	mode := s.leds.Mode()
+	if s.lastInitialized && s.lastOrgan == organ && (!organ || s.lastMode == mode) {
+		return nil
+	}
+
+	if organ {
+		colors := s.leds.CurrentColors()
+		for i := 1; i <= 9; i++ {
+			if err := s.setter.SetFaderButtonColor(i, colors[i-1]); err != nil {
+				return err
+			}
+		}
+	} else {
+		for i := 1; i <= 9; i++ {
+			if err := s.setter.SetFaderButtonColor(i, components.ColorOff); err != nil {
+				return err
+			}
+		}
+	}
+
+	s.lastOrgan = organ
+	s.lastMode = mode
+	s.lastInitialized = true
+	return nil
+}
+
+type leslieButtonHandler interface {
+	HandleLeslieButton(pressed bool) bool
+	LeslieOn() bool
+}
+
+// dispatchFaderButton routes DAW-mode fader buttons on an organ patch:
+// - Button 1 cycles the drawbar button coloring mode (when organ is active).
+// - Button 9 toggles the Leslie rotary between Stop and Fast.
+// Other buttons are left unhandled.
+func dispatchFaderButton(e driver.FaderButtonEvent, isOrgan bool, drawbarLEDs *organDrawbarLEDs, drawbarSync *organDrawbarSync, leslie leslieButtonHandler, screen organScreen) bool {
+	if e.Index == 1 && isOrgan {
+		if drawbarLEDs != nil {
+			handled, l1, l2 := drawbarLEDs.HandleButton(e.Index, e.Pressed)
+			if handled && e.Pressed {
+				if drawbarSync != nil {
+					_ = drawbarSync.Sync()
+				}
+				if screen != nil {
+					screen.Show(l1, l2)
+				}
+				return true
+			}
+		}
+	}
+	if e.Index == 9 && leslie != nil && leslie.HandleLeslieButton(e.Pressed) {
+		if e.Pressed && screen != nil {
+			status := "STOP"
+			if leslie.LeslieOn() {
+				status = "FAST"
+			}
+			screen.Show("LESLIE", status)
+		}
+		return true
+	}
+	return false
 }
