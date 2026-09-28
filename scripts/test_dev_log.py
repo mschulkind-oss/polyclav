@@ -40,7 +40,7 @@ class DevLogTest(unittest.TestCase):
     def test_timeline_replacement_overlap_reuse_reparent_and_survivors(self):
         lines = []
         ticks = iter([1., 1.5, 2., 3., 4., 5., 6.])
-        timeline = dev_log.Timeline(10, lines.append, lambda: next(ticks))
+        timeline = dev_log.Timeline((10, 100), lines.append, lambda: next(ticks))
         with tempfile.TemporaryDirectory() as directory:
             proc = Path(directory)
 
@@ -54,7 +54,8 @@ class DevLogTest(unittest.TestCase):
                 timeline.observe(dev_log.process_snapshot(proc))
 
             unrelated = (90, "polyclav", 900, 1)
-            sample((20, "air", 200, 10), (30, "polyclav", 300, 20), unrelated)
+            sample((10, "hivemind", 100, 1), (20, "air", 200, 10),
+                   (30, "polyclav", 300, 20), unrelated)
             sample((20, "air", 200, 10), (30, "polyclav", 300, 20), unrelated)
             self.assertEqual(len(lines), 3)  # 100-ms polls with no changes stay quiet.
             sample((20, "air", 200, 10), (30, "polyclav", 300, 20),
@@ -78,6 +79,18 @@ class DevLogTest(unittest.TestCase):
         self.assertIn("associated=polyclav pid=31 start_ticks=310", survivors)
         self.assertIn("unrelated_matches=polyclav pid=90 start_ticks=900", survivors)
         self.assertNotIn("pid=30", survivors)
+
+    def test_hivemind_pid_reuse_does_not_claim_new_children(self):
+        lines = []
+        timeline = dev_log.Timeline((10, 100), lines.append, lambda: 1.0)
+        root = dev_log.Process("hivemind", 10, 100, 1, 10, 10)
+        air = dev_log.Process("air", 20, 200, 10, 20, 10)
+        timeline.observe({dev_log.identity(p): p for p in (root, air)})
+        reused = dev_log.Process("hivemind", 10, 101, 1, 10, 10)
+        unrelated = dev_log.Process("air", 21, 210, 10, 21, 10)
+        timeline.observe({dev_log.identity(p): p for p in (reused, unrelated)})
+        self.assertNotIn("pid=21", "\n".join(lines))
+        self.assertIn("unrelated_matches=air pid=21", timeline.survivors())
 
     def test_output_and_exit_are_kept_in_workspace_log(self):
         with tempfile.TemporaryDirectory() as directory:

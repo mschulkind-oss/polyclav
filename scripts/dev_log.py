@@ -55,8 +55,10 @@ def process_snapshot(proc: Path = Path("/proc")) -> dict[tuple[int, int], Proces
 class Timeline:
     """Track only identities seen under this run's Hivemind/Air ancestry."""
 
-    def __init__(self, hivemind_pid: int, emit, clock=time.time):
-        self.hivemind_pid = hivemind_pid
+    def __init__(self, hivemind_identity: tuple[int, int] | None, emit, clock=time.time):
+        # A PID without its kernel start time is not an ancestry anchor:
+        # after exit, Linux can reuse it for an unrelated supervisor.
+        self.hivemind_identity = hivemind_identity
         self.emit = emit
         self.clock = clock
         self.previous: dict[tuple[int, int], Process] = {}
@@ -67,18 +69,20 @@ class Timeline:
         now = self.clock()
         by_pid = {p.pid: p for p in snapshot.values()}
         associated = set(self.associated & snapshot.keys())
+        root_alive = self.hivemind_identity in snapshot if self.hivemind_identity else False
+        root_pid = self.hivemind_identity[0] if root_alive else None
         # Follow parent chains at each poll, including intermediary build/shell
         # processes, but never infer ownership from a matching executable name.
         for process in snapshot.values():
             seen = set()
             parent = process.ppid
-            while parent != self.hivemind_pid and parent in by_pid and parent not in seen:
+            while parent != root_pid and parent in by_pid and parent not in seen:
                 seen.add(parent)
                 ancestor = by_pid[parent]
                 if identity(ancestor) in associated:
                     break
                 parent = ancestor.ppid
-            if parent == self.hivemind_pid or (parent in by_pid and identity(by_pid[parent]) in associated):
+            if (root_alive and parent == root_pid) or (parent in by_pid and identity(by_pid[parent]) in associated):
                 associated.add(identity(process))
         self.associated |= associated
         before = {k: v for k, v in self.previous.items() if k in self.associated and v.name in {"air", "polyclav"}}
@@ -151,8 +155,10 @@ def run(command: list[str], log_dir: Path) -> int:
             child_group = os.getpgid(child.pid)
         except ProcessLookupError:
             child_group = "exited"
-        record(f"hivemind_pid={child.pid} pgid={child_group}")
-        timeline = Timeline(child.pid, record)
+        initial = process_snapshot()
+        root_identity = next((key for key in initial if key[0] == child.pid), None)
+        record(f"hivemind_pid={child.pid} start_ticks={root_identity[1] if root_identity else 'not_observed'} pgid={child_group}")
+        timeline = Timeline(root_identity, record)
 
         def monitor() -> None:
             while not finished.is_set():
