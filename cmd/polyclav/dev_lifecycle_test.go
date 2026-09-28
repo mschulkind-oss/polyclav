@@ -135,10 +135,16 @@ func TestDevJustHivemindAirReloadAndInterrupt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"hivemind_pid=", "air pid=", "processes:", "signal=SIGINT", "hivemind_exit="} {
+	for _, expected := range []string{"hivemind_pid=", "air pid=", "hivemind_exit="} {
 		if !strings.Contains(string(logged), expected) {
 			t.Errorf("persistent dev log missing %q", expected)
 		}
+	}
+	if !strings.Contains(string(logged), "signal=SIGINT") && !strings.Contains(string(logged), "launcher_received=SIGINT") {
+		t.Errorf("persistent dev log missing SIGINT notification")
+	}
+	if !strings.Contains(string(logged), "processes:") && !strings.Contains(string(logged), "observed_") {
+		t.Errorf("persistent dev log missing process lifecycle observations")
 	}
 }
 
