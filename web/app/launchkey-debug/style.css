@@ -61,6 +61,9 @@
   margin: 0.25rem 0;
 }
 .lk-latest {
+  height: 6.5rem;
+  overflow-y: auto;
+  align-content: start;
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem 1rem;
@@ -192,6 +195,8 @@
   font-size: 0.78rem;
 }
 .lk-control {
+  height: 76px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -210,6 +215,13 @@
 .lk-control small {
   white-space: normal;
 }
+.lk-control span {
+  flex: none;
+}
+.lk-control small {
+  min-height: 0;
+  overflow-y: auto;
+}
 .lk-control small {
   margin-top: 0.18rem;
   color: #c7d4df;
@@ -227,7 +239,7 @@
   box-shadow: 0 0 0 1px #b9ffce80 inset;
 }
 .lk-control.fader {
-  min-height: 92px;
+  height: 110px;
   justify-content: flex-end;
   background: linear-gradient(90deg, #202b38 42%, #405169 43% 57%, #202b38 58%);
 }
@@ -236,22 +248,22 @@
   background: linear-gradient(90deg, #203a31 42%, #8ed4af 43% 57%, #203a31 58%);
 }
 .lk-control.fader-button {
-  min-height: 30px;
+  height: 76px;
 }
 .lk-control.encoder {
-  min-height: 54px;
+  height: 92px;
   align-items: center;
   border-radius: 999px;
   text-align: center;
 }
 .lk-control.pad {
-  min-height: 50px;
+  height: 88px;
   min-width: 0;
   padding: 0.2rem;
   border-radius: 9px;
 }
 .lk-control.wheel {
-  min-height: 76px;
+  height: 92px;
 }
 .lk-keybed {
   overflow: hidden;
@@ -318,14 +330,20 @@
   padding: 0.2rem 0;
   border-bottom: 1px solid #49525c;
 }
+@media (min-width: 1100px) {
+  main.lk-debug {
+    max-width: 1440px;
+  }
+  .lk-body {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-template-areas:
+      "left left left nav nav nav nav nav nav nav nav nav"
+      "mixer mixer mixer mixer mixer mixer mixer mixer mixer mixer mixer mixer"
+      "enc enc enc enc enc enc enc enc enc enc enc enc"
+      "pads pads pads pads pads pads pads pads pads pads pads pads";
+  }
+}
 @media (min-height: 920px) and (min-width: 980px) {
-  .lk-control {
-    min-height: 46px;
-    font-size: 0.72rem;
-  }
-  .lk-control.fader {
-    min-height: 112px;
-  }
   .lk-keys {
     min-height: 105px;
   }
@@ -339,12 +357,24 @@
   }
 }
 @media (max-width: 650px) {
+  .lk-latest {
+    height: 8rem;
+  }
+  .lk-control.pad {
+    height: 120px;
+  }
   .lk-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "left" "mixer" "nav" "enc" "pads";
   }
   .lk-source-strip {
     align-items: stretch;
+  }
+  .lk-ports {
+    min-width: 0;
+    flex-basis: calc(100% - 1.2rem);
+    height: 4.5rem;
+    overflow-y: auto;
   }
   .lk-source-buttons,
   .lk-source-strip > button {

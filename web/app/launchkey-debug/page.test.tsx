@@ -107,6 +107,7 @@ describe("Launchkey debugger", () => {
     expect(container.querySelector('[data-control="track-left"]')).toBeInTheDocument();
     expect(screen.getByText("Recent raw input").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("Waiting for input")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("tabindex", "0");
     const guidance = container.querySelector(".lk-source-note");
     expect(guidance).toHaveTextContent(/just web-dev.*localhost:3000/i);
     expect(guidance).toHaveTextContent(/just dev.*localhost:5100/i);
@@ -121,6 +122,13 @@ describe("Launchkey debugger", () => {
       "aria-label",
       "Pad top 1",
     );
+  });
+
+  it("keeps the latest-input scroll region keyboard reachable when event text grows", () => {
+    render(<LaunchkeyDebugPage />);
+    const latest = screen.getByRole("status");
+    latest.focus();
+    expect(latest).toHaveFocus();
   });
 
   it("listens to both MIDI and DAW browser ports without opening outputs or sending messages", async () => {

@@ -376,7 +376,9 @@ export default function LaunchkeyDebugPage() {
             <span className={`lk-dot ${browserLive || daemonLive ? "on" : ""}`} />
             <span className="lk-ports">{status}</span>
           </div>
-          <div className="lk-latest" role="status" aria-live="off">
+          {/* Scrolling long port names must remain reachable from the keyboard. */}
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: this status is a scrollable region. */}
+          <div className="lk-latest" role="status" aria-live="off" tabIndex={0}>
             <strong>Latest input</strong>
             {history.length ? (
               <span>
