@@ -56,7 +56,7 @@ jobs:
         run: |
           rm -rf internal/web/static/app
           mkdir -p internal/web/static/app
-          cp -a web/out/. internal/web/static/app/
+          cp -a web/.next-build/. internal/web/static/app/
           if ! git diff --exit-code -- internal/web/static; then
             echo "::error::internal/web/static/app is stale — run \`just web-build\` and commit the refresh"
             exit 1
