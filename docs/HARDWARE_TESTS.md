@@ -19,7 +19,7 @@ it any time after a rebuild or before a release.
 
 ## Knob pages (pending hardware verification)
 
-The paged-knob UX (docs/ROADMAP.md §2, adapted) is code-complete and
+The paged-knob UX ([ROADMAP §2](./ROADMAP.md#2-launchkey-native-ux), adapted) is code-complete and
 unit-tested against driver fakes, but has never met the device. Verify:
 
 - Scene ↑/↓ cycle the 5 pages (MAIN → OSC → FILTER → AMP → LFO/MOD,
@@ -58,8 +58,8 @@ handles them correctly yet:
 | 8 endless encoders | Five synth/chain pages | Check relative CC85–92 on channel 16. |
 | 9 faders | Unmapped by default; optional mixer OSC or opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
 | 9 fader buttons | On organ patches: buttons 1–8 illuminate with drawbar colors (B3 standard uses brown for 16′/5⅓′, white for 8′/4′/2′, and red for black mutation drawbars 2⅔′/1⅗′/1⅓′); button 1 cycles between 4 drawbar coloring modes; button 2 cycles 5 color schemes for default B3 drawbars; button 9 toggles Leslie Stop/Fast with dedicated Green status LED when running and Off when stopped. On non-organ patches, lights are off. | Observed CC37–45 on DAW channel **1**, press 127/release 0. Verify button 1 cycling, button 2 scheme cycling, button 9 rotary toggle, and B3 color palette emulation on hardware; printed shifted names are menu choices, not extra physical buttons. |
-| Pad-bank ↑/↓, display ↑/↓, Track ←/→ | Knob-page navigation and patch-bank navigation are intended, but decoder expects channel-16 note messages | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (display), CC103/102 (Track). Their roles must be reconciled before declaring navigation verified. |
-| Play, Stop, Record, Loop, Rewind, Fast-forward, Shift | Play is intended to toggle audition; decoder expects channel-16 notes | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. Rewind/fast-forward were skipped. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. |
+| Pad-bank ↑/↓, encoder ↑/↓, Track ←/→ | Knob-page navigation and patch-bank navigation are intended; the debugger shows observed DAW input | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (encoder), CC103/102 (Track). Shift+Track Left uses channel-1 CC109; Shift+Track Right uses channel-1 CC108. Each sends 127 on press and 0 on release. Shift itself reports channel-7 CC63. |
+| Play, Stop, Record, Loop, Shift | Play is intended to toggle audition; decoder expects channel-16 note messages | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. The MK4 has no Rewind/Fast-forward controls. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. |
 | Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Octave presses changed subsequent key note numbers but sent no distinct button event. Scale/Arp sent channel-7 CC74/73; Chord Map reported pad layout CC29=14. Fixed Chord sent no distinct button event in the capture. Test modes before assigning host actions. |
 
 Use the committed read-only inventory probe to capture one Launchkey control at

@@ -38,6 +38,9 @@ const dawButtons: Record<number, string> = {
   105: "function",
   106: "pad-up",
   107: "pad-down",
+  // Shift+Track Left/Right are distinct CCs on channel 1, not channel 7.
+  108: "track-right",
+  109: "track-left",
   115: "play",
   116: "stop",
   117: "record",

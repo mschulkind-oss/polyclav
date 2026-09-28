@@ -114,6 +114,7 @@ export default function LaunchkeyDebugPage() {
           event.value >= 0 &&
           (control.includes("button") ||
             transport.includes(control) ||
+            navigation.includes(control) ||
             dawCommands.includes(control) ||
             control === "sustain"))
       ) {

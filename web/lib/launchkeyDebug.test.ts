@@ -10,6 +10,10 @@ import {
 describe("Launchkey debug decoding", () => {
   it("distinguishes DAW button CCs from mode and fader messages", () => {
     expect(controlForMessage(decodeMessage([0xb0, 103, 127], "DAW"))).toBe("track-left");
+    // The live raw stream is newest-first: Left then Right yielded 109 then 108.
+    expect(controlForMessage(decodeMessage([0xb0, 109, 127], "DAW"))).toBe("track-left");
+    expect(controlForMessage(decodeMessage([0xb0, 108, 127], "DAW"))).toBe("track-right");
+    expect(controlForMessage(decodeMessage([0xb6, 108, 127], "DAW"))).toBeNull();
     expect(controlForMessage(decodeMessage([0xb0, 51, 127], "DAW"))).toBe("encoder-up");
     expect(controlForMessage(decodeMessage([0xb0, 52, 127], "DAW"))).toBe("encoder-down");
     expect(controlForMessage(decodeMessage([0xb0, 37, 127], "DAW"))).toBe("fader-button-1");

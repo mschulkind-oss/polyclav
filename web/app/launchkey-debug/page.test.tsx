@@ -251,6 +251,38 @@ describe("Launchkey debugger", () => {
     expect(screen.getByText(/d2 45/)).toBeInTheDocument();
   });
 
+  it("lights and releases the existing Track tiles for shifted Track CCs", async () => {
+    Object.defineProperty(globalThis, "EventSource", {
+      configurable: true,
+      value: FakeEventSource,
+    });
+    const { container } = render(<LaunchkeyDebugPage />);
+    fireEvent.click(screen.getByRole("button", { name: "daemon raw SSE" }));
+    const es = await waitFor(() => FakeEventSource.instances[0]);
+    const send = (cc: number, value: number) =>
+      es.emit("midi-raw", {
+        source: "launchkey-daw",
+        port: "Launchkey MK4 61 DAW In",
+        kind: "cc",
+        channel: 0,
+        data1: cc,
+        data2: value,
+        raw: `b0${cc.toString(16)}${value.toString(16)}`,
+      });
+    act(() => send(103, 127));
+    expect(container.querySelector('[data-control="track-left"]')).toHaveClass("held");
+    act(() => send(103, 0));
+    expect(container.querySelector('[data-control="track-left"]')).not.toHaveClass("held");
+    act(() => send(109, 127));
+    expect(container.querySelector('[data-control="track-left"]')).toHaveClass("held");
+    act(() => send(109, 0));
+    expect(container.querySelector('[data-control="track-left"]')).not.toHaveClass("held");
+    act(() => send(108, 127));
+    expect(container.querySelector('[data-control="track-right"]')).toHaveClass("held");
+    act(() => send(108, 0));
+    expect(container.querySelector('[data-control="track-right"]')).not.toHaveClass("held");
+  });
+
   it("clears green pads and keys for velocity-zero note-on over daemon SSE", async () => {
     Object.defineProperty(globalThis, "EventSource", {
       configurable: true,
