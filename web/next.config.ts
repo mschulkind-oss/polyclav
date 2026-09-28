@@ -21,6 +21,9 @@ const config = (phase: string): NextConfig => {
   if (phase === PHASE_DEVELOPMENT_SERVER) {
     return {
       ...shared,
+      // EventSource clients advertise gzip; compressing the endless /api/events
+      // response buffers snapshot and MIDI frames instead of streaming them.
+      compress: false,
       rewrites: async () => [
         {
           source: "/api/:path*",
