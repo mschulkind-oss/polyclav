@@ -90,6 +90,25 @@ func TestFaderButtonLED(t *testing.T) {
 	}
 }
 
+func TestFaderButtonColor(t *testing.T) {
+	for _, tc := range []struct {
+		index int
+		color components.Color
+		want  []byte
+	}{
+		{1, components.ColorBrown, []byte{0xB0, 37, 11}},
+		{3, components.ColorBrightWhite, []byte{0xB0, 39, 3}},
+		{5, components.ColorOff, []byte{0xB0, 41, 0}},
+		{9, components.ColorVibrantYellow, []byte{0xB0, 45, 13}},
+		{0, components.ColorBrightWhite, nil},
+		{10, components.ColorBrightWhite, nil},
+	} {
+		if got := faderButtonColor(tc.index, tc.color); !bytes.Equal(got, tc.want) {
+			t.Errorf("button %d color=%d: % X, want % X", tc.index, tc.color, got, tc.want)
+		}
+	}
+}
+
 func TestParseFaderButtons(t *testing.T) {
 	tests := []struct {
 		name string

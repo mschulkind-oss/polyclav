@@ -13,6 +13,7 @@ const (
 	ColorBrightWhite   Color = 3
 	ColorVibrantRed    Color = 5
 	ColorVibrantOrange Color = 9
+	ColorBrown         Color = 11
 	ColorVibrantYellow Color = 13
 	ColorVibrantGreen  Color = 25
 	ColorVibrantCyan   Color = 33

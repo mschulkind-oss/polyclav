@@ -245,7 +245,6 @@ func (r *Reconciler) SetDisplayText(line1, line2 string) error {
 	return conn.Driver.SetDisplayText(line1, line2)
 }
 
-// SetPadColor proxies to the active driver; no-op if not active.
 // SetFaderButtonLED proxies to the active driver; no-op if disconnected.
 func (r *Reconciler) SetFaderButtonLED(index int, on bool) error {
 	r.mu.Lock()
@@ -255,6 +254,17 @@ func (r *Reconciler) SetFaderButtonLED(index int, on bool) error {
 		return nil
 	}
 	return conn.Driver.SetFaderButtonLED(index, on)
+}
+
+// SetFaderButtonColor proxies to the active driver; no-op if disconnected.
+func (r *Reconciler) SetFaderButtonColor(index int, color components.Color) error {
+	r.mu.Lock()
+	conn := r.conn
+	r.mu.Unlock()
+	if conn == nil || conn.Driver == nil {
+		return nil
+	}
+	return conn.Driver.SetFaderButtonColor(index, color)
 }
 
 func (r *Reconciler) SetPadColor(row, col int, color components.Color) error {
