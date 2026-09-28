@@ -913,22 +913,24 @@ not also send the mixer L/R fader OSC binding.
 ### Launchkey organ drawbar buttons and coloring
 
 The nine buttons directly below the drawbar sliders illuminate to reflect the
-drawbars. By default, they emulate the coloring of the drawbars on a classic Hammond B3,
-using blue to represent the black mutation drawbars so all nine buttons remain illuminated:
+drawbars and Leslie state. By default, buttons 1–8 emulate the coloring of the drawbars
+on a classic Hammond B3, using purple for the black mutation drawbars so they stand out
+vividly against white on hardware button LEDs, while button 9 acts as the dedicated
+Leslie status indicator:
 
-- **16′ & 5⅓′:** Brown (amber)
-- **8′ & 4′:** White (foundation and 2nd harmonic)
-- **2⅔′:** Blue (3rd harmonic mutation)
-- **2′:** White (4th harmonic)
-- **1⅗′ & 1⅓′:** Blue (5th and 6th harmonic mutations)
-- **1′:** White (8th harmonic)
+- **16′ & 5⅓′ (buttons 1 & 2):** Brown (amber)
+- **8′ & 4′ (buttons 3 & 4):** White (foundation and 2nd harmonic)
+- **2⅔′ (button 5):** Purple (3rd harmonic mutation)
+- **2′ (button 6):** White (4th harmonic)
+- **1⅗′ & 1⅓′ (buttons 7 & 8):** Purple (5th and 6th harmonic mutations)
+- **Leslie rotary (button 9):** Vibrant orange when running (Slow or Fast), off when stopped
 
-Pressing the **first button** (button 1, below the 16′ drawbar slider) cycles through
+Pressing the **first button** (button 1, below the 16′ drawbar slider) cycles buttons 1–8 through
 three additional coloring modes that illustrate how organists group and use
 drawbars together, before returning to the B3 standard coloring on the fourth press:
 
-1. **Registers (`LOW / MID / HIGH`):** Groups the nine bars into three 3-bar
-   frequency zones: Low/Bass (red), Mid/Body (green), and High/Brilliance (cyan).
+1. **Registers (`LOW / MID / HIGH`):** Groups the drawbars into frequency zones:
+   Low/Bass (red), Mid/Body (green), and High/Brilliance (cyan).
 2. **Harmonics (`OCTAVE / MUTATION`):** Highlights the distinction between
    pure consonant octaves (16′, 8′, 4′, 2′, 1′ in white) and harmonic color mutations
    (5⅓′, 2⅔′, 1⅗′, 1⅓′ in orange).
@@ -937,6 +939,7 @@ drawbars together, before returning to the B3 standard coloring on the fourth pr
    the mid-body fill (dim white), and "the whistler" solo lead (1′ in yellow).
 4. **B3 Standard (`B3 STANDARD`):** Cycles back to the classic console drawbar coloring.
 
+In all four modes, button 9 remains dedicated to the Leslie rotary status.
 The Launchkey screen displays the active coloring mode name for 800 ms on each cycle.
 When leaving an organ patch, all nine fader button lights turn off.
 
@@ -990,7 +993,9 @@ switching happens in software, so a momentary physical footswitch suffices
 for either mode. The ninth (rightmost) fader button toggles the rotary
 between Stop (1) and Fast (3) on an active organ, independently of
 `leslie_mode`, and flashes the rotary state (`LESLIE: FAST` or `LESLIE: STOP`)
-on the screen.
+on the screen. Its LED acts as a dedicated Leslie status indicator across all
+drawbar modes, illuminating in vibrant orange when the rotary is running (Slow or Fast)
+and turning off when stopped. Changes from the pedal or plugin update the LED too.
 
 ## Troubleshooting
 

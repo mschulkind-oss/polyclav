@@ -395,7 +395,7 @@ func main() {
 			return nil
 		}
 		return sup.Launchkey()
-	}}, activeOrgan)
+	}}, activeOrgan, pedalRouter.LeslieOn)
 	patchBank := 0
 	pushPadColors := func() {
 		lk := sup.Launchkey()
@@ -455,6 +455,9 @@ func main() {
 					}
 					armScreenRestore()
 				}
+			}
+			if err := drawbarSync.Sync(); err != nil {
+				logger.Warn("launchkey drawbar LED sync", "err", err)
 			}
 			return
 		}
@@ -761,6 +764,9 @@ func main() {
 						break
 					}
 					clapParams.Update(ev.ClapID, ev.Value)
+					if err := drawbarSync.Sync(); err != nil {
+						logger.Warn("launchkey drawbar LED sync", "err", err)
+					}
 					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
 			}

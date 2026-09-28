@@ -63,17 +63,17 @@ func TestOtherButtonsNotHandledByDrawbarLEDs(t *testing.T) {
 }
 
 func TestDrawbarColorModeColors(t *testing.T) {
-	// 1. B3 Standard: [Brown, Brown, White, White, Blue, White, Blue, Blue, White]
+	// 1. B3 Standard: [Brown, Brown, White, White, Purple, White, Purple, Purple, White]
 	b3 := DrawbarColorModeB3Standard.Colors()
 	wantB3 := [9]components.Color{
 		components.ColorBrown,
 		components.ColorBrown,
 		components.ColorBrightWhite,
 		components.ColorBrightWhite,
-		components.ColorVibrantBlue,
+		components.ColorVibrantPurple,
 		components.ColorBrightWhite,
-		components.ColorVibrantBlue,
-		components.ColorVibrantBlue,
+		components.ColorVibrantPurple,
+		components.ColorVibrantPurple,
 		components.ColorBrightWhite,
 	}
 	if b3 != wantB3 {
@@ -137,7 +137,8 @@ func TestOrganDrawbarSync(t *testing.T) {
 	leds := newOrganDrawbarLEDs()
 	setter := &fakeButtonColorSetter{}
 	isOrgan := false
-	sync := newOrganDrawbarSync(leds, setter, func() bool { return isOrgan })
+	leslieOn := false
+	sync := newOrganDrawbarSync(leds, setter, func() bool { return isOrgan }, func() bool { return leslieOn })
 
 	// Initially not an organ: should turn off buttons.
 	if err := sync.Sync(); err != nil {
@@ -158,22 +159,43 @@ func TestOrganDrawbarSync(t *testing.T) {
 		t.Fatalf("repeated sync sent updates: %v", setter.counts)
 	}
 
-	// Switch to organ: should send B3 colors.
+	// Switch to organ with Leslie off: should send B3 colors for 1..8 and ColorOff for 9.
 	isOrgan = true
 	if err := sync.Sync(); err != nil {
 		t.Fatalf("sync error: %v", err)
 	}
-	if setter.colors != DrawbarColorModeB3Standard.Colors() {
-		t.Fatalf("organ sync colors = %v, want %v", setter.colors, DrawbarColorModeB3Standard.Colors())
+	wantB3 := DrawbarColorModeB3Standard.Colors()
+	for i := 0; i < 8; i++ {
+		if setter.colors[i] != wantB3[i] {
+			t.Errorf("button %d = %v, want %v", i+1, setter.colors[i], wantB3[i])
+		}
+	}
+	if setter.colors[8] != components.ColorOff {
+		t.Errorf("button 9 (Leslie off) = %v, want ColorOff", setter.colors[8])
 	}
 
-	// Cycle mode: should update colors.
+	// Leslie toggles on: button 9 turns Vibrant Orange, buttons 1..8 unchanged.
+	leslieOn = true
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if setter.colors[8] != components.ColorVibrantOrange {
+		t.Errorf("button 9 (Leslie on) = %v, want ColorVibrantOrange", setter.colors[8])
+	}
+
+	// Cycle mode: should update buttons 1..8 to Registers, button 9 remains Vibrant Orange.
 	leds.Cycle()
 	if err := sync.Sync(); err != nil {
 		t.Fatalf("sync error: %v", err)
 	}
-	if setter.colors != DrawbarColorModeRegisters.Colors() {
-		t.Fatalf("cycle sync colors = %v, want %v", setter.colors, DrawbarColorModeRegisters.Colors())
+	wantReg := DrawbarColorModeRegisters.Colors()
+	for i := 0; i < 8; i++ {
+		if setter.colors[i] != wantReg[i] {
+			t.Errorf("button %d = %v, want %v", i+1, setter.colors[i], wantReg[i])
+		}
+	}
+	if setter.colors[8] != components.ColorVibrantOrange {
+		t.Errorf("button 9 should stay ColorVibrantOrange after mode cycle: %v", setter.colors[8])
 	}
 
 	// Reset: forces repaint.
@@ -182,8 +204,13 @@ func TestOrganDrawbarSync(t *testing.T) {
 	if err := sync.Sync(); err != nil {
 		t.Fatalf("sync error: %v", err)
 	}
-	if setter.colors != DrawbarColorModeRegisters.Colors() {
-		t.Fatalf("repaint sync colors = %v, want %v", setter.colors, DrawbarColorModeRegisters.Colors())
+	for i := 0; i < 8; i++ {
+		if setter.colors[i] != wantReg[i] {
+			t.Errorf("repaint button %d = %v, want %v", i+1, setter.colors[i], wantReg[i])
+		}
+	}
+	if setter.colors[8] != components.ColorVibrantOrange {
+		t.Errorf("repaint button 9 = %v, want ColorVibrantOrange", setter.colors[8])
 	}
 
 	// Switch away from organ: should turn off buttons.
@@ -218,9 +245,15 @@ func TestDispatchFaderButton(t *testing.T) {
 	leds := newOrganDrawbarLEDs()
 	setter := &fakeButtonColorSetter{}
 	isOrgan := true
-	sync := newOrganDrawbarSync(leds, setter, func() bool { return isOrgan })
-	screen := &fakeScreen{}
 	leslie := &fakeLeslieHandler{handled: true, on: false}
+	sync := newOrganDrawbarSync(leds, setter, func() bool { return isOrgan }, leslie.LeslieOn)
+	screen := &fakeScreen{}
+
+	// Initial sync sets button 9 to ColorOff (leslie is off).
+	_ = sync.Sync()
+	if setter.colors[8] != components.ColorOff {
+		t.Fatalf("initial button 9 = %v, want ColorOff", setter.colors[8])
+	}
 
 	// 1. Button 1 on organ: cycles mode, calls sync and screen.
 	ev1 := driver.FaderButtonEvent{Index: 1, Pressed: true}
@@ -244,7 +277,7 @@ func TestDispatchFaderButton(t *testing.T) {
 		t.Fatalf("mode changed when not an organ: %v", leds.Mode())
 	}
 
-	// 3. Button 9 on organ: toggles Leslie, updates screen.
+	// 3. Button 9 on organ: toggles Leslie, updates screen, and syncs button 9 LED to ColorVibrantOrange.
 	isOrgan = true
 	ev9 := driver.FaderButtonEvent{Index: 9, Pressed: true}
 	if !dispatchFaderButton(ev9, isOrgan, leds, sync, leslie, screen) {
@@ -256,8 +289,11 @@ func TestDispatchFaderButton(t *testing.T) {
 	if screen.line1 != "LESLIE" || screen.line2 != "FAST" {
 		t.Fatalf("screen = (%q, %q), want (LESLIE, FAST)", screen.line1, screen.line2)
 	}
+	if setter.colors[8] != components.ColorVibrantOrange {
+		t.Fatalf("button 9 LED after Leslie toggle on = %v, want ColorVibrantOrange", setter.colors[8])
+	}
 
-	// Button 9 second press: toggles off.
+	// Button 9 second press: toggles off, LED turns ColorOff.
 	if !dispatchFaderButton(ev9, isOrgan, leds, sync, leslie, screen) {
 		t.Fatal("button 9 should be handled")
 	}
@@ -266,6 +302,9 @@ func TestDispatchFaderButton(t *testing.T) {
 	}
 	if screen.line1 != "LESLIE" || screen.line2 != "STOP" {
 		t.Fatalf("screen = (%q, %q), want (LESLIE, STOP)", screen.line1, screen.line2)
+	}
+	if setter.colors[8] != components.ColorOff {
+		t.Fatalf("button 9 LED after Leslie toggle off = %v, want ColorOff", setter.colors[8])
 	}
 
 	// 4. Other button (e.g. Button 5): returns false.

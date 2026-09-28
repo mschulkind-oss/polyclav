@@ -14,9 +14,10 @@ type DrawbarColorMode int
 
 const (
 	// DrawbarColorModeB3Standard matches the physical drawbar handles of a Hammond B3,
-	// using blue for the black mutation drawbars so every button stays illuminated:
-	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Blue),
-	// 2' (White), 1⅗' (Blue), 1⅓' (Blue), 1' (White).
+	// using purple for the black mutation drawbars so every button stays illuminated
+	// and clearly distinguishable from white:
+	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Purple),
+	// 2' (White), 1⅗' (Purple), 1⅓' (Purple), 1' (White).
 	DrawbarColorModeB3Standard DrawbarColorMode = iota
 
 	// DrawbarColorModeRegisters groups drawbars into three 3-bar frequency registers:
@@ -61,15 +62,15 @@ func (m DrawbarColorMode) Colors() [9]components.Color {
 	switch m {
 	case DrawbarColorModeB3Standard:
 		return [9]components.Color{
-			components.ColorBrown,       // 16'
-			components.ColorBrown,       // 5⅓'
-			components.ColorBrightWhite, // 8'
-			components.ColorBrightWhite, // 4'
-			components.ColorVibrantBlue, // 2⅔' (black mutation)
-			components.ColorBrightWhite, // 2'
-			components.ColorVibrantBlue, // 1⅗' (black mutation)
-			components.ColorVibrantBlue, // 1⅓' (black mutation)
-			components.ColorBrightWhite, // 1'
+			components.ColorBrown,         // 16'
+			components.ColorBrown,         // 5⅓'
+			components.ColorBrightWhite,   // 8'
+			components.ColorBrightWhite,   // 4'
+			components.ColorVibrantPurple, // 2⅔' (black mutation)
+			components.ColorBrightWhite,   // 2'
+			components.ColorVibrantPurple, // 1⅗' (black mutation)
+			components.ColorVibrantPurple, // 1⅓' (black mutation)
+			components.ColorBrightWhite,   // 1'
 		}
 	case DrawbarColorModeRegisters:
 		return [9]components.Color{
@@ -199,23 +200,26 @@ func (s launchkeyFaderButtonSetter) SetFaderButtonColor(index int, color compone
 }
 
 // organDrawbarSync coordinates updating the hardware button LEDs when the mode
-// changes or when switching between organ and non-organ patches.
+// changes, when Leslie starts or stops, or when switching between organ and non-organ patches.
 type organDrawbarSync struct {
-	leds    *organDrawbarLEDs
-	setter  faderButtonColorSetter
-	isOrgan func() bool
+	leds       *organDrawbarLEDs
+	setter     faderButtonColorSetter
+	isOrgan    func() bool
+	isLeslieOn func() bool
 
 	mu              sync.Mutex
 	lastOrgan       bool
 	lastMode        DrawbarColorMode
+	lastLeslieOn    bool
 	lastInitialized bool
 }
 
-func newOrganDrawbarSync(leds *organDrawbarLEDs, setter faderButtonColorSetter, isOrgan func() bool) *organDrawbarSync {
+func newOrganDrawbarSync(leds *organDrawbarLEDs, setter faderButtonColorSetter, isOrgan func() bool, isLeslieOn func() bool) *organDrawbarSync {
 	return &organDrawbarSync{
-		leds:    leds,
-		setter:  setter,
-		isOrgan: isOrgan,
+		leds:       leds,
+		setter:     setter,
+		isOrgan:    isOrgan,
+		isLeslieOn: isLeslieOn,
 	}
 }
 
@@ -230,6 +234,8 @@ func (s *organDrawbarSync) Reset() {
 }
 
 // Sync pushes the appropriate button LED colors if state has changed.
+// On organ patches, buttons 1–8 reflect the active drawbar color mode, while
+// button 9 acts as a dedicated Leslie indicator (Vibrant Orange when running, Off when stopped).
 func (s *organDrawbarSync) Sync() error {
 	if s == nil || s.setter == nil {
 		return nil
@@ -239,16 +245,24 @@ func (s *organDrawbarSync) Sync() error {
 
 	organ := s.isOrgan != nil && s.isOrgan()
 	mode := s.leds.Mode()
-	if s.lastInitialized && s.lastOrgan == organ && (!organ || s.lastMode == mode) {
+	leslieOn := s.isLeslieOn != nil && s.isLeslieOn()
+	if s.lastInitialized && s.lastOrgan == organ && (!organ || (s.lastMode == mode && s.lastLeslieOn == leslieOn)) {
 		return nil
 	}
 
 	if organ {
 		colors := s.leds.CurrentColors()
-		for i := 1; i <= 9; i++ {
+		for i := 1; i <= 8; i++ {
 			if err := s.setter.SetFaderButtonColor(i, colors[i-1]); err != nil {
 				return err
 			}
+		}
+		leslieColor := components.ColorOff
+		if leslieOn {
+			leslieColor = components.ColorVibrantOrange
+		}
+		if err := s.setter.SetFaderButtonColor(9, leslieColor); err != nil {
+			return err
 		}
 	} else {
 		for i := 1; i <= 9; i++ {
@@ -260,6 +274,7 @@ func (s *organDrawbarSync) Sync() error {
 
 	s.lastOrgan = organ
 	s.lastMode = mode
+	s.lastLeslieOn = leslieOn
 	s.lastInitialized = true
 	return nil
 }
@@ -271,7 +286,7 @@ type leslieButtonHandler interface {
 
 // dispatchFaderButton routes DAW-mode fader buttons on an organ patch:
 // - Button 1 cycles the drawbar button coloring mode (when organ is active).
-// - Button 9 toggles the Leslie rotary between Stop and Fast.
+// - Button 9 toggles the Leslie rotary between Stop and Fast and syncs the status LED.
 // Other buttons are left unhandled.
 func dispatchFaderButton(e driver.FaderButtonEvent, isOrgan bool, drawbarLEDs *organDrawbarLEDs, drawbarSync *organDrawbarSync, leslie leslieButtonHandler, screen organScreen) bool {
 	if e.Index == 1 && isOrgan {
@@ -289,12 +304,17 @@ func dispatchFaderButton(e driver.FaderButtonEvent, isOrgan bool, drawbarLEDs *o
 		}
 	}
 	if e.Index == 9 && leslie != nil && leslie.HandleLeslieButton(e.Pressed) {
-		if e.Pressed && screen != nil {
-			status := "STOP"
-			if leslie.LeslieOn() {
-				status = "FAST"
+		if e.Pressed {
+			if drawbarSync != nil {
+				_ = drawbarSync.Sync()
 			}
-			screen.Show("LESLIE", status)
+			if screen != nil {
+				status := "STOP"
+				if leslie.LeslieOn() {
+					status = "FAST"
+				}
+				screen.Show("LESLIE", status)
+			}
 		}
 		return true
 	}
