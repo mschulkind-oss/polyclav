@@ -914,16 +914,16 @@ not also send the mixer L/R fader OSC binding.
 
 The nine buttons directly below the drawbar sliders illuminate to reflect the
 drawbars and Leslie state. By default, buttons 1–8 emulate the coloring of the drawbars
-on a classic Hammond B3, using purple for the black mutation drawbars so they stand out
-vividly against white on hardware button LEDs, while button 9 acts as the dedicated
+on a classic Hammond B3, using red for the black mutation drawbars so they stand out
+with deep saturation against white on hardware button LEDs, while button 9 acts as the dedicated
 Leslie status indicator:
 
 - **16′ & 5⅓′ (buttons 1 & 2):** Brown (amber)
 - **8′ & 4′ (buttons 3 & 4):** White (foundation and 2nd harmonic)
-- **2⅔′ (button 5):** Purple (3rd harmonic mutation)
+- **2⅔′ (button 5):** Red (3rd harmonic mutation)
 - **2′ (button 6):** White (4th harmonic)
-- **1⅗′ & 1⅓′ (buttons 7 & 8):** Purple (5th and 6th harmonic mutations)
-- **Leslie rotary (button 9):** Vibrant orange when running (Slow or Fast), off when stopped
+- **1⅗′ & 1⅓′ (buttons 7 & 8):** Red (5th and 6th harmonic mutations)
+- **Leslie rotary (button 9):** Vibrant green when running (Slow or Fast), off when stopped
 
 Pressing the **first button** (button 1, below the 16′ drawbar slider) cycles buttons 1–8 through
 three additional coloring modes that illustrate how organists group and use
@@ -994,7 +994,7 @@ for either mode. The ninth (rightmost) fader button toggles the rotary
 between Stop (1) and Fast (3) on an active organ, independently of
 `leslie_mode`, and flashes the rotary state (`LESLIE: FAST` or `LESLIE: STOP`)
 on the screen. Its LED acts as a dedicated Leslie status indicator across all
-drawbar modes, illuminating in vibrant orange when the rotary is running (Slow or Fast)
+drawbar modes, illuminating in vibrant green when the rotary is running (Slow or Fast)
 and turning off when stopped. Changes from the pedal or plugin update the LED too.
 
 ## Troubleshooting

@@ -14,10 +14,10 @@ type DrawbarColorMode int
 
 const (
 	// DrawbarColorModeB3Standard matches the physical drawbar handles of a Hammond B3,
-	// using purple for the black mutation drawbars so every button stays illuminated
-	// and clearly distinguishable from white:
-	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Purple),
-	// 2' (White), 1⅗' (Purple), 1⅓' (Purple), 1' (White).
+	// using red for the black mutation drawbars so every button stays illuminated
+	// with high contrast against white and brown on hardware LEDs:
+	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Red),
+	// 2' (White), 1⅗' (Red), 1⅓' (Red), 1' (White).
 	DrawbarColorModeB3Standard DrawbarColorMode = iota
 
 	// DrawbarColorModeRegisters groups drawbars into three 3-bar frequency registers:
@@ -62,15 +62,15 @@ func (m DrawbarColorMode) Colors() [9]components.Color {
 	switch m {
 	case DrawbarColorModeB3Standard:
 		return [9]components.Color{
-			components.ColorBrown,         // 16'
-			components.ColorBrown,         // 5⅓'
-			components.ColorBrightWhite,   // 8'
-			components.ColorBrightWhite,   // 4'
-			components.ColorVibrantPurple, // 2⅔' (black mutation)
-			components.ColorBrightWhite,   // 2'
-			components.ColorVibrantPurple, // 1⅗' (black mutation)
-			components.ColorVibrantPurple, // 1⅓' (black mutation)
-			components.ColorBrightWhite,   // 1'
+			components.ColorBrown,       // 16'
+			components.ColorBrown,       // 5⅓'
+			components.ColorBrightWhite, // 8'
+			components.ColorBrightWhite, // 4'
+			components.ColorVibrantRed,  // 2⅔' (black mutation)
+			components.ColorBrightWhite, // 2'
+			components.ColorVibrantRed,  // 1⅗' (black mutation)
+			components.ColorVibrantRed,  // 1⅓' (black mutation)
+			components.ColorBrightWhite, // 1'
 		}
 	case DrawbarColorModeRegisters:
 		return [9]components.Color{
@@ -235,7 +235,7 @@ func (s *organDrawbarSync) Reset() {
 
 // Sync pushes the appropriate button LED colors if state has changed.
 // On organ patches, buttons 1–8 reflect the active drawbar color mode, while
-// button 9 acts as a dedicated Leslie indicator (Vibrant Orange when running, Off when stopped).
+// button 9 acts as a dedicated Leslie indicator (Vibrant Green when running, Off when stopped).
 func (s *organDrawbarSync) Sync() error {
 	if s == nil || s.setter == nil {
 		return nil
@@ -259,7 +259,7 @@ func (s *organDrawbarSync) Sync() error {
 		}
 		leslieColor := components.ColorOff
 		if leslieOn {
-			leslieColor = components.ColorVibrantOrange
+			leslieColor = components.ColorVibrantGreen
 		}
 		if err := s.setter.SetFaderButtonColor(9, leslieColor); err != nil {
 			return err
