@@ -3470,6 +3470,8 @@ mod tests {
         assert_eq!(clamp_callback_frames(128, 0), 0);
     }
 
+    // The metrics helpers used below exist only in the Linux audio callback.
+    #[cfg(target_os = "linux")]
     #[test]
     fn max_quantum_metrics_are_split_by_cause() {
         polyclav_audio_reset_metrics();
