@@ -3645,6 +3645,8 @@ mod tests {
         assert!(held.panic_events().is_empty());
     }
 
+    // macOS uses a CLAP parameter stub; only Linux queues parameter writes.
+    #[cfg(target_os = "linux")]
     #[test]
     fn clap_param_writes_are_tagged_with_current_generation() {
         while clap_param_queue().pop().is_some() {}
