@@ -55,8 +55,8 @@ const (
 	// and blue for mutations.
 	B3ColorSchemeOcean
 
-	// B3ColorSchemeTriad uses bright yellow for sub-octaves, cyan for octaves,
-	// and red for mutations.
+	// B3ColorSchemeTriad uses balanced yellow for sub-octaves, cyan for octaves,
+	// and red for mutations, dialed down to ~75% brightness.
 	B3ColorSchemeTriad
 
 	// B3ColorSchemeCandy uses hot pink for sub-octaves, white for octaves,
@@ -125,15 +125,15 @@ func (s B3ColorScheme) Colors() [9]components.Color {
 		}
 	case B3ColorSchemeTriad:
 		return [9]components.Color{
-			components.ColorVibrantYellow, // 16'
-			components.ColorVibrantYellow, // 5⅓'
-			components.ColorVibrantCyan,   // 8'
-			components.ColorVibrantCyan,   // 4'
-			components.ColorVibrantRed,    // 2⅔' (mutation)
-			components.ColorVibrantCyan,   // 2'
-			components.ColorVibrantRed,    // 1⅗' (mutation)
-			components.ColorVibrantRed,    // 1⅓' (mutation)
-			components.ColorVibrantCyan,   // 1'
+			components.ColorNeutralYellow, // 16'
+			components.ColorNeutralYellow, // 5⅓'
+			components.ColorNeutralCyan,   // 8'
+			components.ColorNeutralCyan,   // 4'
+			components.ColorNeutralRed,    // 2⅔' (mutation)
+			components.ColorNeutralCyan,   // 2'
+			components.ColorNeutralRed,    // 1⅗' (mutation)
+			components.ColorNeutralRed,    // 1⅓' (mutation)
+			components.ColorNeutralCyan,   // 1'
 		}
 	case B3ColorSchemeCandy:
 		return [9]components.Color{

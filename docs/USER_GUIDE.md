@@ -948,7 +948,7 @@ five vibrant color schemes for the default B3 drawbars:
 1. **Classic (`1: CLASSIC`):** Traditional console palette — brown subs (16′, 5⅓′), white foundations (8′, 4′, 2′), and red mutation drawbars (2⅔′, 1⅗′, 1⅓′).
 2. **Neon (`2: NEON`):** Vibrant synthwave palette — glowing orange subs, electric cyan foundations, and hot pink mutations.
 3. **Ocean (`3: OCEAN`):** High-contrast coastal palette — bright yellow subs, clean white foundations, and deep blue mutations.
-4. **Triad (`4: TRIAD`):** High-saturation primary triad — sunny yellow subs, vivid cyan foundations, and deep red mutations.
+4. **Triad (`4: TRIAD`):** Primary triad dialed down to ~75% brightness — neutral yellow subs, neutral cyan foundations, and neutral red mutations.
 5. **Candy (`5: CANDY`):** Vibrant pop palette — hot pink subs, clean white foundations, and electric cyan mutations.
 
 Pressing button 2 while in another coloring mode (such as Registers or Harmonics) automatically switches back to the B3 drawbars with the next color scheme. The Launchkey screen displays `B3 SCHEME` and the scheme name for 800 ms on each press.

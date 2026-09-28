@@ -230,10 +230,10 @@ func TestB3ColorSchemes(t *testing.T) {
 			scheme: B3ColorSchemeTriad,
 			name:   "TRIAD",
 			colors: [9]components.Color{
-				components.ColorVibrantYellow, components.ColorVibrantYellow,
-				components.ColorVibrantCyan, components.ColorVibrantCyan, components.ColorVibrantRed,
-				components.ColorVibrantCyan, components.ColorVibrantRed, components.ColorVibrantRed,
-				components.ColorVibrantCyan,
+				components.ColorNeutralYellow, components.ColorNeutralYellow,
+				components.ColorNeutralCyan, components.ColorNeutralCyan, components.ColorNeutralRed,
+				components.ColorNeutralCyan, components.ColorNeutralRed, components.ColorNeutralRed,
+				components.ColorNeutralCyan,
 			},
 		},
 		{

@@ -12,12 +12,15 @@ const (
 	ColorNeutralWhite  Color = 2
 	ColorBrightWhite   Color = 3
 	ColorVibrantRed    Color = 5
+	ColorNeutralRed    Color = 6
 	ColorVibrantOrange Color = 9
 	ColorBrown         Color = 11
 	ColorVibrantYellow Color = 13
+	ColorNeutralYellow Color = 14
 	ColorGreen         Color = 21
 	ColorVibrantGreen  Color = 25
 	ColorVibrantCyan   Color = 33
+	ColorNeutralCyan   Color = 34
 	ColorVibrantBlue   Color = 41
 	ColorVibrantPurple Color = 49
 	ColorVibrantPink   Color = 57
