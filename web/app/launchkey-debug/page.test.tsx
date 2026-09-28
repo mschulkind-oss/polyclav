@@ -181,6 +181,22 @@ describe("Launchkey debugger", () => {
     expect(container.querySelector('[data-control="encoder-2"]')).not.toHaveTextContent(/speed/i);
   });
 
+  it("distinguishes an open SSE connection from an absent Launchkey", async () => {
+    Object.defineProperty(globalThis, "EventSource", {
+      configurable: true,
+      value: FakeEventSource,
+    });
+    render(<LaunchkeyDebugPage />);
+    fireEvent.click(screen.getByRole("button", { name: "daemon raw SSE" }));
+    const es = await waitFor(() => FakeEventSource.instances[0]);
+    act(() => es.onopen?.());
+    act(() => es.emit("snapshot", { devices: { launchkey: "absent" } }));
+    expect(screen.getByText(/SSE connected.*Launchkey absent/i)).toBeInTheDocument();
+    expect(screen.getByText(/SSE connected.*Launchkey absent/i)).toHaveTextContent(
+      /DAW controls will not arrive/i,
+    );
+  });
+
   it("shows daemon raw SSE events including unsupported input and full port identity", async () => {
     Object.defineProperty(globalThis, "EventSource", {
       configurable: true,

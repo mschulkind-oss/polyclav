@@ -913,13 +913,14 @@ not also send the mixer L/R fader OSC binding.
 ### Launchkey organ drawbar buttons and coloring
 
 The nine buttons directly below the drawbar sliders illuminate to reflect the
-drawbars. By default, they emulate the coloring of the drawbars on a classic Hammond B3:
+drawbars. By default, they emulate the coloring of the drawbars on a classic Hammond B3,
+using blue to represent the black mutation drawbars so all nine buttons remain illuminated:
 
 - **16′ & 5⅓′:** Brown (amber)
 - **8′ & 4′:** White (foundation and 2nd harmonic)
-- **2⅔′:** Off (black mutation)
+- **2⅔′:** Blue (3rd harmonic mutation)
 - **2′:** White (4th harmonic)
-- **1⅗′ & 1⅓′:** Off (black mutations)
+- **1⅗′ & 1⅓′:** Blue (5th and 6th harmonic mutations)
 - **1′:** White (8th harmonic)
 
 Pressing the **first button** (button 1, below the 16′ drawbar slider) cycles through

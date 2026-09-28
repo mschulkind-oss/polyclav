@@ -13,9 +13,10 @@ import (
 type DrawbarColorMode int
 
 const (
-	// DrawbarColorModeB3Standard matches the physical drawbar handles of a Hammond B3:
-	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Black/Off),
-	// 2' (White), 1⅗' (Black/Off), 1⅓' (Black/Off), 1' (White).
+	// DrawbarColorModeB3Standard matches the physical drawbar handles of a Hammond B3,
+	// using blue for the black mutation drawbars so every button stays illuminated:
+	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Blue),
+	// 2' (White), 1⅗' (Blue), 1⅓' (Blue), 1' (White).
 	DrawbarColorModeB3Standard DrawbarColorMode = iota
 
 	// DrawbarColorModeRegisters groups drawbars into three 3-bar frequency registers:
@@ -64,10 +65,10 @@ func (m DrawbarColorMode) Colors() [9]components.Color {
 			components.ColorBrown,       // 5⅓'
 			components.ColorBrightWhite, // 8'
 			components.ColorBrightWhite, // 4'
-			components.ColorOff,         // 2⅔'
+			components.ColorVibrantBlue, // 2⅔' (black mutation)
 			components.ColorBrightWhite, // 2'
-			components.ColorOff,         // 1⅗'
-			components.ColorOff,         // 1⅓'
+			components.ColorVibrantBlue, // 1⅗' (black mutation)
+			components.ColorVibrantBlue, // 1⅓' (black mutation)
 			components.ColorBrightWhite, // 1'
 		}
 	case DrawbarColorModeRegisters:

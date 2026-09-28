@@ -78,6 +78,7 @@ export default function LaunchkeyDebugPage() {
   const activeSource = useRef<SourceMode>("browser");
   const [browserLive, setBrowserLive] = useState(false);
   const [daemonLive, setDaemonLive] = useState(false);
+  const [daemonLaunchkey, setDaemonLaunchkey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [inputs, setInputs] = useState<string[]>([]);
   const [history, setHistory] = useState<(DebugEvent & { seq: number })[]>([]);
@@ -144,6 +145,7 @@ export default function LaunchkeyDebugPage() {
       setSourceModeState(mode);
       setPlaying(false);
       setError("");
+      setDaemonLaunchkey(null);
       resetSurface();
       if (mode !== "browser") disconnectBrowser();
     },
@@ -186,6 +188,7 @@ export default function LaunchkeyDebugPage() {
   useEffect(() => {
     if (sourceMode !== "daemon") {
       setDaemonLive(false);
+      setDaemonLaunchkey(null);
       return;
     }
     let disposed = false;
@@ -204,6 +207,16 @@ export default function LaunchkeyDebugPage() {
           retry = setTimeout(connect, 2000);
         }
       };
+      es.addEventListener("snapshot", (ev: MessageEvent) => {
+        if (disposed || activeSource.current !== "daemon") return;
+        try {
+          const snapshot = JSON.parse(ev.data);
+          const state = snapshot?.devices?.launchkey;
+          setDaemonLaunchkey(typeof state === "string" ? state : null);
+        } catch {
+          setDaemonLaunchkey(null);
+        }
+      });
       es.addEventListener("midi-raw", (ev: MessageEvent) => {
         if (disposed || activeSource.current !== "daemon") return;
         let payload: unknown;
@@ -321,7 +334,9 @@ export default function LaunchkeyDebugPage() {
         : "Browser MIDI disconnected"
       : sourceMode === "daemon"
         ? daemonLive
-          ? "Daemon SSE connected; waiting for midi-raw events"
+          ? daemonLaunchkey === "absent"
+            ? "SSE connected; Launchkey absent from daemon. DAW controls will not arrive. Check USB and daemon logs."
+            : `SSE connected; Launchkey ${daemonLaunchkey ?? "state unknown"}. Waiting for midi-raw events.`
           : "Daemon SSE reconnecting or disconnected"
         : report.length
           ? `Offline report loaded: ${cursor} / ${report.length} events`

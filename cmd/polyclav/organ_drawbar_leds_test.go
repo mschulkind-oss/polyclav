@@ -63,17 +63,17 @@ func TestOtherButtonsNotHandledByDrawbarLEDs(t *testing.T) {
 }
 
 func TestDrawbarColorModeColors(t *testing.T) {
-	// 1. B3 Standard: [Brown, Brown, White, White, Black, White, Black, Black, White]
+	// 1. B3 Standard: [Brown, Brown, White, White, Blue, White, Blue, Blue, White]
 	b3 := DrawbarColorModeB3Standard.Colors()
 	wantB3 := [9]components.Color{
 		components.ColorBrown,
 		components.ColorBrown,
 		components.ColorBrightWhite,
 		components.ColorBrightWhite,
-		components.ColorOff,
+		components.ColorVibrantBlue,
 		components.ColorBrightWhite,
-		components.ColorOff,
-		components.ColorOff,
+		components.ColorVibrantBlue,
+		components.ColorVibrantBlue,
 		components.ColorBrightWhite,
 	}
 	if b3 != wantB3 {
