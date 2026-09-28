@@ -62,6 +62,13 @@ describe("Launchkey debugger", () => {
     );
   });
 
+  it("keeps instructions legible and nested scroll regions on the dark surface", () => {
+    const css = readFileSync("app/launchkey-debug/style.css", "utf8");
+    expect(css).toMatch(/\.lk-panel\s*\{[^}]*color:\s*#[0-9a-f]{6}/s);
+    expect(css).toMatch(/\.lk-panel\s+\.lk-dense-scroll\s*\{[^}]*background:\s*transparent/s);
+    expect(css).toMatch(/\.lk-panel\s+\.lk-dense-scroll\s*\{[^}]*border:\s*0/s);
+  });
+
   afterEach(() => {
     Reflect.deleteProperty(navigator, "requestMIDIAccess");
     Reflect.deleteProperty(globalThis, "EventSource");
