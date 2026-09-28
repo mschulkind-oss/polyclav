@@ -124,6 +124,8 @@ const geometry = `(() => {
     latest: pick('.lk-latest'), source: pick('.lk-source-strip, .lk-source-strip > *'), body: pick('.lk-body'), blocks: pick('.lk-body > section'),
     rows: pick('.lk-faders, .lk-fader-buttons, .lk-encoder-row, .lk-pad-row, .lk-grid, .lk-transport, .lk-daw-commands'),
     tiles: pick('.lk-control'), keybed: pick('.lk-keys'),
+    tileValueOverflow: [...document.querySelectorAll('.lk-control small')].map((el) => getComputedStyle(el).overflowY),
+    rawColors: ['.lk-raw-details summary', '.lk-event-list', '.lk-offline-tools .hint'].map((selector) => getComputedStyle(document.querySelector(selector)).color),
     collisions: [...document.querySelectorAll('.lk-faders, .lk-fader-buttons, .lk-encoder-row, .lk-pad-row, .lk-grid, .lk-transport, .lk-daw-commands, .lk-wheels, .lk-mini-row')].flatMap((row) => {
       const r = row.getBoundingClientRect();
       const tiles = [...row.querySelectorAll(':scope > .lk-control')];
@@ -234,6 +236,15 @@ for (const [width, height] of [
         assert.deepEqual(snapshot.collisions, [], `${name}: tile collision or escaped row`);
         assert.deepEqual(snapshot.clippedLabels, [], `${name}: unreadable tile label or value`);
         assert.ok(
+          snapshot.tileValueOverflow.every((value) => value === "hidden"),
+          `${name}: native scroll arrows inside controls`,
+        );
+        assert.deepEqual(
+          snapshot.rawColors,
+          ["rgb(182, 234, 255)", "rgb(220, 232, 246)", "rgb(181, 197, 213)"],
+          `${name}: raw input or replay text lacks contrast`,
+        );
+        assert.ok(
           snapshot.panel[0].right <= width + 1 && snapshot.panel[0].x >= -1,
           `${name}: panel outside viewport`,
         );
@@ -266,7 +277,7 @@ for (const [width, height] of [
       assert.match(snapshots[1].values.find((v) => v.id === "pad-layout").text, /Custom 1/);
       assert.match(snapshots[2].values.find((v) => v.id === "encoder-1").text, /step \+2/);
       assert.match(snapshots[3].values.find((v) => v.id === "pad-top-1").text, /pressure 127/);
-      assert.match(snapshots[5].latestText, /display up/);
+      assert.match(snapshots[5].latestText, /encoder up/);
       await cdp.eval(`window.EventSource = class {
         static CLOSED = 2;
         constructor() { this.listeners = {}; window.debugEvents = this; }

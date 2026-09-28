@@ -220,7 +220,7 @@
 }
 .lk-control small {
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 .lk-control small {
   margin-top: 0.18rem;
@@ -308,6 +308,18 @@
   border-radius: 10px;
   padding: 0.75rem;
   background: #1c2836;
+  color: #dce8f6;
+}
+.lk-offline-tools .hint,
+.lk-raw-details .hint {
+  color: #b5c5d5;
+}
+.lk-offline-tools h2,
+.lk-raw-details summary {
+  color: #b6eaff;
+}
+.lk-offline-tools input[type="file"] {
+  color: #dce8f6;
 }
 .lk-replay {
   display: flex;

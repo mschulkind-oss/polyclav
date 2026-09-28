@@ -31,13 +31,13 @@ const padModes: Record<number, string> = {
   14: "Chord Map",
   15: "DAW Drum",
 };
-const transport = ["rewind", "fast-forward", "stop", "loop", "play", "record"];
+const transport = ["stop", "loop", "play", "record"];
 const dawCommands = ["capture", "undo", "quantise", "metronome"];
 const navigation = [
   "track-left",
   "track-right",
-  "display-up",
-  "display-down",
+  "encoder-up",
+  "encoder-down",
   "shift",
   "settings",
   "function",
@@ -416,6 +416,11 @@ export default function LaunchkeyDebugPage() {
               to have opened its DAW ports; browser permission alone cannot enable them. Raw bytes
               remain under Recent raw input.
             </p>
+            <p>
+              Settings, Octave, and Fixed Chord gave no button MIDI in our capture; they can act
+              locally on the keyboard. To check Octave or Fixed Chord, play one key afterward and
+              inspect its notes rather than expecting those buttons to light up.
+            </p>
           </div>
           {error && <p role="alert">{error}</p>}
 
@@ -528,7 +533,7 @@ export default function LaunchkeyDebugPage() {
           )}
         </section>
 
-        <details className="wide lk-raw-details">
+        <details className="wide lk-raw-details" open>
           <summary>Recent raw input</summary>
           <div className="lk-event-list" aria-live="off">
             {history.length === 0 ? (

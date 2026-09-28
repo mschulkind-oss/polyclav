@@ -10,6 +10,8 @@ import {
 describe("Launchkey debug decoding", () => {
   it("distinguishes DAW button CCs from mode and fader messages", () => {
     expect(controlForMessage(decodeMessage([0xb0, 103, 127], "DAW"))).toBe("track-left");
+    expect(controlForMessage(decodeMessage([0xb0, 51, 127], "DAW"))).toBe("encoder-up");
+    expect(controlForMessage(decodeMessage([0xb0, 52, 127], "DAW"))).toBe("encoder-down");
     expect(controlForMessage(decodeMessage([0xb0, 37, 127], "DAW"))).toBe("fader-button-1");
     expect(controlForMessage(decodeMessage([0xb6, 29, 4], "DAW"))).toBe("pad-layout");
     expect(controlForMessage(decodeMessage([0xbf, 5, 62], "DAW"))).toBe("fader-1");
@@ -67,6 +69,34 @@ describe("Launchkey debug decoding", () => {
     });
     expect(daw?.port).toBe("DAW");
     expect(daw?.control).toBe("pad-top-1");
+  });
+
+  it("treats velocity-zero note-on as release in daemon and offline streams", () => {
+    const daw = decodeBackendRaw({
+      source: "launchkey-daw",
+      port: "Launchkey MK4 61 DAW In",
+      kind: "note-on",
+      channel: 0,
+      data1: 96,
+      data2: 0,
+      raw: "906000",
+    });
+    expect(daw).toMatchObject({ kind: "note-off", value: 0, control: "pad-top-1" });
+    const events = flattenInventory({
+      controls: [
+        {
+          events: [
+            {
+              port_role: "midi",
+              kind: "note_on",
+              channel: 1,
+              raw_values: { note: 60, velocity: 0 },
+            },
+          ],
+        },
+      ],
+    });
+    expect(events[0]).toMatchObject({ kind: "note-off", value: 0, control: "key-60" });
   });
 
   it("recognizes pressure from older inventories that recorded it as raw", () => {

@@ -74,6 +74,12 @@ describe("Launchkey debugger", () => {
     FakeEventSource.instances = [];
   });
 
+  it("does not draw native scroll arrows inside control tiles", () => {
+    const css = readFileSync("app/launchkey-debug/style.css", "utf8");
+    expect(css).not.toMatch(/\.lk-control small\s*\{[^}]*overflow-y:\s*auto/s);
+    expect(css).toMatch(/\.lk-control small\s*\{[^}]*overflow:\s*hidden/s);
+  });
+
   it("fits all pads and faders without sideways scrolling", () => {
     const css = readFileSync("app/launchkey-debug/style.css", "utf8");
     expect(css).not.toMatch(/min-width:\s*900px/);
@@ -104,8 +110,18 @@ describe("Launchkey debugger", () => {
       expect(container.querySelector(`[data-control="encoder-${i}"]`)).toBeInTheDocument();
     }
     expect(container.querySelector('[data-control="play"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-control="rewind"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-control="fast-forward"]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-control="track-left"]')).toBeInTheDocument();
-    expect(screen.getByText("Recent raw input").closest("details")).not.toHaveAttribute("open");
+    expect(container.querySelector('[data-control="encoder-up"] span')).toHaveAttribute(
+      "aria-label",
+      "Encoder up",
+    );
+    expect(container.querySelector('[data-control="encoder-down"] span')).toHaveAttribute(
+      "aria-label",
+      "Encoder down",
+    );
+    expect(screen.getByText("Recent raw input").closest("details")).toHaveAttribute("open");
     expect(screen.getByText("Waiting for input")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveAttribute("tabindex", "0");
     const guidance = container.querySelector(".lk-source-note");
@@ -114,6 +130,7 @@ describe("Launchkey debugger", () => {
     expect(guidance).toHaveTextContent(/daemon.*DAW mode.*startup/i);
     expect(guidance).toHaveTextContent(/page cannot turn on DAW mode/i);
     expect(guidance).toHaveTextContent(/offline.*neither the daemon nor MIDI permission/i);
+    expect(guidance).toHaveTextContent(/Settings.*Octave.*Fixed Chord.*no button MIDI/i);
     expect(container.querySelector('[data-control="fader-1"] span')).toHaveAttribute(
       "aria-label",
       "Fader 1",
@@ -229,10 +246,42 @@ describe("Launchkey debugger", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       /daemon raw SSE.*unmapped.*aftertouch.*69.*Launchkey MK4 61 MIDI In.*channel 3/i,
     );
-    fireEvent.click(screen.getByText("Recent raw input"));
     expect(screen.getByText(/Launchkey MK4 61 MIDI In.*MIDI ch3/)).toBeInTheDocument();
     expect(screen.getByText(/MIDI ch3 aftertouch unmapped/)).toBeInTheDocument();
     expect(screen.getByText(/d2 45/)).toBeInTheDocument();
+  });
+
+  it("clears green pads and keys for velocity-zero note-on over daemon SSE", async () => {
+    Object.defineProperty(globalThis, "EventSource", {
+      configurable: true,
+      value: FakeEventSource,
+    });
+    const { container } = render(<LaunchkeyDebugPage />);
+    fireEvent.click(screen.getByRole("button", { name: "daemon raw SSE" }));
+    const es = await waitFor(() => FakeEventSource.instances[0]);
+    const send = (source: string, port: string, note: number, velocity: number) => {
+      es.emit("midi-raw", {
+        source,
+        port,
+        kind: "note-on",
+        channel: 0,
+        data1: note,
+        data2: velocity,
+        raw: `90${note.toString(16)}${velocity.toString(16)}`,
+      });
+    };
+    act(() => {
+      send("launchkey-daw", "Launchkey MK4 61 DAW In", 96, 70);
+      send("performance", "Launchkey MK4 61 MIDI In", 60, 70);
+    });
+    expect(container.querySelector('[data-control="pad-top-1"]')).toHaveClass("held");
+    expect(container.querySelector('[data-control="key-60"]')).toHaveClass("held");
+    act(() => {
+      send("launchkey-daw", "Launchkey MK4 61 DAW In", 96, 0);
+      send("performance", "Launchkey MK4 61 MIDI In", 60, 0);
+    });
+    expect(container.querySelector('[data-control="pad-top-1"]')).not.toHaveClass("held");
+    expect(container.querySelector('[data-control="key-60"]')).not.toHaveClass("held");
   });
 
   it("ignores stale events from a previously selected source", async () => {
