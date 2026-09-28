@@ -3,6 +3,7 @@ package midi
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -142,6 +143,91 @@ func TestMultiplexerOpensAndClosesPerPort(t *testing.T) {
 	rig.setNames(nil)
 	waitMuxCondition(t, func() bool { return m.PortCount() == 0 }, "port closes")
 	waitMuxCondition(t, func() bool { return !rig.isActive("Some Synth") }, "opener sees the port inactive")
+}
+
+func TestMultiplexerReleasesHeldNoteWhenListenerCloses(t *testing.T) {
+	for _, releaseBeforeClose := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing release", true: "already released"}[releaseBeforeClose], func(t *testing.T) {
+			rig := newFakeMuxRig()
+			rig.setNames([]string{"Test Keyboard"})
+			events := make(chan Event, 4)
+			release := make(chan struct{})
+			m := NewMultiplexer(slog.New(slog.NewTextHandler(io.Discard, nil)), MultiplexerConfig{
+				Allow: []string{"Test Keyboard"}, PollInterval: 5 * time.Millisecond,
+				PortLister: rig.lister, Sink: func(ev Event) { events <- ev },
+				Opener: func(ctx context.Context, _ *slog.Logger, _ string, sink Sink, _ func([]byte)) error {
+					sink(Event{Kind: NoteOn, Channel: 2, Note: 62, Vel: 90})
+					<-release
+					if releaseBeforeClose {
+						sink(Event{Kind: NoteOff, Channel: 2, Note: 62})
+					}
+					<-ctx.Done()
+					return ctx.Err()
+				},
+			})
+			cancel, done := runMultiplexer(t, m)
+			select {
+			case ev := <-events:
+				if ev.Kind != NoteOn {
+					t.Fatalf("first event = %+v", ev)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("listener did not deliver note-on")
+			}
+			close(release)
+			if releaseBeforeClose {
+				select {
+				case ev := <-events:
+					if ev.Kind != NoteOff {
+						t.Fatalf("release = %+v", ev)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("missing actual note-off")
+				}
+			}
+			stopMultiplexer(t, cancel, done)
+			if !releaseBeforeClose {
+				select {
+				case ev := <-events:
+					if ev.Kind != NoteOff || ev.Channel != 2 || ev.Note != 62 || ev.SourcePort != "Test Keyboard" {
+						t.Fatalf("cleanup release = %+v", ev)
+					}
+				default:
+					t.Fatal("listener closed while note held without releasing it")
+				}
+			}
+			select {
+			case ev := <-events:
+				t.Fatalf("extra release = %+v", ev)
+			default:
+			}
+		})
+	}
+}
+
+func TestMultiplexerReleasesHeldNoteWhenPortDies(t *testing.T) {
+	rig := newFakeMuxRig()
+	rig.setNames([]string{"Test Keyboard"})
+	events := make(chan Event, 2)
+	m := NewMultiplexer(slog.New(slog.NewTextHandler(io.Discard, nil)), MultiplexerConfig{
+		Allow: []string{"Test Keyboard"}, PortLister: rig.lister,
+		Sink: func(ev Event) { events <- ev },
+		Opener: func(_ context.Context, _ *slog.Logger, _ string, sink Sink, _ func([]byte)) error {
+			sink(Event{Kind: NoteOn, Channel: 1, Note: 64, Vel: 110})
+			return errors.New("USB port lost")
+		},
+	})
+	m.tick(context.Background())
+	for _, want := range []Kind{NoteOn, NoteOff} {
+		select {
+		case ev := <-events:
+			if ev.Kind != want || ev.SourcePort != "Test Keyboard" || ev.Note != 64 {
+				t.Fatalf("event = %+v, want %v on Test Keyboard note 64", ev, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("missing %v after listener failure", want)
+		}
+	}
 }
 
 func TestMultiplexerRawSinkIncludesPerformancePortIdentity(t *testing.T) {

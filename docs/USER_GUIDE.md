@@ -304,7 +304,11 @@ not the whole string.
 Once a device is selected it is selected for good — `internal/midi.Multiplexer`
 opens and closes ports independently as they hotplug, so unplugging one
 keyboard never affects another already playing, and a selected keyboard
-starts working the moment it's plugged back in.
+starts working the moment it's plugged back in. If an open input listener
+closes while one of its keys is still held, Polyclav sends a matching note-off
+for each note it received from that listener. This prevents a missing release
+on unplug or shutdown from leaving a voice running; it cannot repair a missed
+note-off while the listener remains open.
 
 Three equivalent ways to change the list:
 

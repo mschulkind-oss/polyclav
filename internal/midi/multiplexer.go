@@ -114,7 +114,15 @@ type muxPort struct {
 	activityMu  sync.Mutex
 	lastEventAt time.Time
 	idleAlerted bool
+
+	// The listener can disappear between NoteOn and NoteOff (including
+	// while a dev rebuild is starting). Remember notes delivered from this
+	// port so its teardown can release them before the audio engine stops.
+	heldMu sync.Mutex
+	held   map[noteKey]struct{}
 }
+
+type noteKey struct{ channel, note byte }
 
 // NewMultiplexer builds a Multiplexer with defaults filled in.
 func NewMultiplexer(logger *slog.Logger, cfg MultiplexerConfig) *Multiplexer {
@@ -371,7 +379,7 @@ func hasNonEmpty(names []string) bool {
 func (m *Multiplexer) open(ctx context.Context, name string) {
 	portCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	self := &muxPort{cancel: cancel, done: done, lastEventAt: time.Now()}
+	self := &muxPort{cancel: cancel, done: done, lastEventAt: time.Now(), held: make(map[noteKey]struct{})}
 
 	m.mu.Lock()
 	m.ports[name] = self
@@ -398,12 +406,30 @@ func (m *Multiplexer) open(ctx context.Context, name string) {
 		stampActivity()
 		if m.cfg.Sink != nil {
 			ev.SourcePort = name
+			self.heldMu.Lock()
+			key := noteKey{ev.Channel, ev.Note}
+			switch ev.Kind {
+			case NoteOn:
+				self.held[key] = struct{}{}
+			case NoteOff:
+				delete(self.held, key)
+			}
 			m.cfg.Sink(ev)
+			self.heldMu.Unlock()
 		}
 	}
 	go func() {
 		defer close(done)
 		err := m.cfg.Opener(portCtx, m.logger, name, wrappedSink, wrappedRawSink)
+
+		self.heldMu.Lock()
+		for key := range self.held {
+			m.cfg.Sink(Event{SourcePort: name, Kind: NoteOff, Channel: key.channel, Note: key.note})
+		}
+		if len(self.held) > 0 {
+			m.logger.Warn("midi listener closed with held notes; sent releases", "port", name, "count", len(self.held))
+		}
+		self.heldMu.Unlock()
 
 		m.mu.Lock()
 		if m.ports[name] == self {
