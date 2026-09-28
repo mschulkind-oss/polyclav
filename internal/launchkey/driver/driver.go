@@ -104,10 +104,12 @@ type Driver struct {
 	closed   chan struct{}
 	closeMu  sync.Mutex
 	isClosed bool
+	sendMu   sync.Mutex
 
-	activityMu  sync.Mutex
-	lastEventAt time.Time
-	sends       []SendRecord
+	activityMu       sync.Mutex
+	lastEventAt      time.Time
+	sends            []SendRecord
+	restoreDAWLayout bool
 }
 
 // SendRecord is one outbound message this Driver sent, kept in a capped
@@ -132,6 +134,12 @@ func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, 
 // Launchkey debug stream. The sink is called from the existing DAW listener;
 // no extra MIDI ports are opened.
 func OpenWithRaw(ctx context.Context, logger *slog.Logger, portMatch string, rawSink midi.RawSink) (*Driver, error) {
+	return OpenWithModeRestore(ctx, logger, portMatch, rawSink, true)
+}
+
+// OpenWithModeRestore is OpenWithRaw with a switch for restoring the DAW pad,
+// Plugin encoder, and Volume fader layouts after user mode changes.
+func OpenWithModeRestore(ctx context.Context, logger *slog.Logger, portMatch string, rawSink midi.RawSink, restore bool) (*Driver, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -175,13 +183,14 @@ func OpenWithRaw(ctx context.Context, logger *slog.Logger, portMatch string, raw
 	logger.Info("launchkey daw open", "in", in.String(), "out", out.String())
 
 	d := &Driver{
-		logger:      logger,
-		rtmidi:      drv,
-		in:          in,
-		out:         out,
-		events:      make(chan Event, 64),
-		closed:      make(chan struct{}),
-		lastEventAt: time.Now(),
+		logger:           logger,
+		rtmidi:           drv,
+		in:               in,
+		out:              out,
+		events:           make(chan Event, 64),
+		closed:           make(chan struct{}),
+		lastEventAt:      time.Now(),
+		restoreDAWLayout: restore,
 	}
 
 	if err := d.send([]byte{0x9F, noteDAWModeOn, 0x7F}); err != nil {
@@ -269,6 +278,7 @@ func (d *Driver) handleInbound(ctx context.Context, port string, msg []byte, raw
 	if rawSink != nil {
 		rawSink(midi.NewRawEvent("launchkey-daw", port, msg))
 	}
+	d.handleModeReport(msg)
 	ev, ok := parseMessage(msg)
 	if !ok {
 		return
@@ -318,6 +328,8 @@ func (d *Driver) shutdown() {
 }
 
 func (d *Driver) send(msg []byte) error {
+	d.sendMu.Lock()
+	defer d.sendMu.Unlock()
 	if d.out == nil {
 		return errors.New("driver: out port not open")
 	}

@@ -59,7 +59,7 @@ func (f *fakeRig) lister() ([]string, error) {
 }
 
 func (f *fakeRig) opener(_ context.Context, _ *slog.Logger, _ string,
-	_ func(driver.Event), _ midi.RawSink) (Connection, error) {
+	_ func(driver.Event), _ midi.RawSink, _ bool) (Connection, error) {
 	if f.openFailErr != nil {
 		return Connection{}, f.openFailErr
 	}
@@ -141,6 +141,25 @@ func stopReconciler(t *testing.T, cancel context.CancelFunc, done <-chan struct{
 	}
 }
 
+func TestReconcilerPassesModeRestorePreferenceToOpener(t *testing.T) {
+	for _, restore := range []bool{true, false} {
+		var got bool
+		r := NewReconciler(slog.New(slog.NewTextHandler(io.Discard, nil)), ReconcilerConfig{
+			RestoreDAWLayout: restore,
+			PortLister:       func() ([]string, error) { return []string{"Launchkey MK4 DAW"}, nil },
+			Opener: func(_ context.Context, _ *slog.Logger, _ string, _ func(driver.Event), _ midi.RawSink, enabled bool) (Connection, error) {
+				got = enabled
+				return Connection{Close: func() {}}, nil
+			},
+		})
+		r.tick(context.Background())
+		if r.State() != "active" || got != restore {
+			t.Fatalf("restore=%t: state=%s opener preference=%t", restore, r.State(), got)
+		}
+		r.disconnect()
+	}
+}
+
 func TestReconcilerPassesRawSinkToExistingDAWOpener(t *testing.T) {
 	seen := make(chan midi.RawEvent, 1)
 	r := NewReconciler(
@@ -149,7 +168,7 @@ func TestReconcilerPassesRawSinkToExistingDAWOpener(t *testing.T) {
 			PollInterval: 5 * time.Millisecond,
 			PortLister:   func() ([]string, error) { return []string{"Launchkey MK4 DAW"}, nil },
 			RawSink:      func(ev midi.RawEvent) { seen <- ev },
-			Opener: func(_ context.Context, _ *slog.Logger, _ string, _ func(driver.Event), rawSink midi.RawSink) (Connection, error) {
+			Opener: func(_ context.Context, _ *slog.Logger, _ string, _ func(driver.Event), rawSink midi.RawSink, _ bool) (Connection, error) {
 				if rawSink != nil {
 					rawSink(midi.NewRawEvent("launchkey-daw", "Launchkey MK4 DAW", []byte{0xA0, 0x60, 0x7F}))
 				}

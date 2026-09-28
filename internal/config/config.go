@@ -31,6 +31,7 @@ type Config struct {
 	Soundfont SoundfontConfig  `toml:"soundfont"`
 	Audio     AudioConfig      `toml:"audio"`
 	MIDI      MIDIConfig       `toml:"midi"`
+	Launchkey LaunchkeyConfig  `toml:"launchkey"`
 	OSC       OSCConfig        `toml:"osc"`
 	Web       WebConfig        `toml:"web"`
 	Patches   []PatchConfig    `toml:"patches"`
@@ -130,6 +131,12 @@ type VelocityConfig struct {
 	OutMin int     `toml:"out_min"`
 	OutMax int     `toml:"out_max"`
 	Points [][]int `toml:"points"`
+}
+
+// LaunchkeyConfig controls the DAW surface layout, not MIDI note input.
+// RestoreDAWLayout is true by default and may be disabled in [launchkey].
+type LaunchkeyConfig struct {
+	RestoreDAWLayout bool `toml:"restore_daw_layout"`
 }
 
 // DefaultWebListen is the default listen address for the embedded web UI.
@@ -235,6 +242,7 @@ func Defaults() *Config {
 	return &Config{
 		Soundfont: SoundfontConfig{Path: ""},
 		MIDI:      MIDIConfig{OrganExpression: OrganExpressionConfig{CC: 11, Min: 0, Max: 127}}, // no AllowDevices = no keyboard selected
+		Launchkey: LaunchkeyConfig{RestoreDAWLayout: true},
 		OSC: OSCConfig{
 			XR18: XR18Config{
 				// Empty host = OSC mixer control disabled by default. A

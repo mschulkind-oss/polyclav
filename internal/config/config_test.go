@@ -643,6 +643,15 @@ velocity_points = [[0, 0], [90, 80], [64, 90], [127, 127]]
 	}
 }
 
+func TestLaunchkeyModeRestoreDefaultsAndOptOut(t *testing.T) {
+	if !mustLoadTOML(t, "").Launchkey.RestoreDAWLayout {
+		t.Fatal("DAW layout restoration must default on")
+	}
+	if mustLoadTOML(t, "[launchkey]\nrestore_daw_layout = false\n").Launchkey.RestoreDAWLayout {
+		t.Fatal("explicit opt-out must disable DAW layout restoration")
+	}
+}
+
 // --- [web] -----------------------------------------------------------------
 
 func TestWebDefaults(t *testing.T) {

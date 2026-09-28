@@ -577,10 +577,11 @@ func main() {
 
 	supCfg := supervisor.Config{
 		Launchkey: launchkey.ReconcilerConfig{
-			PollInterval:  1 * time.Second,
-			IdleThreshold: idleWatchdogThreshold,
-			OnDAWEvent:    onDAWEvent,
-			RawSink:       publishRawMIDI,
+			PollInterval:     1 * time.Second,
+			IdleThreshold:    idleWatchdogThreshold,
+			RestoreDAWLayout: cfg.Launchkey.RestoreDAWLayout,
+			OnDAWEvent:       onDAWEvent,
+			RawSink:          publishRawMIDI,
 			// The callbacks run inside the supervisor's reconciler
 			// goroutines, which start strictly after `sup` is assigned —
 			// reading it here is race-free.

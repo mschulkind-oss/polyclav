@@ -102,6 +102,16 @@ inventory JSON locally and step through it without any MIDI permission. The
 visual view never transmits MIDI or starts audio. Controls that report no
 message cannot light up from MIDI alone.
 
+To verify [DAW layout restoration](./USER_GUIDE.md#launchkey--supported-daw-layout),
+start the daemon with the Launchkey connected. Select a different pad, encoder,
+or fader layout on the keyboard, one area at a time. Confirm the daemon warns
+with the reported and supported values, sends the corresponding channel-7
+CC 29/30/31 correction, and the keyboard visibly returns to DAW pads,
+Plugin encoders, or Volume faders. Repeat after unplugging and reconnecting.
+Then set `[launchkey].restore_daw_layout = false`, restart, and confirm the
+warning remains but no correction is sent. Restore the original setting and
+keyboard selection afterward. Do not overwrite the keyboard's Custom modes.
+
 ## How to report back
 
 In chat, list which checks behaved as expected and which didn't. For

@@ -30,6 +30,9 @@ const launchkeyMatch = "launchkey"
 // ReconcilerConfig configures the Launchkey hotplug reconciler.
 type ReconcilerConfig struct {
 	PollInterval time.Duration
+	// RestoreDAWLayout returns pad/encoder/fader areas to DAW/Plugin/Volume
+	// when their channel-7 mode report selects another layout.
+	RestoreDAWLayout bool
 
 	// IdleThreshold, if > 0, arms an idle watchdog: once the DAW
 	// connection has gone this long with no inbound traffic (see
@@ -56,7 +59,7 @@ type ReconcilerConfig struct {
 	// Opener opens the DAW control-surface connection. Tests inject a
 	// fake; production uses openReal.
 	Opener func(ctx context.Context, logger *slog.Logger, portMatch string,
-		dawSink func(driver.Event), rawSink midi.RawSink) (Connection, error)
+		dawSink func(driver.Event), rawSink midi.RawSink, restore bool) (Connection, error)
 }
 
 // Connection is one live joint MIDI+DAW connection to the keyboard.
@@ -189,7 +192,7 @@ func (r *Reconciler) tryOpen(ctx context.Context) {
 			r.cfg.OnDAWEvent(ev)
 		}
 	}
-	conn, err := r.cfg.Opener(ctx, r.logger, launchkeyMatch, dawSink, r.cfg.RawSink)
+	conn, err := r.cfg.Opener(ctx, r.logger, launchkeyMatch, dawSink, r.cfg.RawSink, r.cfg.RestoreDAWLayout)
 	if err != nil {
 		r.logger.Warn("launchkey open", "err", err)
 		return
@@ -376,14 +379,14 @@ func defaultPortLister() ([]string, error) {
 }
 
 func openReal(ctx context.Context, logger *slog.Logger, portMatch string,
-	dawSink func(driver.Event), rawSink midi.RawSink) (Connection, error) {
+	dawSink func(driver.Event), rawSink midi.RawSink, restore bool) (Connection, error) {
 
 	dawCtx, cancelDAW := context.WithCancel(ctx)
 	lost := make(chan struct{})
 	var lostOnce sync.Once
 	signalLost := func() { lostOnce.Do(func() { close(lost) }) }
 
-	d, err := driver.OpenWithRaw(dawCtx, logger, portMatch, rawSink)
+	d, err := driver.OpenWithModeRestore(dawCtx, logger, portMatch, rawSink, restore)
 	if err != nil {
 		cancelDAW()
 		return Connection{}, fmt.Errorf("daw open: %w", err)

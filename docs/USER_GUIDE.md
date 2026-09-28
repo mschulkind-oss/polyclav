@@ -341,6 +341,28 @@ its own fixed `"launchkey"` match, entirely independent of this config.
 `port_match` filter was removed once the allowlist subsumed it; a
 `port_match` line left in an old config is silently ignored.
 
+### `[launchkey]` — supported DAW layout
+
+Polyclav enters the Launchkey MK4's DAW mode on connection. The supported
+layout is **DAW pads, Plugin encoders, and Volume faders**. By default, if the
+keyboard reports a different selection for any of those three areas, Polyclav
+warns in the daemon log and sends a MIDI command to restore that area's
+supported layout. This happens again after a disconnect and reconnect.
+It does not change Custom mode programming stored on the keyboard.
+
+If you prefer to change those layouts yourself, disable automatic restoration:
+
+```toml
+[launchkey]
+restore_daw_layout = false
+```
+
+Polyclav still logs a warning when it receives an unsupported layout report,
+but does not send a correction. This option takes effect on restart; it does
+not disable the initial DAW-mode handshake. A successful MIDI send means the
+output port accepted the command, **not** that the keyboard applied it. Check
+its display and the debugger's raw mode reports when verifying on hardware.
+
 ### `[web]` — the browser dashboard
 
 Off by default. Enable it and (optionally) pick a listen address:

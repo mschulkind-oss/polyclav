@@ -107,6 +107,13 @@ latency_frames = 0
 # they're auto-detected whenever a Launchkey is plugged in, regardless.
 allow_devices = []
 
+# [launchkey]
+# Polyclav always enters DAW mode when it connects to the MK4. By default it
+# restores the supported pad/encoder/fader layout (DAW/Plugin/Volume) whenever
+# the keyboard reports a different selection. To keep manual mode changes,
+# uncomment this block; Polyclav still warns when a layout is unsupported.
+# restore_daw_layout = false
+
 # [midi.velocity]
 # Global velocity curve — reshapes incoming NoteOn velocity before it reaches
 # the synth. Omit the whole block for a straight-through linear response.
