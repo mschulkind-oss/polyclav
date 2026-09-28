@@ -80,27 +80,19 @@
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
-.lk-scroll-hint {
-  margin: 0 0 0.3rem;
+.lk-row-label {
+  margin: 0.35rem 0 0.2rem;
   color: #b6d5e6;
   font-size: 0.75rem;
 }
-.lk-panel .lk-dense-scroll {
-  max-width: 100%;
-  overflow-x: auto;
-  padding: 0 0 0.4rem;
-  border: 0;
-  background: transparent;
-}
-.lk-dense-scroll:focus-visible {
-  outline: 2px solid #9bd7ff;
-}
 .lk-body {
   display: grid;
-  grid-template-columns: minmax(120px, 0.75fr) minmax(300px, 1.85fr) minmax(230px, 1.15fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-areas:
-    "left mixer nav"
-    "enc enc pads";
+    "left nav"
+    "mixer mixer"
+    "enc enc"
+    "pads pads";
   gap: 0.55rem;
   align-items: stretch;
 }
@@ -159,16 +151,16 @@
 }
 .lk-faders {
   display: grid;
-  grid-template-columns: repeat(9, minmax(62px, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 0.3rem;
   align-items: end;
 }
 .lk-fader-buttons {
-  grid-template-columns: repeat(9, minmax(62px, 1fr));
-  margin-top: 0.35rem;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  margin-top: 0.2rem;
 }
 .lk-encoder-row {
-  grid-template-columns: repeat(8, minmax(58px, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
 }
 .lk-pad-matrix {
   display: grid;
@@ -176,7 +168,7 @@
 }
 .lk-pad-row {
   display: grid;
-  grid-template-columns: repeat(8, minmax(65px, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 0.25rem;
 }
 .lk-transport,
@@ -344,12 +336,6 @@
   .lk-key.black {
     height: 68px;
     padding-top: 43px;
-  }
-}
-@media (max-width: 980px) {
-  .lk-body {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "left nav" "mixer mixer" "enc enc" "pads pads";
   }
 }
 @media (max-width: 650px) {

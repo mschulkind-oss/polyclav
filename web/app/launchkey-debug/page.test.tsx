@@ -58,15 +58,14 @@ describe("Launchkey debugger", () => {
     const css = readFileSync("app/launchkey-debug/style.css", "utf8");
     expect(css).toMatch(/\.lk-debug\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
     expect(css).toMatch(
-      /\.lk-pad-row\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*minmax\(65px,\s*1fr\)\)/s,
+      /\.lk-pad-row\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*minmax\(0,\s*1fr\)\)/s,
     );
   });
 
-  it("keeps instructions legible and nested scroll regions on the dark surface", () => {
+  it("keeps instructions legible on the dark surface", () => {
     const css = readFileSync("app/launchkey-debug/style.css", "utf8");
     expect(css).toMatch(/\.lk-panel\s*\{[^}]*color:\s*#[0-9a-f]{6}/s);
-    expect(css).toMatch(/\.lk-panel\s+\.lk-dense-scroll\s*\{[^}]*background:\s*transparent/s);
-    expect(css).toMatch(/\.lk-panel\s+\.lk-dense-scroll\s*\{[^}]*border:\s*0/s);
+    expect(css).toMatch(/\.lk-body\s*\{[^}]*"mixer mixer"[^}]*"pads pads"/s);
   });
 
   afterEach(() => {
@@ -75,11 +74,11 @@ describe("Launchkey debugger", () => {
     FakeEventSource.instances = [];
   });
 
-  it("keeps dense rows readable with local scrolling and reflows the main surface", () => {
+  it("fits all pads and faders without sideways scrolling", () => {
     const css = readFileSync("app/launchkey-debug/style.css", "utf8");
     expect(css).not.toMatch(/min-width:\s*900px/);
-    expect(css).toMatch(/\.lk-dense-scroll\s*\{[^}]*overflow-x:\s*auto/s);
-    expect(css).toMatch(/@media \(max-width: 980px\)[\s\S]*?\.lk-body\s*\{/);
+    expect(css).toMatch(/\.lk-faders\s*\{[^}]*repeat\(9,\s*minmax\(0,\s*1fr\)\)/s);
+    expect(css).not.toMatch(/\.lk-dense-scroll/);
     expect(css).toMatch(/@media \(max-width: 650px\)[\s\S]*?\.lk-body\s*\{/);
     expect(css).not.toMatch(/text-overflow:\s*ellipsis/);
   });
@@ -94,6 +93,9 @@ describe("Launchkey debugger", () => {
     ).toBeInTheDocument();
     expect(container.querySelectorAll(".lk-key")).toHaveLength(61);
     expect(container.querySelectorAll(".lk-pad-row [data-control]")).toHaveLength(16);
+    expect(container.querySelectorAll(".lk-dense-scroll")).toHaveLength(0);
+    expect(screen.getByText(/^Top row · 1–8$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Bottom row · 1–8$/)).toBeInTheDocument();
     for (let i = 1; i <= 9; i++) {
       expect(container.querySelector(`[data-control="fader-${i}"]`)).toBeInTheDocument();
       expect(container.querySelector(`[data-control="fader-button-${i}"]`)).toBeInTheDocument();

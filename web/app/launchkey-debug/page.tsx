@@ -61,11 +61,11 @@ const shortLabel = (id: string) => {
   const numbered = /^(fader|fader-button|encoder|pad-(top|bottom))-(\d+)$/.exec(id);
   if (!numbered) return label(id);
   const prefix: Record<string, string> = {
-    fader: "F",
-    "fader-button": "FB",
+    fader: "",
+    "fader-button": "",
     encoder: "E",
-    "pad-top": "Top",
-    "pad-bottom": "Bottom",
+    "pad-top": "",
+    "pad-bottom": "",
   };
   return `${prefix[numbered[1]]}${numbered[3]}`;
 };
@@ -417,17 +417,12 @@ export default function LaunchkeyDebugPage() {
             </section>
 
             <section className="lk-block lk-mixer" aria-label="Mixer block">
-              <h2>9 faders</h2>
-              <p className="lk-scroll-hint">Scroll sideways for all nine faders and buttons →</p>
-              <section
-                className="lk-dense-scroll"
-                aria-label="Faders and buttons, scroll horizontally"
-              >
-                <div className="lk-faders">{faders.map((id) => tile(id, "fader"))}</div>
-                <div className="lk-fader-buttons">
-                  {faderButtons.map((id) => tile(id, "fader-button"))}
-                </div>
-              </section>
+              <h2>9 faders · 1–9</h2>
+              <div className="lk-faders">{faders.map((id) => tile(id, "fader"))}</div>
+              <p className="lk-row-label">Fader buttons · 1–9</p>
+              <div className="lk-fader-buttons">
+                {faderButtons.map((id) => tile(id, "fader-button"))}
+              </div>
             </section>
 
             <section className="lk-block lk-nav" aria-label="Display and navigation block">
@@ -439,9 +434,7 @@ export default function LaunchkeyDebugPage() {
 
             <section className="lk-block lk-encoders" aria-label="Encoder block">
               <h2>8 encoders · relative steps</h2>
-              <section className="lk-dense-scroll" aria-label="Encoders, scroll horizontally">
-                <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
-              </section>
+              <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
               <p className="hint">
                 Values are displayed as signed steps around center 64, not speed.
               </p>
@@ -449,16 +442,16 @@ export default function LaunchkeyDebugPage() {
 
             <section className="lk-block lk-pads" aria-label="Pads and transport block">
               <h2>16 pads + transport</h2>
-              <p className="lk-scroll-hint">Scroll sideways for all eight pads per row →</p>
-              <section className="lk-dense-scroll" aria-label="Pads, scroll horizontally">
-                <div className="lk-pad-matrix">
-                  {padRows.map((row) => (
-                    <div className="lk-pad-row" key={row}>
+              <div className="lk-pad-matrix">
+                {padRows.map((row) => (
+                  <div key={row}>
+                    <p className="lk-row-label">{row === "top" ? "Top row" : "Bottom row"} · 1–8</p>
+                    <div className="lk-pad-row">
                       {Array.from({ length: 8 }, (_, i) => tile(`pad-${row}-${i + 1}`, "pad"))}
                     </div>
-                  ))}
-                </div>
-              </section>
+                  </div>
+                ))}
+              </div>
               <div className="lk-transport">{transport.map((id) => tile(id))}</div>
               <div className="lk-daw-commands">{dawCommands.map((id) => tile(id))}</div>
             </section>
