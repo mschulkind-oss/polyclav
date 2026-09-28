@@ -52,9 +52,79 @@ func TestDrawbarButton1ReleaseIgnored(t *testing.T) {
 	}
 }
 
+func TestDrawbarButton2CyclesB3ColorSchemes(t *testing.T) {
+	leds := newOrganDrawbarLEDs()
+	if got := leds.B3Scheme(); got != B3ColorSchemeClassic {
+		t.Fatalf("initial B3 scheme = %v, want %v", got, B3ColorSchemeClassic)
+	}
+
+	expected := []struct {
+		scheme B3ColorScheme
+		line1  string
+		line2  string
+	}{
+		{B3ColorSchemeNeon, "B3 SCHEME", "2: NEON"},
+		{B3ColorSchemeOcean, "B3 SCHEME", "3: OCEAN"},
+		{B3ColorSchemeTriad, "B3 SCHEME", "4: TRIAD"},
+		{B3ColorSchemeCandy, "B3 SCHEME", "5: CANDY"},
+		{B3ColorSchemeClassic, "B3 SCHEME", "1: CLASSIC"},
+	}
+
+	for i, exp := range expected {
+		handled, l1, l2 := leds.HandleButton(2, true)
+		if !handled {
+			t.Fatalf("step %d: HandleButton(2, true) was not handled", i)
+		}
+		if leds.B3Scheme() != exp.scheme {
+			t.Fatalf("step %d: scheme = %v, want %v", i, leds.B3Scheme(), exp.scheme)
+		}
+		if l1 != exp.line1 || l2 != exp.line2 {
+			t.Fatalf("step %d: display = (%q, %q), want (%q, %q)", i, l1, l2, exp.line1, exp.line2)
+		}
+		if leds.Mode() != DrawbarColorModeB3Standard {
+			t.Fatalf("step %d: mode should remain B3Standard: %v", i, leds.Mode())
+		}
+		if leds.CurrentColors() != exp.scheme.Colors() {
+			t.Fatalf("step %d: CurrentColors() != scheme.Colors()", i)
+		}
+	}
+}
+
+func TestDrawbarButton2SwitchesToB3Mode(t *testing.T) {
+	leds := newOrganDrawbarLEDs()
+	leds.SetMode(DrawbarColorModeRegisters)
+	handled, l1, l2 := leds.HandleButton(2, true)
+	if !handled {
+		t.Fatal("button 2 should be handled")
+	}
+	if leds.Mode() != DrawbarColorModeB3Standard {
+		t.Fatalf("mode = %v, want B3Standard", leds.Mode())
+	}
+	if leds.B3Scheme() != B3ColorSchemeNeon {
+		t.Fatalf("scheme = %v, want Neon", leds.B3Scheme())
+	}
+	if l1 != "B3 SCHEME" || l2 != "2: NEON" {
+		t.Fatalf("display = (%q, %q)", l1, l2)
+	}
+}
+
+func TestDrawbarButton2ReleaseIgnored(t *testing.T) {
+	leds := newOrganDrawbarLEDs()
+	handled, l1, l2 := leds.HandleButton(2, false)
+	if !handled {
+		t.Fatal("button 2 release should be recognized as handled")
+	}
+	if l1 != "" || l2 != "" {
+		t.Fatalf("release should not produce display text: (%q, %q)", l1, l2)
+	}
+	if leds.B3Scheme() != B3ColorSchemeClassic {
+		t.Fatalf("scheme changed on release: %v", leds.B3Scheme())
+	}
+}
+
 func TestOtherButtonsNotHandledByDrawbarLEDs(t *testing.T) {
 	leds := newOrganDrawbarLEDs()
-	for btn := 2; btn <= 9; btn++ {
+	for btn := 3; btn <= 9; btn++ {
 		handled, _, _ := leds.HandleButton(btn, true)
 		if handled {
 			t.Fatalf("button %d should not be handled by drawbarLEDs", btn)
@@ -117,6 +187,75 @@ func TestDrawbarColorModeColors(t *testing.T) {
 	}
 	if perf != wantPerf {
 		t.Fatalf("Performance colors = %v, want %v", perf, wantPerf)
+	}
+}
+
+func TestB3ColorSchemes(t *testing.T) {
+	tests := []struct {
+		scheme B3ColorScheme
+		name   string
+		colors [9]components.Color
+	}{
+		{
+			scheme: B3ColorSchemeClassic,
+			name:   "CLASSIC",
+			colors: [9]components.Color{
+				components.ColorBrown, components.ColorBrown,
+				components.ColorBrightWhite, components.ColorBrightWhite, components.ColorVibrantRed,
+				components.ColorBrightWhite, components.ColorVibrantRed, components.ColorVibrantRed,
+				components.ColorBrightWhite,
+			},
+		},
+		{
+			scheme: B3ColorSchemeNeon,
+			name:   "NEON",
+			colors: [9]components.Color{
+				components.ColorVibrantOrange, components.ColorVibrantOrange,
+				components.ColorVibrantCyan, components.ColorVibrantCyan, components.ColorVibrantPink,
+				components.ColorVibrantCyan, components.ColorVibrantPink, components.ColorVibrantPink,
+				components.ColorVibrantCyan,
+			},
+		},
+		{
+			scheme: B3ColorSchemeOcean,
+			name:   "OCEAN",
+			colors: [9]components.Color{
+				components.ColorVibrantYellow, components.ColorVibrantYellow,
+				components.ColorBrightWhite, components.ColorBrightWhite, components.ColorVibrantBlue,
+				components.ColorBrightWhite, components.ColorVibrantBlue, components.ColorVibrantBlue,
+				components.ColorBrightWhite,
+			},
+		},
+		{
+			scheme: B3ColorSchemeTriad,
+			name:   "TRIAD",
+			colors: [9]components.Color{
+				components.ColorVibrantYellow, components.ColorVibrantYellow,
+				components.ColorVibrantCyan, components.ColorVibrantCyan, components.ColorVibrantRed,
+				components.ColorVibrantCyan, components.ColorVibrantRed, components.ColorVibrantRed,
+				components.ColorVibrantCyan,
+			},
+		},
+		{
+			scheme: B3ColorSchemeCandy,
+			name:   "CANDY",
+			colors: [9]components.Color{
+				components.ColorVibrantPink, components.ColorVibrantPink,
+				components.ColorBrightWhite, components.ColorBrightWhite, components.ColorVibrantCyan,
+				components.ColorBrightWhite, components.ColorVibrantCyan, components.ColorVibrantCyan,
+				components.ColorBrightWhite,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.scheme.Name() != tc.name {
+				t.Fatalf("name = %q, want %q", tc.scheme.Name(), tc.name)
+			}
+			if tc.scheme.Colors() != tc.colors {
+				t.Fatalf("colors = %v, want %v", tc.scheme.Colors(), tc.colors)
+			}
+		})
 	}
 }
 
@@ -213,6 +352,21 @@ func TestOrganDrawbarSync(t *testing.T) {
 		t.Errorf("repaint button 9 = %v, want ColorGreen", setter.colors[8])
 	}
 
+	// Cycle B3 scheme: switches back to B3 standard with Neon scheme.
+	leds.CycleB3Scheme()
+	if err := sync.Sync(); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	wantNeon := B3ColorSchemeNeon.Colors()
+	for i := 0; i < 8; i++ {
+		if setter.colors[i] != wantNeon[i] {
+			t.Errorf("neon button %d = %v, want %v", i+1, setter.colors[i], wantNeon[i])
+		}
+	}
+	if setter.colors[8] != components.ColorGreen {
+		t.Errorf("button 9 should stay ColorGreen after scheme cycle: %v", setter.colors[8])
+	}
+
 	// Switch away from organ: should turn off buttons.
 	isOrgan = false
 	if err := sync.Sync(); err != nil {
@@ -275,6 +429,38 @@ func TestDispatchFaderButton(t *testing.T) {
 	}
 	if leds.Mode() != DrawbarColorModeRegisters {
 		t.Fatalf("mode changed when not an organ: %v", leds.Mode())
+	}
+
+	// 2b. Button 2 on organ: cycles B3 color scheme, calls sync and screen.
+	isOrgan = true
+	ev2 := driver.FaderButtonEvent{Index: 2, Pressed: true}
+	if !dispatchFaderButton(ev2, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 2 on organ should be handled")
+	}
+	if leds.Mode() != DrawbarColorModeB3Standard {
+		t.Fatalf("mode = %v, want B3Standard", leds.Mode())
+	}
+	if leds.B3Scheme() != B3ColorSchemeNeon {
+		t.Fatalf("scheme = %v, want Neon", leds.B3Scheme())
+	}
+	if screen.line1 != "B3 SCHEME" || screen.line2 != "2: NEON" {
+		t.Fatalf("screen = (%q, %q), want (B3 SCHEME, 2: NEON)", screen.line1, screen.line2)
+	}
+	wantNeon := B3ColorSchemeNeon.Colors()
+	for i := 0; i < 8; i++ {
+		if setter.colors[i] != wantNeon[i] {
+			t.Errorf("button %d = %v, want %v", i+1, setter.colors[i], wantNeon[i])
+		}
+	}
+
+	// 2c. Button 2 when not an organ: should return false, no scheme change.
+	isOrgan = false
+	screen.line1, screen.line2 = "", ""
+	if dispatchFaderButton(ev2, isOrgan, leds, sync, leslie, screen) {
+		t.Fatal("button 2 when not an organ should not be handled")
+	}
+	if leds.B3Scheme() != B3ColorSchemeNeon {
+		t.Fatalf("scheme changed when not an organ: %v", leds.B3Scheme())
 	}
 
 	// 3. Button 9 on organ: toggles Leslie, updates screen, and syncs button 9 LED to ColorGreen.

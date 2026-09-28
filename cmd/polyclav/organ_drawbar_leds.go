@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/mschulkind-oss/polyclav/internal/launchkey"
@@ -14,10 +15,7 @@ type DrawbarColorMode int
 
 const (
 	// DrawbarColorModeB3Standard matches the physical drawbar handles of a Hammond B3,
-	// using red for the black mutation drawbars so every button stays illuminated
-	// with high contrast against white and brown on hardware LEDs:
-	// 16' (Brown), 5⅓' (Brown), 8' (White), 4' (White), 2⅔' (Red),
-	// 2' (White), 1⅗' (Red), 1⅓' (Red), 1' (White).
+	// offering 5 vibrant selectable color schemes (cycled by button 2).
 	DrawbarColorModeB3Standard DrawbarColorMode = iota
 
 	// DrawbarColorModeRegisters groups drawbars into three 3-bar frequency registers:
@@ -41,6 +39,119 @@ const (
 	numDrawbarColorModes
 )
 
+// B3ColorScheme defines the color palette for the default B3 drawbar mode.
+type B3ColorScheme int
+
+const (
+	// B3ColorSchemeClassic uses traditional brown for 16'/5⅓', white for octaves,
+	// and red for black mutation drawbars.
+	B3ColorSchemeClassic B3ColorScheme = iota
+
+	// B3ColorSchemeNeon uses vibrant orange for sub-octaves, cyan for octaves,
+	// and pink for mutations.
+	B3ColorSchemeNeon
+
+	// B3ColorSchemeOcean uses bright yellow for sub-octaves, white for octaves,
+	// and blue for mutations.
+	B3ColorSchemeOcean
+
+	// B3ColorSchemeTriad uses bright yellow for sub-octaves, cyan for octaves,
+	// and red for mutations.
+	B3ColorSchemeTriad
+
+	// B3ColorSchemeCandy uses hot pink for sub-octaves, white for octaves,
+	// and cyan for mutations.
+	B3ColorSchemeCandy
+
+	numB3ColorSchemes
+)
+
+// Name returns the display name of the B3 color scheme.
+func (s B3ColorScheme) Name() string {
+	switch s {
+	case B3ColorSchemeClassic:
+		return "CLASSIC"
+	case B3ColorSchemeNeon:
+		return "NEON"
+	case B3ColorSchemeOcean:
+		return "OCEAN"
+	case B3ColorSchemeTriad:
+		return "TRIAD"
+	case B3ColorSchemeCandy:
+		return "CANDY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Colors returns the 9 button palette colors for this B3 color scheme.
+func (s B3ColorScheme) Colors() [9]components.Color {
+	switch s {
+	case B3ColorSchemeClassic:
+		return [9]components.Color{
+			components.ColorBrown,       // 16'
+			components.ColorBrown,       // 5⅓'
+			components.ColorBrightWhite, // 8'
+			components.ColorBrightWhite, // 4'
+			components.ColorVibrantRed,  // 2⅔' (mutation)
+			components.ColorBrightWhite, // 2'
+			components.ColorVibrantRed,  // 1⅗' (mutation)
+			components.ColorVibrantRed,  // 1⅓' (mutation)
+			components.ColorBrightWhite, // 1'
+		}
+	case B3ColorSchemeNeon:
+		return [9]components.Color{
+			components.ColorVibrantOrange, // 16'
+			components.ColorVibrantOrange, // 5⅓'
+			components.ColorVibrantCyan,   // 8'
+			components.ColorVibrantCyan,   // 4'
+			components.ColorVibrantPink,   // 2⅔' (mutation)
+			components.ColorVibrantCyan,   // 2'
+			components.ColorVibrantPink,   // 1⅗' (mutation)
+			components.ColorVibrantPink,   // 1⅓' (mutation)
+			components.ColorVibrantCyan,   // 1'
+		}
+	case B3ColorSchemeOcean:
+		return [9]components.Color{
+			components.ColorVibrantYellow, // 16'
+			components.ColorVibrantYellow, // 5⅓'
+			components.ColorBrightWhite,   // 8'
+			components.ColorBrightWhite,   // 4'
+			components.ColorVibrantBlue,   // 2⅔' (mutation)
+			components.ColorBrightWhite,   // 2'
+			components.ColorVibrantBlue,   // 1⅗' (mutation)
+			components.ColorVibrantBlue,   // 1⅓' (mutation)
+			components.ColorBrightWhite,   // 1'
+		}
+	case B3ColorSchemeTriad:
+		return [9]components.Color{
+			components.ColorVibrantYellow, // 16'
+			components.ColorVibrantYellow, // 5⅓'
+			components.ColorVibrantCyan,   // 8'
+			components.ColorVibrantCyan,   // 4'
+			components.ColorVibrantRed,    // 2⅔' (mutation)
+			components.ColorVibrantCyan,   // 2'
+			components.ColorVibrantRed,    // 1⅗' (mutation)
+			components.ColorVibrantRed,    // 1⅓' (mutation)
+			components.ColorVibrantCyan,   // 1'
+		}
+	case B3ColorSchemeCandy:
+		return [9]components.Color{
+			components.ColorVibrantPink, // 16'
+			components.ColorVibrantPink, // 5⅓'
+			components.ColorBrightWhite, // 8'
+			components.ColorBrightWhite, // 4'
+			components.ColorVibrantCyan, // 2⅔' (mutation)
+			components.ColorBrightWhite, // 2'
+			components.ColorVibrantCyan, // 1⅗' (mutation)
+			components.ColorVibrantCyan, // 1⅓' (mutation)
+			components.ColorBrightWhite, // 1'
+		}
+	default:
+		return B3ColorSchemeClassic.Colors()
+	}
+}
+
 // DisplayText returns the 2-line HUD message for the mode.
 func (m DrawbarColorMode) DisplayText() (string, string) {
 	switch m {
@@ -61,17 +172,7 @@ func (m DrawbarColorMode) DisplayText() (string, string) {
 func (m DrawbarColorMode) Colors() [9]components.Color {
 	switch m {
 	case DrawbarColorModeB3Standard:
-		return [9]components.Color{
-			components.ColorBrown,       // 16'
-			components.ColorBrown,       // 5⅓'
-			components.ColorBrightWhite, // 8'
-			components.ColorBrightWhite, // 4'
-			components.ColorVibrantRed,  // 2⅔' (black mutation)
-			components.ColorBrightWhite, // 2'
-			components.ColorVibrantRed,  // 1⅗' (black mutation)
-			components.ColorVibrantRed,  // 1⅓' (black mutation)
-			components.ColorBrightWhite, // 1'
-		}
+		return B3ColorSchemeClassic.Colors()
 	case DrawbarColorModeRegisters:
 		return [9]components.Color{
 			components.ColorVibrantRed,  // 16' (Low)
@@ -115,13 +216,15 @@ func (m DrawbarColorMode) Colors() [9]components.Color {
 
 // organDrawbarLEDs manages the active drawbar color mode and button events.
 type organDrawbarLEDs struct {
-	mu   sync.Mutex
-	mode DrawbarColorMode
+	mu       sync.Mutex
+	mode     DrawbarColorMode
+	b3Scheme B3ColorScheme
 }
 
 func newOrganDrawbarLEDs() *organDrawbarLEDs {
 	return &organDrawbarLEDs{
-		mode: DrawbarColorModeB3Standard,
+		mode:     DrawbarColorModeB3Standard,
+		b3Scheme: B3ColorSchemeClassic,
 	}
 }
 
@@ -145,6 +248,26 @@ func (o *organDrawbarLEDs) SetMode(m DrawbarColorMode) {
 	}
 }
 
+func (o *organDrawbarLEDs) B3Scheme() B3ColorScheme {
+	if o == nil {
+		return B3ColorSchemeClassic
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.b3Scheme
+}
+
+func (o *organDrawbarLEDs) SetB3Scheme(s B3ColorScheme) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if s >= 0 && s < numB3ColorSchemes {
+		o.b3Scheme = s
+	}
+}
+
 // Cycle advances to the next drawbar coloring mode and returns the new mode
 // along with its screen display lines.
 func (o *organDrawbarLEDs) Cycle() (DrawbarColorMode, string, string) {
@@ -155,29 +278,62 @@ func (o *organDrawbarLEDs) Cycle() (DrawbarColorMode, string, string) {
 	defer o.mu.Unlock()
 	o.mode = (o.mode + 1) % numDrawbarColorModes
 	l1, l2 := o.mode.DisplayText()
+	if o.mode == DrawbarColorModeB3Standard && o.b3Scheme != B3ColorSchemeClassic {
+		l2 = "B3: " + o.b3Scheme.Name()
+	}
 	return o.mode, l1, l2
+}
+
+// CycleB3Scheme advances to the next B3 color scheme, activates B3Standard mode,
+// and returns the active scheme with its screen display lines.
+func (o *organDrawbarLEDs) CycleB3Scheme() (B3ColorScheme, string, string) {
+	if o == nil {
+		return B3ColorSchemeClassic, "B3 SCHEME", "1: CLASSIC"
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.mode = DrawbarColorModeB3Standard
+	o.b3Scheme = (o.b3Scheme + 1) % numB3ColorSchemes
+	line1 := "B3 SCHEME"
+	line2 := fmt.Sprintf("%d: %s", int(o.b3Scheme)+1, o.b3Scheme.Name())
+	return o.b3Scheme, line1, line2
 }
 
 // CurrentColors returns the 9 button colors for the active mode.
 func (o *organDrawbarLEDs) CurrentColors() [9]components.Color {
 	if o == nil {
-		return DrawbarColorModeB3Standard.Colors()
+		return B3ColorSchemeClassic.Colors()
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.mode == DrawbarColorModeB3Standard {
+		return o.b3Scheme.Colors()
+	}
 	return o.mode.Colors()
 }
 
-// HandleButton handles a fader button press. Button 1 cycles the coloring mode.
+// HandleButton handles a fader button press:
+// - Button 1 cycles the drawbar coloring mode (B3, Registers, Harmonics, Performance).
+// - Button 2 cycles through the 5 color schemes for the default B3 drawbars.
 func (o *organDrawbarLEDs) HandleButton(index int, pressed bool) (handled bool, line1, line2 string) {
-	if o == nil || index != 1 {
+	if o == nil {
 		return false, "", ""
 	}
-	if !pressed {
-		return true, "", ""
+	if index == 1 {
+		if !pressed {
+			return true, "", ""
+		}
+		_, line1, line2 = o.Cycle()
+		return true, line1, line2
 	}
-	_, line1, line2 = o.Cycle()
-	return true, line1, line2
+	if index == 2 {
+		if !pressed {
+			return true, "", ""
+		}
+		_, line1, line2 = o.CycleB3Scheme()
+		return true, line1, line2
+	}
+	return false, "", ""
 }
 
 type faderButtonColorSetter interface {
@@ -210,6 +366,7 @@ type organDrawbarSync struct {
 	mu              sync.Mutex
 	lastOrgan       bool
 	lastMode        DrawbarColorMode
+	lastB3Scheme    B3ColorScheme
 	lastLeslieOn    bool
 	lastInitialized bool
 }
@@ -245,8 +402,9 @@ func (s *organDrawbarSync) Sync() error {
 
 	organ := s.isOrgan != nil && s.isOrgan()
 	mode := s.leds.Mode()
+	b3Scheme := s.leds.B3Scheme()
 	leslieOn := s.isLeslieOn != nil && s.isLeslieOn()
-	if s.lastInitialized && s.lastOrgan == organ && (!organ || (s.lastMode == mode && s.lastLeslieOn == leslieOn)) {
+	if s.lastInitialized && s.lastOrgan == organ && (!organ || (s.lastMode == mode && s.lastB3Scheme == b3Scheme && s.lastLeslieOn == leslieOn)) {
 		return nil
 	}
 
@@ -274,6 +432,7 @@ func (s *organDrawbarSync) Sync() error {
 
 	s.lastOrgan = organ
 	s.lastMode = mode
+	s.lastB3Scheme = b3Scheme
 	s.lastLeslieOn = leslieOn
 	s.lastInitialized = true
 	return nil
@@ -286,10 +445,11 @@ type leslieButtonHandler interface {
 
 // dispatchFaderButton routes DAW-mode fader buttons on an organ patch:
 // - Button 1 cycles the drawbar button coloring mode (when organ is active).
+// - Button 2 cycles the 5 color schemes for default B3 drawbars (when organ is active).
 // - Button 9 toggles the Leslie rotary between Stop and Fast and syncs the status LED.
 // Other buttons are left unhandled.
 func dispatchFaderButton(e driver.FaderButtonEvent, isOrgan bool, drawbarLEDs *organDrawbarLEDs, drawbarSync *organDrawbarSync, leslie leslieButtonHandler, screen organScreen) bool {
-	if e.Index == 1 && isOrgan {
+	if (e.Index == 1 || e.Index == 2) && isOrgan {
 		if drawbarLEDs != nil {
 			handled, l1, l2 := drawbarLEDs.HandleButton(e.Index, e.Pressed)
 			if handled && e.Pressed {
