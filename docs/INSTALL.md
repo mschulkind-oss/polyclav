@@ -210,9 +210,19 @@ running overmind daemon first, since only one Polyclav can hold the audio and
 MIDI devices at once. The logging launcher (`scripts/dev_log.py`) copies
 Hivemind, Air, build, and daemon output to a separate, timestamped file under
 `.dev-logs/` in the workspace while still printing it in the terminal. It
-also records changes to Air and daemon process identities (PID, parent PID,
-process group, session, and Linux start time) and a final snapshot after
-Hivemind exits. It does not start a detached session or manage the daemon.
+samples `/proc` every 100 ms and logs timestamped first sightings,
+disappearances, identity/parent changes, and overlapping Air and daemon
+identities (PID, parent PID, process group, session, and Linux start ticks).
+It follows Hivemind's child ancestry and previously seen identities to separate
+this run's processes from unrelated matches; the final survivor snapshot labels
+both groups. Unchanged samples do not produce log entries. Launcher-received
+SIGINT/SIGTERM, Air build/reload output, and Hivemind's directly waited-for
+exit status are logged separately from process observations. A signal reported
+before a disappearance does **not** prove delivery or causation. Polling cannot
+see short-lived processes between samples, exact exit times, exit codes or
+terminating signals of Air/daemon children, or Air's actual signal calls.
+Processes already orphaned before their first sighting may be listed as
+unrelated. The launcher does not start a detached session or manage the daemon.
 The directory is ignored by Git and excluded from Air's source watcher; logs
 remain until you remove them. Run `ls -lt .dev-logs/` to find the latest log.
 These logs may contain application output and local paths, so review them
