@@ -298,7 +298,7 @@ for (const [width, height] of [
       }
       assert.match(snapshots[1].values.find((v) => v.id === "pad-layout").text, /Custom 1/);
       assert.match(snapshots[2].values.find((v) => v.id === "encoder-1").text, /step \+2/);
-      assert.equal(snapshots[2].encoderAngle, "rotate(30deg)");
+      assert.equal(snapshots[2].encoderAngle, "rotate(8deg)");
       assert.equal(snapshots[3].padPressure, null, "velocity is not pressure");
       assert.match(snapshots[4].values.find((v) => v.id === "pad-top-1").text, /pressure 127/);
       assert.equal(snapshots[4].padPressure, "127");

@@ -88,7 +88,8 @@ export default function LaunchkeyDebugPage() {
   const [held, setHeld] = useState<Record<string, boolean>>({});
   const [pressure, setPressure] = useState<Record<string, number>>({});
   // Encoders report relative steps, not an absolute shaft position. This
-  // marker accumulates observed motion and starts at zero for each source.
+  // marker accumulates observed motion at 4° per step and starts at zero
+  // for each source; its angle is not a physical knob position.
   const [encoderAngles, setEncoderAngles] = useState<Record<string, number>>({});
   const [report, setReport] = useState<DebugEvent[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -116,7 +117,7 @@ export default function LaunchkeyDebugPage() {
       if (control.startsWith("encoder-") && event.kind === "cc") {
         setEncoderAngles((prev) => ({
           ...prev,
-          [control]: ((((prev[control] ?? 0) + (event.value - 64) * 15) % 360) + 360) % 360,
+          [control]: ((((prev[control] ?? 0) + (event.value - 64) * 4) % 360) + 360) % 360,
         }));
       }
       if (

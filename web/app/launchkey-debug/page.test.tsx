@@ -267,9 +267,9 @@ describe("Launchkey debugger", () => {
     const daw = handlers.get("Launchkey MK4 61 DAW In");
     const marker = () => container.querySelector('[data-control="encoder-1"] .lk-encoder-marker');
     await act(async () => daw?.({ data: Uint8Array.of(0xbf, 85, 66), timeStamp: 0 }));
-    expect(marker()).toHaveStyle({ transform: "rotate(30deg)" });
+    expect(marker()).toHaveStyle({ transform: "rotate(8deg)" });
     await act(async () => daw?.({ data: Uint8Array.of(0xbf, 85, 63), timeStamp: 0 }));
-    expect(marker()).toHaveStyle({ transform: "rotate(15deg)" });
+    expect(marker()).toHaveStyle({ transform: "rotate(4deg)" });
     expect(container.querySelector('[data-control="encoder-1"]')).toHaveTextContent("step -1");
     fireEvent.click(screen.getByRole("button", { name: "offline report" }));
     expect(marker()).not.toBeInTheDocument();
