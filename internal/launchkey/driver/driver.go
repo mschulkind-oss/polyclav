@@ -420,8 +420,13 @@ func parseMessage(msg []byte) (Event, bool) {
 		cc := msg[1]
 		val := msg[2]
 		// DAW-mode fader buttons report on channel 1 on the MK4 61.
-		if channel == 0 && cc >= ccFaderButtonBase && cc < ccFaderButtonBase+9 {
-			return FaderButtonEvent{Index: int(cc-ccFaderButtonBase) + 1, Pressed: val >= 64}, true
+		if channel == 0 {
+			if cc >= ccFaderButtonBase && cc < ccFaderButtonBase+9 {
+				return FaderButtonEvent{Index: int(cc-ccFaderButtonBase) + 1, Pressed: val >= 64}, true
+			}
+			if button, ok := transportFromDAWCC(cc); ok {
+				return TransportEvent{Button: button, Pressed: val >= 64}, true
+			}
 		}
 		if channel != 0x0F {
 			return nil, false
@@ -472,6 +477,33 @@ func parseMessage(msg []byte) (Event, bool) {
 		return nil, false
 	}
 	return nil, false
+}
+
+// transportFromDAWCC decodes the MK4 61's captured DAW-port, channel-1
+// button reports. These are CC messages, not the channel-16 notes also
+// supported by transportFromNote; notably Track Left/Right have different
+// numbers in the two message forms.
+func transportFromDAWCC(cc byte) (TransportButton, bool) {
+	switch cc {
+	case 115:
+		return TransportPlay, true
+	case 116:
+		return TransportStop, true
+	case 117:
+		return TransportRecord, true
+	case 118:
+		return TransportLoop, true
+	case 103:
+		return TransportTrackLeft, true
+	case 102:
+		return TransportTrackRight, true
+	case 106:
+		return TransportSceneUp, true
+	case 107:
+		return TransportSceneDown, true
+	default:
+		return 0, false
+	}
 }
 
 func transportFromNote(note byte) (TransportButton, bool) {

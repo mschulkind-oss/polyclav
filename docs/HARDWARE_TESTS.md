@@ -58,8 +58,8 @@ handles them correctly yet:
 | 8 endless encoders | Five synth/chain pages | Check relative CC85–92 on channel 16. |
 | 9 faders | Unmapped by default; optional mixer OSC or opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
 | 9 fader buttons | On organ patches: buttons 1–8 illuminate with drawbar colors (B3 standard uses brown for 16′/5⅓′, white for 8′/4′/2′, and red for black mutation drawbars 2⅔′/1⅗′/1⅓′); button 1 cycles between 4 drawbar coloring modes; button 2 cycles 5 color schemes for default B3 drawbars; button 9 toggles Leslie Stop/Fast with dedicated Green status LED when running and Off when stopped. On non-organ patches, lights are off. | Observed CC37–45 on DAW channel **1**, press 127/release 0. Verify button 1 cycling, button 2 scheme cycling, button 9 rotary toggle, and B3 color palette emulation on hardware; printed shifted names are menu choices, not extra physical buttons. |
-| Pad-bank ↑/↓, encoder ↑/↓, Track ←/→ | Knob-page navigation and patch-bank navigation are intended; the debugger shows observed DAW input | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (encoder), CC103/102 (Track). Shift+Track Left uses channel-1 CC109; Shift+Track Right uses channel-1 CC108. Each sends 127 on press and 0 on release. Shift itself reports channel-7 CC63. |
-| Play, Stop, Record, Loop, Shift | Play is intended to toggle audition; decoder expects channel-16 note messages | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. The MK4 has no Rewind/Fast-forward controls. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. |
+| Pad-bank ↑/↓, encoder ↑/↓, Track ←/→ | Pad-bank CC106/107 and Track CC103/102 are decoded for knob-page and patch-bank navigation; the debugger also shows encoder-bank input | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (encoder), CC103/102 (Track). Shift+Track Left uses channel-1 CC109; Shift+Track Right uses channel-1 CC108. Each sends 127 on press and 0 on release. Shift itself reports channel-7 CC63. Verify host navigation on hardware. |
+| Play, Stop, Record, Loop, Shift | DAW channel-1 CC115–118 decode as transport events; Play is intended to toggle audition | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. The MK4 has no Rewind/Fast-forward controls. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. Verify Play starts/stops audition on hardware; the other transport actions remain inert. |
 | Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Octave presses changed subsequent key note numbers but sent no distinct button event. Scale/Arp sent channel-7 CC74/73; Chord Map reported pad layout CC29=14. Fixed Chord sent no distinct button event in the capture. Test modes before assigning host actions. |
 
 ### What the published protocol can and cannot tell us
@@ -83,11 +83,12 @@ specification's Volume-fader diagram (p. 13) places button CC37–45 on channel
 DAW port on **channel 1**. The driver accepts both channels. The printed
 shifted labels are *choices within a mode menu*, not separate buttons; don't
 assign a physical control from a prompt name without observing the message.
-The capture also shows channel-1 CC115/116 for Play/Stop, but the current
-`parseMessage` transport handler recognizes channel-16 **note** messages,
-not those captured CC events. A published number and a lit debugger tile do
-not establish that the intended host action works; transport still needs a
-separate driver test and physical check.
+The capture also shows channel-1 CC115/116 for Play/Stop. The driver now
+parses these and the other captured transport and navigation CCs alongside
+its existing channel-16 note support. The regression test verifies the
+captured bytes reach the expected host event; a published number, passing
+parser test, and lit debugger tile do not establish that the intended action
+works on physical hardware. Check Play and bank/page navigation on the device.
 
 For a different keyboard **without the device at hand**:
 

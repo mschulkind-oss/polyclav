@@ -176,6 +176,31 @@ func TestParseTransport(t *testing.T) {
 	}
 }
 
+func TestParseCapturedDAWTransportCC(t *testing.T) {
+	// DAW-port messages captured from the MK4 61 in DAW mode. The previous
+	// parser only handled channel-16 notes, leaving these controls inert.
+	tests := []struct {
+		name   string
+		cc     byte
+		button TransportButton
+	}{
+		{"Play", 115, TransportPlay},
+		{"Stop", 116, TransportStop},
+		{"Record", 117, TransportRecord},
+		{"Loop", 118, TransportLoop},
+		{"TrackLeft", 103, TransportTrackLeft},
+		{"TrackRight", 102, TransportTrackRight},
+		{"PadBankUp", 106, TransportSceneUp},
+		{"PadBankDown", 107, TransportSceneDown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertParseEvent(t, []byte{0xB0, tt.cc, 127}, TransportEvent{Button: tt.button, Pressed: true})
+			assertParseEvent(t, []byte{0xB0, tt.cc, 0}, TransportEvent{Button: tt.button, Pressed: false})
+		})
+	}
+}
+
 func TestParseIgnoresOtherMessages(t *testing.T) {
 	tests := []struct {
 		name string
@@ -184,6 +209,8 @@ func TestParseIgnoresOtherMessages(t *testing.T) {
 		{"empty", []byte{}},
 		{"too short", []byte{0xBF}},
 		{"CC wrong channel", []byte{0xB0, 21, 64}},
+		{"DAW transport CC wrong channel", []byte{0xB1, 115, 127}},
+		{"DAW transport CC unknown", []byte{0xB0, 114, 127}},
 		{"CC unknown", []byte{0xBF, 99, 64}},
 		{"Note unknown channel", []byte{0x91, 60, 100}},
 		{"Note unknown pad", []byte{0x90, 50, 100}},
