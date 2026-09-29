@@ -57,12 +57,13 @@ current flat 5-page ceiling — a Category × Page model. Track ←/→ now
 select patch banks, so that proposal's button assignment needs revision
 before implementation.
 
-The proposed [Potato Keys control-surface design](./design/potato-keys-control-surface.md)
-and [agent handoff](./POTATO_KEYS_HANDOFF.md) describe an instrument-aware
-path for Organ/Tine/Reed on this same surface and a portable musical-control
-contract. They are **in review**, not a shipped plugin-page layout; the
-handoff asks the Potato Keys agent to validate engine semantics and return
-its own mapping recommendation before implementation.
+The proposed [instrument/control-surface design](./design/instrument-control-surface.md)
+and [developer handoff](./INSTRUMENT_SURFACE_HANDOFF.md) describe a portable
+musical-control contract for any instrument and any capable surface.
+Potato Keys and the Launchkey are worked examples, not required APIs or
+layouts. These documents are **in review**, not a shipped generic
+control-surface driver or plugin-page layout; the next action is to collect
+instrument and surface developer proposals before implementation.
 
 **How they stack** (each unlocks the next):
 
