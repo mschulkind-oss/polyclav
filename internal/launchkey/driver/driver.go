@@ -235,9 +235,7 @@ func OpenWithModeRestore(ctx context.Context, logger *slog.Logger, portMatch str
 		}
 	}
 
-	if err := d.send([]byte{0xB6, 0x45, 0x7F}); err != nil {
-		logger.Warn("encoder relative-mode enable failed", "err", err)
-	}
+	d.enableRelativeEncoders()
 
 	listenCtx, cancel := context.WithCancel(ctx)
 	d.cancel = cancel

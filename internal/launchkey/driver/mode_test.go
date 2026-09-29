@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,8 +56,12 @@ func TestDAWLayoutReportsRestoreOrWarn(t *testing.T) {
 					t.Fatalf("missing mode warning: %s", logs.String())
 				}
 				if restore {
-					if len(out.messages) != 1 || !bytes.Equal(out.messages[0], []byte{0xB6, tc.cc, tc.want}) {
-						t.Fatalf("restore messages = % X", out.messages)
+					want := [][]byte{{0xB6, tc.cc, tc.want}}
+					if tc.mode == "encoders" {
+						want = [][]byte{{0xB6, 69, 127}, {0xB6, 30, 2}, {0xB6, 69, 127}, {0xB6, 69, 127}}
+					}
+					if !reflect.DeepEqual(out.messages, want) {
+						t.Fatalf("restore messages = % X, want % X", out.messages, want)
 					}
 				} else if len(out.messages) != 0 {
 					t.Fatalf("opt-out sent % X", out.messages)
@@ -67,6 +73,23 @@ func TestDAWLayoutReportsRestoreOrWarn(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestEncoderRestoreReenablesRelativeOutput(t *testing.T) {
+	out := &modeOut{}
+	d := &Driver{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), out: out, restoreDAWLayout: true}
+	// Selecting Sends can reset relative output. Restore Plugin first, then
+	// reenable CC 85..92; also recover when the player manually selects Plugin.
+	d.handleModeReport([]byte{0xB6, 30, 4})
+	want := [][]byte{{0xB6, 30, 2}, {0xB6, 69, 127}}
+	if !reflect.DeepEqual(out.messages, want) {
+		t.Fatalf("restore output = % X, want % X", out.messages, want)
+	}
+	out.messages = nil
+	d.handleModeReport([]byte{0xB6, 30, 2})
+	if !reflect.DeepEqual(out.messages, [][]byte{{0xB6, 69, 127}}) {
+		t.Fatalf("Plugin return output = % X, want relative enable", out.messages)
 	}
 }
 

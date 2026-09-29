@@ -21,7 +21,13 @@ func (d *Driver) handleModeReport(msg []byte) {
 		return
 	}
 	if msg[2] == expected {
-		return // including the device's acknowledgement of our correction
+		// A layout change may reset encoder output to absolute CC 21..28.
+		// The knob parser expects relative CC 85..92; reassert it when
+		// Plugin is selected, including on a correction acknowledgement.
+		if area == "encoders" && d.restoreDAWLayout {
+			d.enableRelativeEncoders()
+		}
+		return
 	}
 	d.logger.Warn("launchkey unsupported surface layout", "area", area,
 		"reported", msg[2], "supported", expected, "restore_enabled", d.restoreDAWLayout)
@@ -30,5 +36,15 @@ func (d *Driver) handleModeReport(msg []byte) {
 	}
 	if err := d.send([]byte{0xB6, msg[1], expected}); err != nil {
 		d.logger.Warn("launchkey surface layout restore failed", "area", area, "err", err)
+		return
+	}
+	if area == "encoders" {
+		d.enableRelativeEncoders()
+	}
+}
+
+func (d *Driver) enableRelativeEncoders() {
+	if err := d.send([]byte{0xB6, 0x45, 0x7F}); err != nil {
+		d.logger.Warn("encoder relative-mode enable failed", "err", err)
 	}
 }

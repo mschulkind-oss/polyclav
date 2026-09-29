@@ -108,9 +108,15 @@ or fader layout on the keyboard, one area at a time. Confirm the daemon warns
 with the reported and supported values, sends the corresponding channel-7
 CC 29/30/31 correction, and the keyboard visibly returns to DAW pads,
 Plugin encoders, or Volume faders. Repeat after unplugging and reconnecting.
-Then set `[launchkey].restore_daw_layout = false`, restart, and confirm the
-warning remains but no correction is sent. Restore the original setting and
-keyboard selection afterward. Do not overwrite the keyboard's Custom modes.
+After switching encoder layouts, turn encoder 1 and check **Recent raw input**:
+Plugin with relative output should report channel-16 CC 85 (hex `BF 55`) with
+values above or below 64, and the debugger's encoder-1 tile should respond.
+If it instead reports CC 21 (hex `BF 15`) or a different channel/port, record
+the raw line; a mode light or display message alone does not verify the encoder
+output format. Then set `[launchkey].restore_daw_layout = false`, restart, and
+confirm the warning remains but no layout correction is sent. Restore the
+original setting and keyboard selection afterward. Do not overwrite the
+keyboard's Custom modes.
 
 ## How to report back
 
