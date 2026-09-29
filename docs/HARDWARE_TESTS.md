@@ -62,6 +62,57 @@ handles them correctly yet:
 | Play, Stop, Record, Loop, Shift | Play is intended to toggle audition; decoder expects channel-16 note messages | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. The MK4 has no Rewind/Fast-forward controls. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. |
 | Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Octave presses changed subsequent key note numbers but sent no distinct button event. Scale/Arp sent channel-7 CC74/73; Chord Map reported pad layout CC29=14. Fixed Chord sent no distinct button event in the capture. Test modes before assigning host actions. |
 
+### What the published protocol can and cannot tell us
+
+The [Novation Launchkey MK4 Programmer's Reference Guide, v3.0](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/launchkey_mk4_programmer_s_reference_guide-pdf-en_0.pdf),
+pp. 5–14 and 21–23, is a protocol specification, not a substitute for a
+hardware check. In its DAW mode, it specifies the DAW USB port, the DAW-mode
+entry/exit messages (`9F 0C 7F` / `9F 0C 00`), the pad note grid (96–103 and
+112–119 on channel 1), encoder CC85–92 when relative output is enabled
+(channel 16, centered on 64), fader CC5–13 (channel 16), and layout reports/selectors (channel-7
+CC29/30/31). These agree with our captured input and supported layout. Its
+DAW-mode surface diagram (p. 9) also identifies the Track and transport CC
+numbers; in particular Play/Stop are CC115/116. The guide separates this
+from *standalone* mode, in which DAW control buttons instead report on the
+performance MIDI port and channel 16 (pp. 6–8). Mixing these modes or ports
+would give a plausible-looking but unusable map.
+
+One difference is worth retaining as an explicit hardware observation: the
+specification's Volume-fader diagram (p. 13) places button CC37–45 on channel
+16, whereas the 61-key unit's nine button press/release captures used the
+DAW port on **channel 1**. The driver accepts both channels. The printed
+shifted labels are *choices within a mode menu*, not separate buttons; don't
+assign a physical control from a prompt name without observing the message.
+The capture also shows channel-1 CC115/116 for Play/Stop, but the current
+`parseMessage` transport handler recognizes channel-16 **note** messages,
+not those captured CC events. A published number and a lit debugger tile do
+not establish that the intended host action works; transport still needs a
+separate driver test and physical check.
+
+For a different keyboard **without the device at hand**:
+
+1. Obtain the manufacturer's exact model/firmware protocol guide and user
+   guide. Record each port, operating mode, MIDI status/channel, control
+   number, press/release and relative-value convention; distinguish input
+   reports from commands sent *to* the device. Never treat its Custom modes
+   as factory DAW defaults.
+2. Cross-check a maintained host implementation or [Ardour's Launchkey MK4
+   integration](https://manual.ardour.org/using-control-surfaces/Launchkey_mk4/)
+   for practical behavior, but label its inferred messages separately from
+   the vendor's specification. Linux can even present the two ports with
+   [indistinguishable names](https://www.spinics.net/lists/alsa-devel/msg178771.html),
+   so a port-name match alone does not identify DAW versus performance input.
+3. Write parser/encoder tests from the documented byte sequences and a
+   synthetic capture; build a read-only inspector that shows raw bytes,
+   source port, timestamp, and parsed event. This supports a tentative
+   mapping for documented controls, not a verified integration.
+4. Ask an owner to capture each physical control once in a declared mode,
+   including release, pressure/touch, reconnect, and mode switching; compare
+   raw bytes before enabling outbound LED, screen, or layout commands. Verify
+   visible output on the device, not just a successful MIDI send. Keep
+   undocumented behavior, alternate firmware, and OS-specific port selection
+   provisional until tested on the target hardware.
+
 Use the committed read-only inventory probe to capture one Launchkey control at
 a time and save a JSON report:
 
