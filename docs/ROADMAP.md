@@ -6,11 +6,11 @@
 > ladder, two runtime ADSRs, a global LFO (→ pitch/cutoff/amp), mod-wheel
 > vibrato and pitch bend, velocity → amp/cutoff routing, keyboard
 > tracking, glide, optional 2× oversampling, and **8-voice polyphony**
-> with runtime-switchable voice modes. The §2 Launchkey knob-page UX is
+> with runtime-switchable voice modes. The [§2](#2-launchkey-native-ux) Launchkey knob-page UX is
 > code-complete (`internal/controls/pages`) pending hardware verification
-> (`docs/HARDWARE_TESTS.md`), and the §3 per-patch persistence model is
+> (`docs/HARDWARE_TESTS.md`), and the [§3](#3-patch-persistence-schema) per-patch persistence model is
 > live as `state.toml`'s `[patches.<name>.synth]` tables. Read this doc
-> as the **design record** — the rationale behind what shipped, §5's
+> as the **design record** — the rationale behind what shipped, [§5](#5-open-questions--decisions-deferred)'s
 > open questions, and Appendix A's DSP crate survey — not as a plan for
 > unbuilt code; where the implementation deviated, the code comments in
 > `internal/controls/pages/defs.go` and `internal/state/state.go` say how
@@ -50,13 +50,19 @@ The native synth no longer roadmaps alone. Five design docs landed
 level up from this one: it frames circuit-emulated effects, physically-modeled
 instruments (organ/Leslie), and open-source engine hosting (Surge XT/Helm)
 as the next build threads, and points at this doc's `engine = "<name>"`
-dispatch seam (§5) as where a new native instrument engine plugs in.
+dispatch seam ([§5](#5-open-questions--decisions-deferred)) as where a new native instrument engine plugs in.
 `docs/LAUNCHKEY_NAVIGATION.md` landed even later (2026-07-13) as a
 proposal (not yet built) for scaling `internal/controls/pages` past its
-current flat 5-page ceiling — a Category × Page model using the
-already-decoded-but-unmapped Track ←/→ transport buttons — driven by
-the drive/delay pedals from `docs/VISION.md` running out of MAIN-page
-knob real estate.
+current flat 5-page ceiling — a Category × Page model. Track ←/→ now
+select patch banks, so that proposal's button assignment needs revision
+before implementation.
+
+The proposed [Potato Keys control-surface design](./design/potato-keys-control-surface.md)
+and [agent handoff](./POTATO_KEYS_HANDOFF.md) describe an instrument-aware
+path for Organ/Tine/Reed on this same surface and a portable musical-control
+contract. They are **in review**, not a shipped plugin-page layout; the
+handoff asks the Potato Keys agent to validate engine semantics and return
+its own mapping recommendation before implementation.
 
 **How they stack** (each unlocks the next):
 
@@ -69,12 +75,12 @@ knob real estate.
    keyboard-free front panel for everything below.
 4. **OSC Tier 0–1** (`docs/CONFIGURABILITY.md`) — `[osc.mixer]` naming +
    configurable/optional heartbeat.
-5. **Native synth Phases 2–4** (§1–§5 below) — with audition patterns +
+5. **Native synth Phases 2–4** ([§1](#1-moog-flavored-voice-architecture-patch-1-classic-minimoog)–[§5](#5-open-questions--decisions-deferred) below) — with audition patterns +
    web sliders as the hardware-free test rig for every DSP increment.
 
 ### 0.1 Getting the full Moog voice working — consolidated checklist
 
-Everything required to go from today's Phase-1 subset to the §1 voice,
+Everything required to go from today's Phase-1 subset to the [§1](#1-moog-flavored-voice-architecture-patch-1-classic-minimoog) voice,
 ordered so each step is audible via `--play bass-riff` + web tweaking
 (no Launchkey needed until the last item):
 
@@ -92,18 +98,18 @@ ordered so each step is audible via `--play bass-riff` + web tweaking
       `docs/VELOCITY_CURVES.md` (curve shapes input; routing decides
       what velocity modulates). (shipped 2026-07-06)
 - [x] **Poly + voice modes** — oldest-voice steal, `mono_legato |
-      mono_retrig | poly` per §3.1 schema, 8 voices, live-switchable.
+      mono_retrig | poly` per [§3.1](#31-proposed-statetoml-extension) schema, 8 voices, live-switchable.
       (shipped 2026-07-06)
 - [x] **LFO** — rate/depth, destinations pitch/cutoff/amp; mod-wheel
       scales the pitch depth. (shipped 2026-07-06)
-- [x] **Patch param persistence** — §3 `state.toml` schema (synth
+- [x] **Patch param persistence** — [§3](#3-patch-persistence-schema) `state.toml` schema (synth
       sub-table per patch). (shipped 2026-07-06)
 - [x] **2× oversampling around the ladder** — mitigation for the
       Stilson/Smith tanh stage (Appendix A); optional, off by default.
       (shipped 2026-07-06)
-- [x] **Launchkey knob pages (§2)** — the hardware UX; last because the
+- [x] **Launchkey knob pages ([§2](#2-launchkey-native-ux))** — the hardware UX; last because the
       web UI covers control until the device is back on the bench.
-      (code-complete 2026-07-06 — `internal/controls/pages`, §2 adapted
+      (code-complete 2026-07-06 — `internal/controls/pages`, [§2](#2-launchkey-native-ux) adapted
       to the shipped controls layer with deviations documented on the
       page table; hardware verification pending, see
       docs/HARDWARE_TESTS.md "Knob pages".)
@@ -372,7 +378,7 @@ Knob ranges and tapers (`taper` = the user-felt curve):
 | Glide rate | 0 – 2 s | linear |
 | Pitch bend range | ±1 to ±12 semitones | integer step |
 
-Page-state and parameter values **persist per patch** (see §3).
+Page-state and parameter values **persist per patch** (see [§3](#3-patch-persistence-schema)).
 
 ### 2.2 Page switching
 
@@ -488,7 +494,7 @@ phase.
 | **Track →** | Next page (MIX → FILTER → ... → MOD → MIX ...) | same as above |
 | **Scene ↑** | Octave +1 (keyboard) | screen flash "OCT +1" |
 | **Scene ↓** | Octave -1 | screen flash "OCT -1" |
-| **Shift** | (modifier for fine-knob, see §2.2) | held → screen line 2 shows "FINE" |
+| **Shift** | (modifier for fine-knob, see [§2.2](#22-page-switching)) | held → screen line 2 shows "FINE" |
 
 ### 2.6 Verification against the driver code
 
@@ -658,7 +664,7 @@ selects which in-house voice architecture to instantiate.
 
 ### 3.4 Patch save UX (the Record button)
 
-Per §2.5, pressing Record arms "immediate save mode". This is mostly a
+Per [§2.5](#25-transport-buttons--assignment-table-concrete), pressing Record arms "immediate save mode". This is mostly a
 UX hint — under the hood, every knob change *already* triggers a
 debounced save (2 s today). The Record button just (a) bypasses the
 debounce on the next knob change for instant gratification, and (b)
@@ -701,7 +707,7 @@ patch). Working LFO with 3 destinations. Glide.
 - Pages 2 (FILTER), 3 (AMP), 4 (LFO) — knob + state + pad layouts.
 - `allocator.rs` — last-note-priority mono + LRU-steal poly.
 - `lfo.rs` — global LFO with tri/saw/sq/SH, fed via mod matrix to pitch, cutoff, amp.
-- Tempo-sync LFO using Play-as-tap-tempo (§2.5).
+- Tempo-sync LFO using Play-as-tap-tempo ([§2.5](#25-transport-buttons--assignment-table-concrete)).
 - Glide / portamento on per-voice frequency slew.
 - 3 additional factory patches: "Mother-32 lead", "Matriarch pad", "Taurus bass-native".
 - **Tests**: voice-stealing under > 4 simultaneous keys. LFO sync stability. Hardware test: all 5 pages reachable, all knobs do something audible.
@@ -714,7 +720,7 @@ filter. Full UX feedback (record-save button, panic, octave shift).
 
 **Deliverables**:
 - Page 5 (MOD) full.
-- Bottom-row pad ADSR ring (Layout B from §2.4).
+- Bottom-row pad ADSR ring (Layout B from [§2.4](#24-pad-colors-as-state-indicators)).
 - Pad pulse synced to LFO rate (Components ch3 pulse).
 - Stereo voice spread (alternating L/R pan per voice, or detune-pan).
 - 2× oversampling wrapper around filter+saturation.
@@ -745,7 +751,7 @@ filter. Full UX feedback (record-save button, panic, octave shift).
   boots in `mono_legato` mode (honest to the source). The MOD page
   (page 5) carries a `voice_mode` selector cycling `mono_legato →
   mono_retrig → poly` on a dedicated pad. Schema already supports this
-  via `[patches.X.synth.mod].voice_mode` (see §3.1). The voice allocator
+  via `[patches.X.synth.mod].voice_mode` (see [§3.1](#31-proposed-statetoml-extension)). The voice allocator
   supports both topologies — a single voice for mono modes, a small voice
   pool (4 voices) for poly. Voice stealing is "oldest" for v1.
 
@@ -761,7 +767,7 @@ filter. Full UX feedback (record-save button, panic, octave shift).
    from "Minimoog" to "Salamander Piano" and back, should the analog
    patch remember it was on the FILTER page? Per-patch is more
    user-friendly; global is simpler. **Lean: per-patch — already covered
-   by the `[patches.X.synth].page` field in §3.1.**
+   by the `[patches.X.synth].page` field in [§3.1](#31-proposed-statetoml-extension).**
 
 2. **Should we vendor the fundsp Moog ladder or stay on the crate?**
    `fundsp` is large and active; pinning to a major version is enough
@@ -792,7 +798,7 @@ filter. Full UX feedback (record-save button, panic, octave shift).
    exotic timbres without the LV2/CLAP host overhead. **Defer to a future
    doc; mention only.**
 
-6. **Pad ergonomics for octave/waveform display.** The proposal in §2.4
+6. **Pad ergonomics for octave/waveform display.** The proposal in [§2.4](#24-pad-colors-as-state-indicators)
    uses palette indices for octave color-ramps; the actual palette
    indices need to be picked from the 128-entry Components palette to
    ensure they read clearly on the device. Defer to Phase 2
@@ -825,7 +831,7 @@ filter. Full UX feedback (record-save button, panic, octave shift).
   (per-stage tanh, thermal-voltage scaling, assumes ~2× oversampling).
   Consequences: drive behavior and self-oscillation character at high Q
   won't match a real Model D. Mitigations: wrap in `oversample()` when
-  driven hard (§1.6 already plans this); pivot ladder below if listening
+  driven hard ([§1.6](#16-sound-design-realism--what-were-not-faking) already plans this); pivot ladder below if listening
   tests fail. (Background: D'Angelo & Välimäki, "An improved virtual
   analog model of the Moog ladder filter.")
 - **PolyBLEP tier:** fundsp's own README rates its PolyBLEP oscillators
