@@ -1893,6 +1893,25 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
     1
 }
 
+/// macOS fallback for the Go CLAP (CLever Audio Plugin) state wrapper, which
+/// compiles on both platforms. Plugin hosting is unavailable on macOS, so
+/// there is no state to save.
+///
+/// # Safety
+/// `out_len` may be NULL or point to writable memory; `out` is unused.
+#[cfg(target_os = "macos")]
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_audio_clap_save_state(
+    _out: *mut u8,
+    _capacity: usize,
+    out_len: *mut usize,
+) -> i32 {
+    if !out_len.is_null() {
+        unsafe { *out_len = 0 };
+    }
+    1
+}
+
 #[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
@@ -3434,6 +3453,23 @@ fn clamp_callback_frames(requested: usize, max_frames: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clap_state_save_stub_reports_unavailable() {
+        let mut len = 99;
+        assert_eq!(
+            unsafe { polyclav_audio_clap_save_state(std::ptr::null_mut(), 0, &mut len) },
+            1
+        );
+        assert_eq!(len, 0);
+        assert_eq!(
+            unsafe {
+                polyclav_audio_clap_save_state(std::ptr::null_mut(), 0, std::ptr::null_mut())
+            },
+            1
+        );
+    }
 
     fn reset_test_held_notes() {
         *held_notes().lock().unwrap() = HeldNotes::default();
