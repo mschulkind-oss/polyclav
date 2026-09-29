@@ -131,7 +131,7 @@ describe("Launchkey debugger", () => {
     expect(guidance).toHaveTextContent(/page cannot turn on DAW mode/i);
     expect(guidance).toHaveTextContent(/offline.*neither the daemon nor MIDI permission/i);
     expect(guidance).toHaveTextContent(/Settings.*Octave.*Fixed Chord.*no button MIDI/i);
-    expect(container.querySelector('[data-control="fader-1"] span')).toHaveAttribute(
+    expect(container.querySelector('[data-control="fader-1"] span[role="img"]')).toHaveAttribute(
       "aria-label",
       "Fader 1",
     );
@@ -204,6 +204,75 @@ describe("Launchkey debugger", () => {
     });
     expect(container.querySelector('[data-control="encoder-2"]')).toHaveTextContent("step +2");
     expect(container.querySelector('[data-control="encoder-2"]')).not.toHaveTextContent(/speed/i);
+  });
+
+  it("shows fader and wheel positions but no invented value before input", async () => {
+    const { handlers, send } = installMIDI();
+    const { container } = render(<LaunchkeyDebugPage />);
+    expect(
+      container.querySelector('[data-control="fader-1"] .lk-fader-fill'),
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-control="pitch-wheel"] .lk-wheel-marker'),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Browser Web MIDI" }));
+    await waitFor(() => expect(handlers.size).toBe(2));
+    const daw = handlers.get("Launchkey MK4 61 DAW In");
+    const midi = handlers.get("Launchkey MK4 61 MIDI In");
+    await act(async () => {
+      daw?.({ data: Uint8Array.of(0xbf, 5, 0), timeStamp: 0 });
+      midi?.({ data: Uint8Array.of(0xe0, 0, 64), timeStamp: 0 });
+      midi?.({ data: Uint8Array.of(0xb0, 1, 127), timeStamp: 0 });
+    });
+    expect(container.querySelector('[data-control="fader-1"] .lk-fader-fill')).toHaveStyle({
+      height: "0%",
+    });
+    expect(container.querySelector('[data-control="pitch-wheel"] .lk-wheel-marker')).toHaveStyle({
+      bottom: "50%",
+    });
+    expect(container.querySelector('[data-control="mod-wheel"] .lk-wheel-marker')).toHaveStyle({
+      bottom: "100%",
+    });
+    expect(container.querySelector('[data-control="pitch-wheel"]')).toHaveTextContent("8192");
+    await act(async () => daw?.({ data: Uint8Array.of(0xbf, 5, 127), timeStamp: 0 }));
+    expect(container.querySelector('[data-control="fader-1"] .lk-fader-fill')).toHaveStyle({
+      height: "100%",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("colors held pads only from measured aftertouch, clearing it on release", async () => {
+    const { handlers } = installMIDI();
+    const { container } = render(<LaunchkeyDebugPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser Web MIDI" }));
+    await waitFor(() => expect(handlers.size).toBe(2));
+    const daw = handlers.get("Launchkey MK4 61 DAW In");
+    const pad = () => container.querySelector('[data-control="pad-top-1"]');
+    await act(async () => daw?.({ data: Uint8Array.of(0x90, 96, 100), timeStamp: 0 }));
+    expect(pad()).toHaveClass("held");
+    expect(pad()).not.toHaveAttribute("data-pressure"); // velocity is not pressure
+    await act(async () => daw?.({ data: Uint8Array.of(0xa0, 96, 110), timeStamp: 0 }));
+    expect(pad()).toHaveAttribute("data-pressure", "110");
+    expect(pad()).toHaveTextContent("pressure 110");
+    await act(async () => daw?.({ data: Uint8Array.of(0x90, 96, 0), timeStamp: 0 }));
+    expect(pad()).not.toHaveClass("held");
+    expect(pad()).not.toHaveAttribute("data-pressure");
+  });
+
+  it("rotates an encoder marker by accumulated relative steps and resets on source change", async () => {
+    const { handlers } = installMIDI();
+    const { container } = render(<LaunchkeyDebugPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser Web MIDI" }));
+    await waitFor(() => expect(handlers.size).toBe(2));
+    const daw = handlers.get("Launchkey MK4 61 DAW In");
+    const marker = () => container.querySelector('[data-control="encoder-1"] .lk-encoder-marker');
+    await act(async () => daw?.({ data: Uint8Array.of(0xbf, 85, 66), timeStamp: 0 }));
+    expect(marker()).toHaveStyle({ transform: "rotate(30deg)" });
+    await act(async () => daw?.({ data: Uint8Array.of(0xbf, 85, 63), timeStamp: 0 }));
+    expect(marker()).toHaveStyle({ transform: "rotate(15deg)" });
+    expect(container.querySelector('[data-control="encoder-1"]')).toHaveTextContent("step -1");
+    fireEvent.click(screen.getByRole("button", { name: "offline report" }));
+    expect(marker()).not.toBeInTheDocument();
   });
 
   it("distinguishes an open SSE connection from an absent Launchkey", async () => {

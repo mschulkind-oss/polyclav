@@ -1,5 +1,7 @@
 // Run from web/: node --test app/launchkey-debug/layout.browser.mjs
-// Real Chromium geometry regression for offline replay; requires chromium and the local Next dev server.
+// Real Chromium geometry regression for offline replay; requires Chromium and
+// the exported app under internal/web/static/app (run just web-build + web-sync first).
+// Serve the export directly: a running just dev may already own Next's dev lock.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -88,6 +90,13 @@ const inventory = {
           raw_values: { controller: 85, value: 66 },
         },
         {
+          timestamp: "2026-09-26T18:15:01.500Z",
+          port_role: "daw",
+          kind: "note_on",
+          channel: 1,
+          raw_values: { note: 96, velocity: 90 },
+        },
+        {
           timestamp: "2026-09-26T18:15:02Z",
           port_role: "daw",
           kind: "poly_aftertouch",
@@ -140,8 +149,11 @@ const geometry = `(() => {
         return errors;
       });
     }),
-    clippedLabels: [...document.querySelectorAll('.lk-control span, .lk-control small')].filter((el) => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1).map((el) => el.parentElement.dataset.control),
+    clippedLabels: [...document.querySelectorAll('.lk-control [role="img"], .lk-control small')].filter((el) => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1).map((el) => el.closest('.lk-control').dataset.control),
     latestText: document.querySelector('.lk-latest').textContent,
+    padPressure: document.querySelector('[data-control="pad-top-1"]').dataset.pressure ?? null,
+    encoderAngle: document.querySelector('[data-control="encoder-1"] .lk-encoder-marker')?.style.transform ?? null,
+    faderHeight: document.querySelector('[data-control="fader-1"] .lk-fader-fill')?.style.height ?? null,
     values: [...document.querySelectorAll('.lk-control')].map((el) => ({ id: el.dataset.control, text: el.textContent })) };
 })()`;
 
@@ -156,8 +168,16 @@ for (const [width, height] of [
     const profile = await mkdtemp(path.join(tmpdir(), "lk-chrome-"));
     const port = await freePort();
     const server = spawn(
-      process.execPath,
-      ["node_modules/next/dist/bin/next", "dev", "--port", String(port), "--hostname", "127.0.0.1"],
+      process.env.PYTHON ?? "python3",
+      [
+        "-m",
+        "http.server",
+        String(port),
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "../internal/web/static",
+      ],
       { stdio: "ignore", detached: true },
     );
     const browser = spawn(
@@ -225,7 +245,9 @@ for (const [width, height] of [
           "[...document.querySelectorAll('button')].find(b => b.textContent === 'Next event').click()",
         );
         await until(async () =>
-          cdp.eval(`document.querySelector('.lk-ports').textContent.includes('${i + 1} / 5')`),
+          cdp.eval(
+            `document.querySelector('.lk-ports').textContent.includes('${i + 1} / ${inventory.controls[0].events.length}')`,
+          ),
         );
         snapshots.push(await cdp.eval(geometry));
       }
@@ -276,8 +298,12 @@ for (const [width, height] of [
       }
       assert.match(snapshots[1].values.find((v) => v.id === "pad-layout").text, /Custom 1/);
       assert.match(snapshots[2].values.find((v) => v.id === "encoder-1").text, /step \+2/);
-      assert.match(snapshots[3].values.find((v) => v.id === "pad-top-1").text, /pressure 127/);
-      assert.match(snapshots[5].latestText, /encoder up/);
+      assert.equal(snapshots[2].encoderAngle, "rotate(30deg)");
+      assert.equal(snapshots[3].padPressure, null, "velocity is not pressure");
+      assert.match(snapshots[4].values.find((v) => v.id === "pad-top-1").text, /pressure 127/);
+      assert.equal(snapshots[4].padPressure, "127");
+      assert.equal(snapshots[5].faderHeight, "100%");
+      assert.match(snapshots[6].latestText, /encoder up/);
       await cdp.eval(`window.EventSource = class {
         static CLOSED = 2;
         constructor() { this.listeners = {}; window.debugEvents = this; }

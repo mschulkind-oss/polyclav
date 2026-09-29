@@ -142,7 +142,7 @@ export function decodeMessage(
     kind,
     channel,
     number,
-    value: kind === "note-off" ? 0 : value,
+    value: kind === "note-off" ? 0 : kind === "pitch-bend" ? number | (value << 7) : value,
     control: null,
     raw: rawHex(bytes),
   };

@@ -86,6 +86,10 @@ export default function LaunchkeyDebugPage() {
   const sequence = useRef(0);
   const [last, setLast] = useState<Record<string, DebugEvent>>({});
   const [held, setHeld] = useState<Record<string, boolean>>({});
+  const [pressure, setPressure] = useState<Record<string, number>>({});
+  // Encoders report relative steps, not an absolute shaft position. This
+  // marker accumulates observed motion and starts at zero for each source.
+  const [encoderAngles, setEncoderAngles] = useState<Record<string, number>>({});
   const [report, setReport] = useState<DebugEvent[]>([]);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -95,6 +99,8 @@ export default function LaunchkeyDebugPage() {
 
   const resetSurface = useCallback(() => {
     setHeld({});
+    setPressure({});
+    setEncoderAngles({});
     setLast({});
     setHistory([]);
     setFirstInputAnnouncement("");
@@ -107,6 +113,23 @@ export default function LaunchkeyDebugPage() {
     const event = { ...e, source: mode, control };
     if (control) {
       setLast((prev) => ({ ...prev, [control]: event }));
+      if (control.startsWith("encoder-") && event.kind === "cc") {
+        setEncoderAngles((prev) => ({
+          ...prev,
+          [control]: ((((prev[control] ?? 0) + (event.value - 64) * 15) % 360) + 360) % 360,
+        }));
+      }
+      if (
+        control.startsWith("pad-") &&
+        ["note-on", "note-off", "poly-aftertouch"].includes(event.kind)
+      ) {
+        setPressure((prev) => {
+          const next = { ...prev };
+          if (event.kind === "poly-aftertouch") next[control] = event.value;
+          else delete next[control];
+          return next;
+        });
+      }
       if (
         event.kind === "note-on" ||
         event.kind === "note-off" ||
@@ -312,12 +335,48 @@ export default function LaunchkeyDebugPage() {
   function tile(id: string, className = "") {
     const recent = last[id];
     const hot = recent && Date.now() - recent.time < 1500;
+    const position = recent
+      ? `${Math.round(
+          (Math.max(0, Math.min(recent.value, id === "pitch-wheel" ? 16383 : 127)) /
+            (id === "pitch-wheel" ? 16383 : 127)) *
+            100,
+        )}%`
+      : null;
+    const padPressure = held[id] ? pressure[id] : undefined;
+    const padStyle =
+      padPressure === undefined
+        ? undefined
+        : {
+            backgroundColor: `hsl(${Math.round(155 - (padPressure * 125) / 127)} 70% ${Math.round(25 + (padPressure * 7) / 127)}%)`,
+          };
     return (
       <div
         key={id}
         className={`lk-control ${className}${held[id] ? " held" : hot ? " recent" : ""}`}
         data-control={id}
+        data-pressure={padPressure}
+        style={padStyle}
       >
+        {className === "fader" && (
+          <span className="lk-fader-track" aria-hidden="true">
+            {position !== null && <span className="lk-fader-fill" style={{ height: position }} />}
+          </span>
+        )}
+        {className === "wheel" && (
+          <span className="lk-wheel-track" aria-hidden="true">
+            {position !== null && <span className="lk-wheel-marker" style={{ bottom: position }} />}
+          </span>
+        )}
+        {className === "encoder" && (
+          <span className="lk-encoder-dial" aria-hidden="true">
+            {encoderAngles[id] !== undefined && (
+              <span
+                className="lk-encoder-marker"
+                style={{ transform: `rotate(${encoderAngles[id]}deg)` }}
+              />
+            )}
+          </span>
+        )}
         <span role="img" aria-label={label(id).replace(/^./, (c) => c.toUpperCase())}>
           {shortLabel(id)}
         </span>
@@ -459,7 +518,8 @@ export default function LaunchkeyDebugPage() {
               <h2>8 encoders · relative steps</h2>
               <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
               <p className="hint">
-                Values are displayed as signed steps around center 64, not speed.
+                The dial accumulates relative steps from 12 o’clock; it is not the knob’s absolute
+                position. Text shows the last signed step around center 64.
               </p>
             </section>
 

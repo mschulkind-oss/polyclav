@@ -31,6 +31,15 @@ describe("Launchkey debug decoding", () => {
     expect(controlForMessage(decodeMessage([0x93, 60, 0], "MIDI"))).toBe("key-60");
   });
 
+  it("decodes browser pitch bend as 14-bit position without changing raw bytes", () => {
+    expect(decodeMessage([0xe0, 0, 0], "MIDI")).toMatchObject({ value: 0, raw: "e0 00 00" });
+    expect(decodeMessage([0xe0, 0, 64], "MIDI")).toMatchObject({ value: 8192, raw: "e0 00 40" });
+    expect(decodeMessage([0xe0, 127, 127], "MIDI")).toMatchObject({
+      value: 16383,
+      raw: "e0 7f 7f",
+    });
+  });
+
   it("displays encoder relative values as signed steps around center 64", () => {
     expect(encoderStep(62)).toBe("-2");
     expect(encoderStep(63)).toBe("-1");

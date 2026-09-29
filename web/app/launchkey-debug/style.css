@@ -240,12 +240,28 @@
 }
 .lk-control.fader {
   height: 110px;
+  align-items: center;
   justify-content: flex-end;
-  background: linear-gradient(90deg, #202b38 42%, #405169 43% 57%, #202b38 58%);
+  text-align: center;
 }
-.lk-control.fader.held,
-.lk-control.fader.recent {
-  background: linear-gradient(90deg, #203a31 42%, #8ed4af 43% 57%, #203a31 58%);
+.lk-fader-track {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 12px;
+  height: 54px;
+  margin-bottom: 3px;
+  border: 1px solid #94aec2;
+  border-radius: 4px;
+  background: #101b26;
+}
+.lk-fader-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-radius: 3px;
+  background: #81d7f6;
 }
 .lk-control.fader-button {
   height: 76px;
@@ -256,6 +272,30 @@
   border-radius: 999px;
   text-align: center;
 }
+.lk-encoder-dial {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 2px solid #85cfec;
+  border-radius: 50%;
+  background: #102534;
+}
+.lk-encoder-marker {
+  position: absolute;
+  inset: 2px;
+}
+.lk-encoder-marker::before {
+  position: absolute;
+  top: 0;
+  left: calc(50% - 2px);
+  width: 4px;
+  height: 9px;
+  border-radius: 2px;
+  background: #ffcf73;
+  content: "";
+}
 .lk-control.pad {
   height: 88px;
   min-width: 0;
@@ -264,6 +304,35 @@
 }
 .lk-control.wheel {
   height: 92px;
+  align-items: center;
+  text-align: center;
+}
+.lk-wheel-track {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 18px;
+  height: 42px;
+  margin-bottom: 4px;
+  border: 1px solid #94aec2;
+  border-radius: 4px;
+  background: #101b26;
+}
+.lk-wheel-marker {
+  position: absolute;
+  left: -5px;
+  right: -5px;
+  height: 5px;
+  transform: translateY(50%);
+  border-radius: 3px;
+  background: #ffcf73;
+}
+.lk-control.pad[data-pressure] {
+  border-color: #f5cb7c;
+  color: #fff;
+}
+.lk-control.pad[data-pressure] small {
+  color: #fff;
 }
 .lk-keybed {
   overflow: hidden;
@@ -369,6 +438,9 @@
   }
 }
 @media (max-width: 650px) {
+  .lk-control.fader {
+    height: 126px;
+  }
   .lk-latest {
     height: 8rem;
   }
