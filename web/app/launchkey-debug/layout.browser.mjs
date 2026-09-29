@@ -117,6 +117,13 @@ const inventory = {
           channel: 1,
           raw_values: { controller: 51, value: 127 },
         },
+        {
+          timestamp: "2026-09-26T18:15:05Z",
+          port_role: "daw",
+          kind: "cc",
+          channel: 1,
+          raw_values: { controller: 104, value: 127 },
+        },
       ],
     },
   ],
@@ -131,11 +138,16 @@ const geometry = `(() => {
   const pick = (selector) => [...document.querySelectorAll(selector)].map(box);
   return { doc: box(document.documentElement), main: pick('main.lk-debug'), panel: pick('.lk-panel'),
     latest: pick('.lk-latest'), source: pick('.lk-source-strip, .lk-source-strip > *'), body: pick('.lk-body'), blocks: pick('.lk-body > section'),
-    rows: pick('.lk-faders, .lk-fader-buttons, .lk-encoder-row, .lk-pad-row, .lk-grid, .lk-transport, .lk-daw-commands'),
+    rows: pick('.lk-faders, .lk-fader-buttons, .lk-encoder-row, .lk-encoder-bank, .lk-pad-row, .lk-pad-bank, .lk-pad-actions, .lk-screen-buttons, .lk-grid, .lk-transport, .lk-daw-commands'),
     tiles: pick('.lk-control'), keybed: pick('.lk-keys'),
+    navigation: Object.fromEntries(Object.entries({
+      screen: '.lk-display', screenButtons: '.lk-screen-buttons',
+      encoderRow: '.lk-encoder-row', encoderBank: '.lk-encoder-bank',
+      padMatrix: '.lk-pad-matrix', padBank: '.lk-pad-bank', padActions: '.lk-pad-actions'
+    }).map(([name, selector]) => [name, pick(selector)[0]])),
     tileValueOverflow: [...document.querySelectorAll('.lk-control small')].map((el) => getComputedStyle(el).overflowY),
     rawColors: ['.lk-raw-details summary', '.lk-event-list', '.lk-offline-tools .hint'].map((selector) => getComputedStyle(document.querySelector(selector)).color),
-    collisions: [...document.querySelectorAll('.lk-faders, .lk-fader-buttons, .lk-encoder-row, .lk-pad-row, .lk-grid, .lk-transport, .lk-daw-commands, .lk-wheels, .lk-mini-row')].flatMap((row) => {
+    collisions: [...document.querySelectorAll('.lk-faders, .lk-fader-buttons, .lk-encoder-row, .lk-encoder-bank, .lk-pad-row, .lk-pad-bank, .lk-pad-actions, .lk-screen-buttons, .lk-grid, .lk-transport, .lk-daw-commands, .lk-wheels, .lk-mini-row')].flatMap((row) => {
       const r = row.getBoundingClientRect();
       const tiles = [...row.querySelectorAll(':scope > .lk-control')];
       return tiles.flatMap((tile, i) => {
@@ -252,6 +264,26 @@ for (const [width, height] of [
         snapshots.push(await cdp.eval(geometry));
       }
       const baseline = snapshots[0];
+      const n = baseline.navigation;
+      assert.ok(n.screenButtons.y >= n.screen.bottom - 1, "screen controls below screen");
+      if (width > 650) {
+        assert.ok(n.encoderBank.x >= n.encoderRow.right - 1, "encoder bank to the right");
+        assert.ok(n.padBank.right <= n.padMatrix.x + 1, "pad bank to the left");
+        assert.ok(n.padActions.x >= n.padMatrix.right - 1, "scene/function to the right");
+      } else {
+        assert.ok(
+          n.encoderBank.y >= n.encoderRow.bottom - 1,
+          "encoder bank adjacent below on narrow screens",
+        );
+        assert.ok(
+          n.padBank.bottom <= n.padMatrix.y + 1,
+          "pad bank adjacent above on narrow screens",
+        );
+        assert.ok(
+          n.padActions.bottom <= n.padMatrix.y + 1,
+          "scene/function adjacent above on narrow screens",
+        );
+      }
       for (const [index, snapshot] of snapshots.entries()) {
         const name = `${width}x${height} event ${index}`;
         assert.ok(snapshot.doc.scrollWidth <= snapshot.doc.clientWidth, `${name}: page overflow`);
@@ -304,6 +336,7 @@ for (const [width, height] of [
       assert.equal(snapshots[4].padPressure, "127");
       assert.equal(snapshots[5].faderHeight, "100%");
       assert.match(snapshots[6].latestText, /encoder up/);
+      assert.match(snapshots[7].latestText, /pad right/);
       await cdp.eval(`window.EventSource = class {
         static CLOSED = 2;
         constructor() { this.listeners = {}; window.debugEvents = this; }

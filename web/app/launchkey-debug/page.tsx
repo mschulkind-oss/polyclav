@@ -338,9 +338,9 @@ export default function LaunchkeyDebugPage() {
     const hot = recent && Date.now() - recent.time < 1500;
     const position = recent
       ? `${Math.round(
-          (Math.max(0, Math.min(recent.value, id === "pitch-wheel" ? 16383 : 127)) /
-            (id === "pitch-wheel" ? 16383 : 127)) *
-            100,
+          (id === "pitch-wheel"
+            ? (Math.max(-8192, Math.min(recent.value, 8191)) + 8192) / 16383
+            : Math.max(0, Math.min(recent.value, 127)) / 127) * 100,
         )}%`
       : null;
     const padPressure = held[id] ? pressure[id] : undefined;
@@ -364,7 +364,10 @@ export default function LaunchkeyDebugPage() {
           </span>
         )}
         {className === "wheel" && (
-          <span className="lk-wheel-track" aria-hidden="true">
+          <span
+            className={`lk-wheel-track${id === "pitch-wheel" ? " lk-pitch-track" : ""}`}
+            aria-hidden="true"
+          >
             {position !== null && <span className="lk-wheel-marker" style={{ bottom: position }} />}
           </span>
         )}
@@ -511,13 +514,22 @@ export default function LaunchkeyDebugPage() {
             <section className="lk-block lk-nav" aria-label="Display and navigation block">
               <h2>Display / nav</h2>
               <div className="lk-display">Launchkey display</div>
-              <div className="lk-grid compact">{navigation.map((id) => tile(id))}</div>
+              <div className="lk-screen-buttons">
+                {["track-left", "track-right", "shift", "settings"].map((id) => tile(id))}
+              </div>
               <div className="lk-grid compact modes">{modeControls.map((id) => tile(id))}</div>
             </section>
 
             <section className="lk-block lk-encoders" aria-label="Encoder block">
               <h2>8 encoders · relative steps</h2>
-              <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
+              <div className="lk-encoder-cluster">
+                <div className="lk-encoder-row">{encoders.map((id) => tile(id, "encoder"))}</div>
+                <fieldset className="lk-encoder-bank">
+                  <legend className="lk-sr-only">Encoder bank controls</legend>
+                  {tile("encoder-up")}
+                  {tile("encoder-down")}
+                </fieldset>
+              </div>
               <p className="hint">
                 The dial accumulates relative steps from 12 o’clock; it is not the knob’s absolute
                 position. Text shows the last signed step around center 64.
@@ -526,15 +538,29 @@ export default function LaunchkeyDebugPage() {
 
             <section className="lk-block lk-pads" aria-label="Pads and transport block">
               <h2>16 pads + transport</h2>
-              <div className="lk-pad-matrix">
-                {padRows.map((row) => (
-                  <div key={row}>
-                    <p className="lk-row-label">{row === "top" ? "Top row" : "Bottom row"} · 1–8</p>
-                    <div className="lk-pad-row">
-                      {Array.from({ length: 8 }, (_, i) => tile(`pad-${row}-${i + 1}`, "pad"))}
+              <div className="lk-pad-controls">
+                <fieldset className="lk-pad-bank">
+                  <legend className="lk-sr-only">Pad bank controls</legend>
+                  {tile("pad-up")}
+                  {tile("pad-down")}
+                </fieldset>
+                <div className="lk-pad-matrix">
+                  {padRows.map((row) => (
+                    <div key={row}>
+                      <p className="lk-row-label">
+                        {row === "top" ? "Top row" : "Bottom row"} · 1–8
+                      </p>
+                      <div className="lk-pad-row">
+                        {Array.from({ length: 8 }, (_, i) => tile(`pad-${row}-${i + 1}`, "pad"))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <fieldset className="lk-pad-actions">
+                  <legend className="lk-sr-only">Pad scene and function controls</legend>
+                  {tile("pad-right")}
+                  {tile("function")}
+                </fieldset>
               </div>
               <div className="lk-transport">{transport.map((id) => tile(id))}</div>
               <div className="lk-daw-commands">{dawCommands.map((id) => tile(id))}</div>

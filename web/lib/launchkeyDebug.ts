@@ -142,7 +142,9 @@ export function decodeMessage(
     kind,
     channel,
     number,
-    value: kind === "note-off" ? 0 : kind === "pitch-bend" ? number | (value << 7) : value,
+    // Inventory and daemon raw events use signed bend (-8192..8191). Keep
+    // browser input on that same scale so the wheel returns to zero.
+    value: kind === "note-off" ? 0 : kind === "pitch-bend" ? (number | (value << 7)) - 8192 : value,
     control: null,
     raw: rawHex(bytes),
   };

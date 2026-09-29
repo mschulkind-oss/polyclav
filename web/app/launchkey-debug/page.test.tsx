@@ -141,6 +141,19 @@ describe("Launchkey debugger", () => {
     );
   });
 
+  it("places bank and scene buttons beside the controls they navigate", () => {
+    const { container } = render(<LaunchkeyDebugPage />);
+    const inGroup = (id: string, group: string) =>
+      expect(container.querySelector(`[data-control="${id}"]`)?.closest(group)).not.toBeNull();
+    for (const id of ["track-left", "track-right", "shift", "settings"])
+      inGroup(id, ".lk-screen-buttons");
+    for (const id of ["encoder-up", "encoder-down"]) inGroup(id, ".lk-encoder-bank");
+    for (const id of ["pad-up", "pad-down"]) inGroup(id, ".lk-pad-bank");
+    for (const id of ["pad-right", "function"]) inGroup(id, ".lk-pad-actions");
+    for (const id of ["encoder-up", "encoder-down", "pad-up", "pad-down", "pad-right", "function"])
+      expect(container.querySelectorAll(`[data-control="${id}"]`)).toHaveLength(1);
+  });
+
   it("keeps the latest-input scroll region keyboard reachable when event text grows", () => {
     render(<LaunchkeyDebugPage />);
     const latest = screen.getByRole("status");
@@ -233,7 +246,20 @@ describe("Launchkey debugger", () => {
     expect(container.querySelector('[data-control="mod-wheel"] .lk-wheel-marker')).toHaveStyle({
       bottom: "100%",
     });
-    expect(container.querySelector('[data-control="pitch-wheel"]')).toHaveTextContent("8192");
+    expect(container.querySelector('[data-control="pitch-wheel"]')).toHaveTextContent(
+      "pitch-bend · 0",
+    );
+    expect(container.querySelector('[data-control="pitch-wheel"] .lk-wheel-track')).toHaveClass(
+      "lk-pitch-track",
+    );
+    await act(async () => midi?.({ data: Uint8Array.of(0xe0, 0, 0), timeStamp: 0 }));
+    expect(container.querySelector('[data-control="pitch-wheel"] .lk-wheel-marker')).toHaveStyle({
+      bottom: "0%",
+    });
+    await act(async () => midi?.({ data: Uint8Array.of(0xe0, 127, 127), timeStamp: 0 }));
+    expect(container.querySelector('[data-control="pitch-wheel"] .lk-wheel-marker')).toHaveStyle({
+      bottom: "100%",
+    });
     await act(async () => daw?.({ data: Uint8Array.of(0xbf, 5, 127), timeStamp: 0 }));
     expect(container.querySelector('[data-control="fader-1"] .lk-fader-fill')).toHaveStyle({
       height: "100%",

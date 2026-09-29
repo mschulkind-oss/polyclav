@@ -102,6 +102,14 @@ inventory JSON locally and step through it without any MIDI permission. The
 visual view never transmits MIDI or starts audio. Controls that report no
 message cannot light up from MIDI alone.
 
+In the debugger, sweep the pitch wheel down, release it, then sweep it up and
+release it. The displayed signed bend should reach about `-8192`, return to
+`0` at the visible center line, reach about `8191`, and return to `0` again.
+The mod wheel instead has a one-way `0`–`127` scale. Verify the encoder bank
+buttons appear beside the encoders, pad bank buttons beside the pads, the
+pad-right/Function buttons opposite the pads, and Track buttons below the
+display; on a narrow screen these groups stack without page-wide scrolling.
+
 To verify [DAW layout restoration](./USER_GUIDE.md#launchkey--supported-daw-layout),
 start the daemon with the Launchkey connected. Select a different pad, encoder,
 or fader layout on the keyboard, one area at a time. Confirm the daemon warns

@@ -31,13 +31,29 @@ describe("Launchkey debug decoding", () => {
     expect(controlForMessage(decodeMessage([0x93, 60, 0], "MIDI"))).toBe("key-60");
   });
 
-  it("decodes browser pitch bend as 14-bit position without changing raw bytes", () => {
-    expect(decodeMessage([0xe0, 0, 0], "MIDI")).toMatchObject({ value: 0, raw: "e0 00 00" });
-    expect(decodeMessage([0xe0, 0, 64], "MIDI")).toMatchObject({ value: 8192, raw: "e0 00 40" });
-    expect(decodeMessage([0xe0, 127, 127], "MIDI")).toMatchObject({
-      value: 16383,
-      raw: "e0 7f 7f",
+  it("uses the same signed pitch-bend range in browser, daemon, and offline input", () => {
+    expect(decodeMessage([0xe0, 0, 0], "MIDI")).toMatchObject({ value: -8192, raw: "e0 00 00" });
+    expect(decodeMessage([0xe0, 0, 64], "MIDI")).toMatchObject({ value: 0, raw: "e0 00 40" });
+    expect(decodeMessage([0xe0, 127, 127], "MIDI")).toMatchObject({ value: 8191, raw: "e0 7f 7f" });
+    expect(
+      decodeBackendRaw({ source: "performance", kind: "pitch-bend", bend: -4096 })?.value,
+    ).toBe(-4096);
+    const offline = flattenInventory({
+      controls: [
+        {
+          events: [
+            {
+              port_role: "midi",
+              kind: "pitch_bend",
+              channel: 1,
+              raw_values: { value: 0 },
+              elapsed_ms: 1,
+            },
+          ],
+        },
+      ],
     });
+    expect(offline[0]).toMatchObject({ kind: "pitch-bend", value: 0, control: "pitch-wheel" });
   });
 
   it("displays encoder relative values as signed steps around center 64", () => {

@@ -131,6 +131,10 @@
 .lk-wheels,
 .lk-mini-row,
 .lk-grid,
+.lk-screen-buttons,
+.lk-encoder-bank,
+.lk-pad-bank,
+.lk-pad-actions,
 .lk-transport,
 .lk-daw-commands,
 .lk-fader-buttons,
@@ -148,6 +152,10 @@
 .lk-grid.compact {
   grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
 }
+.lk-screen-buttons {
+  max-width: 440px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 .lk-grid.modes {
   margin-top: 0.35rem;
   grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
@@ -162,8 +170,36 @@
   grid-template-columns: repeat(9, minmax(0, 1fr));
   margin-top: 0.2rem;
 }
+.lk-encoder-cluster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 0.35rem;
+  align-items: center;
+}
 .lk-encoder-row {
   grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+.lk-encoder-bank,
+.lk-pad-bank,
+.lk-pad-actions {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.lk-encoder-bank {
+  grid-template-rows: repeat(2, 1fr);
+}
+.lk-pad-controls {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) 70px;
+  gap: 0.35rem;
+  align-items: center;
+}
+.lk-pad-bank,
+.lk-pad-actions {
+  grid-template-rows: repeat(2, 88px);
+  align-self: center;
 }
 .lk-pad-matrix {
   display: grid;
@@ -266,6 +302,9 @@
 .lk-control.fader-button {
   height: 76px;
 }
+.lk-encoder-bank .lk-control {
+  height: 68px;
+}
 .lk-control.encoder {
   height: 92px;
   align-items: center;
@@ -318,8 +357,18 @@
   border-radius: 4px;
   background: #101b26;
 }
+.lk-pitch-track::after {
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  right: -5px;
+  height: 1px;
+  background: #b6d5e6;
+  content: "";
+}
 .lk-wheel-marker {
   position: absolute;
+  z-index: 1;
   left: -5px;
   right: -5px;
   height: 5px;
@@ -438,6 +487,37 @@
   }
 }
 @media (max-width: 650px) {
+  .lk-encoder-cluster {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lk-encoder-bank {
+    grid-template-columns: repeat(2, minmax(0, 72px));
+    grid-template-rows: none;
+    justify-content: end;
+  }
+  .lk-pad-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: "bank actions" "matrix matrix";
+  }
+  .lk-pad-bank {
+    grid-area: bank;
+  }
+  .lk-pad-actions {
+    grid-area: actions;
+    justify-content: end;
+  }
+  .lk-pad-matrix {
+    grid-area: matrix;
+  }
+  .lk-pad-bank,
+  .lk-pad-actions {
+    grid-template-columns: repeat(2, minmax(0, 72px));
+    grid-template-rows: none;
+  }
+  .lk-pad-bank .lk-control,
+  .lk-pad-actions .lk-control {
+    height: 48px;
+  }
   .lk-control.fader {
     height: 126px;
   }
