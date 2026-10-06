@@ -75,6 +75,13 @@ type PageDef struct {
 // unpainted for future per-page state pads (docs/ROADMAP.md §2.4).
 const PageIndicatorRow = 1
 
+// pageIndicatorCols is the number of bottom-row pads reserved for page
+// indicators (columns 0–4, notes 112–116). Columns 5–7 (notes 117–119)
+// stay free for the user's own OSC/mixer bindings, so the generic
+// parameter browser shows at most this many page indicators and relies on
+// the screen's "n/M" beyond that.
+const pageIndicatorCols = 5
+
 // Page-indicator palette (docs/ROADMAP.md §2.4 names no exact indices
 // for page indicators, so these are picked from the named Components
 // palette): the active page burns orange, available pages sit dim white,
@@ -95,9 +102,10 @@ type Pages struct {
 	defs   []PageDef
 
 	mu     sync.Mutex
-	page   int  // current page index into defs
+	page   int  // cursor into the browser list (see slotAtLocked)
 	native bool // current patch is a native synth (set via OnPatchChange)
 	player PlayerControl
+	params ParamSource // optional instrument-owned parameters (see ParamSource)
 }
 
 // New builds the state machine over the standard page table (see
@@ -116,6 +124,16 @@ func (p *Pages) AttachPlayer(pc PlayerControl) {
 	p.mu.Unlock()
 }
 
+// AttachParams wires the optional instrument-owned parameter list for the
+// generic browser. Called once at startup; the source is read lazily on
+// every page change and knob turn, so a backend that refreshes its list
+// after a patch load needs no further call.
+func (p *Pages) AttachParams(src ParamSource) {
+	p.mu.Lock()
+	p.params = src
+	p.mu.Unlock()
+}
+
 // HandleKnob routes one relative-encoder event (driver KnobEvent shape:
 // index 1..8, signed tick delta) through the current page's slot. On a
 // successful apply the screen shows "Label" / formatted value; unbound
@@ -125,10 +143,9 @@ func (p *Pages) HandleKnob(index int, delta int8) {
 		return
 	}
 	p.mu.Lock()
-	page := p.page
+	slot, ok := p.slotAtLocked(p.page, index-1)
 	p.mu.Unlock()
-	slot := p.defs[page].Slots[index-1]
-	if slot.Adjust == nil {
+	if !ok || slot.Adjust == nil {
 		return
 	}
 	display, ok := slot.Adjust(p.ctl, float32(delta)*slot.Step)
@@ -151,7 +168,7 @@ func (p *Pages) PrevPage() { p.cycle(-1) }
 func (p *Pages) cycle(dir int) {
 	p.mu.Lock()
 	if !p.native {
-		name := p.defs[p.page].Name
+		name := p.defs[0].Name
 		p.mu.Unlock()
 		_ = p.screen.SetDisplayText("(native only)", name)
 		return
@@ -164,11 +181,106 @@ func (p *Pages) cycle(dir int) {
 	_ = p.screen.SetDisplayText(p.defs[page].Name, fmt.Sprintf("Page %d/%d", page+1, n))
 }
 
+// NextParamPage advances the encoder-bank cursor one page through the
+// full browser list and flashes the new page. The list is the curated host
+// pages first (MAIN for a non-native patch, MAIN/OSC/FILTER/AMP/LFO-MOD
+// for the native engine), then the active instrument's own parameters, 8
+// per page. These are the two buttons beside the encoders, so unlike
+// Scene ↑/↓ they reach the instrument parameters a plugin or engine
+// exposes beyond the host's curated assignments.
+func (p *Pages) NextParamPage() { p.stepBrowser(1) }
+
+// PrevParamPage is NextParamPage's other direction.
+func (p *Pages) PrevParamPage() { p.stepBrowser(-1) }
+
+func (p *Pages) stepBrowser(dir int) {
+	p.mu.Lock()
+	n := p.pageCountLocked()
+	p.page = (p.page + dir + n) % n
+	page := p.page
+	title, sub := p.browserFlashLocked(page)
+	p.paintPadsLocked()
+	p.mu.Unlock()
+	_ = p.screen.SetDisplayText(title, sub)
+}
+
+// slotAtLocked resolves encoder idx (0-based) on browser page to its Slot,
+// spanning the curated host pages first and the instrument parameter
+// pages after them. Callers hold p.mu because it reads the live parameter
+// list, which may change under it as a backend republishes.
+func (p *Pages) slotAtLocked(page, idx int) (Slot, bool) {
+	host := p.hostPageCountLocked()
+	if page < host {
+		if p.native {
+			return p.defs[page].Slots[idx], true
+		}
+		return p.defs[0].Slots[idx], true
+	}
+	params := p.paramListLocked()
+	i := (page-host)*8 + idx
+	if i < 0 || i >= len(params) {
+		return Slot{}, false
+	}
+	return Slot{Label: params[i].Label, Step: params[i].Step, Adjust: params[i].Adjust}, true
+}
+
+// hostPageCountLocked is how many curated pages the browser starts with.
+func (p *Pages) hostPageCountLocked() int {
+	if p.native {
+		return len(p.defs)
+	}
+	return 1
+}
+
+func (p *Pages) paramListLocked() []Param {
+	if p.params == nil {
+		return nil
+	}
+	return p.params.Params()
+}
+
+func (p *Pages) paramPageCountLocked() int {
+	return (len(p.paramListLocked()) + 7) / 8
+}
+
+func (p *Pages) pageCountLocked() int {
+	return p.hostPageCountLocked() + p.paramPageCountLocked()
+}
+
+// browserTitleLocked names the page for CurrentPage and the browser flash:
+// the curated page's own name, or PARAMS for an instrument-owned page.
+func (p *Pages) browserTitleLocked(page int) string {
+	host := p.hostPageCountLocked()
+	if page < host {
+		if p.native {
+			return p.defs[page].Name
+		}
+		return p.defs[0].Name
+	}
+	return "PARAMS"
+}
+
+// browserFlashLocked is the two-line screen popup for a browser page:
+// page name / position (position is within that page's own group).
+func (p *Pages) browserFlashLocked(page int) (string, string) {
+	host := p.hostPageCountLocked()
+	if page < host {
+		name := p.defs[0].Name
+		if p.native {
+			name = p.defs[page].Name
+		}
+		return name, fmt.Sprintf("Page %d/%d", page+1, host)
+	}
+	pp := page - host
+	n := p.paramPageCountLocked()
+	return "PARAMS", fmt.Sprintf("%d/%d", pp+1, n)
+}
+
 // CurrentPage reports the active page's index and name.
 func (p *Pages) CurrentPage() (index int, name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.page, p.defs[p.page].Name
+	return p.page, p.browserTitleLocked(p.page)
 }
 
 // OnPatchChange re-clamps page availability for the new patch type and
@@ -179,8 +291,13 @@ func (p *Pages) CurrentPage() (index int, name string) {
 func (p *Pages) OnPatchChange(patchType string) {
 	native := patchType == "native"
 	p.mu.Lock()
+	wasNative := p.native
 	p.native = native
-	if !native {
+	// Snap home on any change out of the parameter domain: leaving the
+	// native engine, or arriving at it from a non-native patch whose
+	// parameter pages do not exist here. A cursor left beyond the new page
+	// count also comes home. Native→native switches keep the page.
+	if !native || !wasNative || p.page >= p.pageCountLocked() {
 		p.page = 0
 	}
 	p.paintPadsLocked()
@@ -203,6 +320,26 @@ func (p *Pages) RefreshPads() {
 // The PadWriter therefore must not call back into Pages (the reconciler
 // adapter in cmd/polyclav does not).
 func (p *Pages) paintPadsLocked() {
+	host := p.hostPageCountLocked()
+	if p.page >= host {
+		// A generic parameter page: columns 0..N-1 show the position
+		// inside the instrument's own parameters. Only the reserved
+		// indicator columns are painted; beyond that the screen's "n/M"
+		// carries the orientation.
+		n := p.paramPageCountLocked()
+		pp := p.page - host
+		for col := 0; col < pageIndicatorCols; col++ {
+			c := padPageUnavailable
+			if col < n {
+				c = padPageAvailable
+			}
+			if col == pp {
+				c = padPageActive
+			}
+			_ = p.pads.SetPadColor(PageIndicatorRow, col, c)
+		}
+		return
+	}
 	for i := range p.defs {
 		c := padPageAvailable
 		if !p.native && i != 0 {

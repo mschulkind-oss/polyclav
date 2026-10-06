@@ -40,6 +40,31 @@ unit-tested against driver fakes, but has never met the device. Verify:
   has played yet. Stop/Record/Loop/Rewind/FF/Shift do nothing. Track
   ←/→ changes patch banks when more than eight patches are configured.
 
+### Generic parameter browser (pending hardware verification)
+
+With a CLAP patch selected, the two buttons beside the encoders
+(DAW channel-1 CC 51 up / CC 52 down) page the encoders beyond the
+curated pages into the plugin's own parameters. Verify:
+
+- With a CLAP patch loaded and its parameter list published, press
+  **encoder ▼** once: the screen flashes `MAIN` / `Page 1/1` first (only
+  the host-allocated MAIN page exists for a non-native patch), then on
+  the next press flashes `PARAMS` / `1/N`. Press **encoder ▲** to walk
+  back, wrapping at both ends.
+- The bottom-row indicator pads mark the parameter page position while
+  a `PARAMS` page is showing (columns 0–4 only; columns 5–7 stay
+  dark so user mixer pads are not touched).
+- Turn an encoder on a `PARAMS` page: the screen shows the plugin's
+  parameter name (module-prefixed when the name repeats across modules)
+  and the new value, the plugin audio changes, and the value survives a
+  patch switch (saved with the CLAP state). A stepped parameter moves one
+  unit per detent; a wide continuous one sweeps in about one rotation.
+- With a soundfont, LV2 or native patch, **encoder ▼** stays on the
+  curated pages (native: the same five as Scene; others: MAIN only) — no
+  crash, no phantom parameter page.
+- Names and values are legible on the two 16-byte lines (long plugin
+  names truncate rather than wrap).
+
 ## Launchkey 61 MK4 control inventory to verify
 
 The Launchkey has two USB MIDI ports: the performance port sends played
@@ -58,7 +83,7 @@ handles them correctly yet:
 | 8 endless encoders | Five synth/chain pages | Check relative CC85–92 on channel 16. |
 | 9 faders | Unmapped by default; optional mixer OSC or opt-in Potato Keys drawbars 1–9 | Check CC5–13 on channel 16 and that fader 9 does not change mixer volume in organ mode. |
 | 9 fader buttons | On organ patches: buttons 1–8 illuminate with drawbar colors (B3 standard uses brown for 16′/5⅓′, white for 8′/4′/2′, and red for black mutation drawbars 2⅔′/1⅗′/1⅓′); button 1 cycles between 4 drawbar coloring modes; button 2 cycles 5 color schemes for default B3 drawbars; button 9 toggles Leslie Stop/Fast with dedicated Green status LED when running and Off when stopped. On non-organ patches, lights are off. | Observed CC37–45 on DAW channel **1**, press 127/release 0. Verify button 1 cycling, button 2 scheme cycling, button 9 rotary toggle, and B3 color palette emulation on hardware; printed shifted names are menu choices, not extra physical buttons. |
-| Pad-bank ↑/↓, encoder ↑/↓, Track ←/→ | Pad-bank CC106/107 and Track CC103/102 are decoded for knob-page and patch-bank navigation; the debugger also shows encoder-bank input | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (encoder), CC103/102 (Track). Shift+Track Left uses channel-1 CC109; Shift+Track Right uses channel-1 CC108. Each sends 127 on press and 0 on release. Shift itself reports channel-7 CC63. Verify host navigation on hardware. |
+| Pad-bank ↑/↓, encoder ↑/↓, Track ←/→ | Pad-bank CC106/107 and Track CC103/102 are decoded for knob-page and patch-bank navigation; encoder CC51/52 pages the generic parameter browser (curated pages then a CLAP patch's own parameters) | Observed DAW channel-1 CC106/107 (pad-bank), CC51/52 (encoder), CC103/102 (Track). Shift+Track Left uses channel-1 CC109; Shift+Track Right uses channel-1 CC108. Each sends 127 on press and 0 on release. Shift itself reports channel-7 CC63. Verify host navigation on hardware. |
 | Play, Stop, Record, Loop, Shift | DAW channel-1 CC115–118 decode as transport events; Play is intended to toggle audition | Observed DAW channel-1 CC115/116/117/118 for Play/Stop/Record/Loop; Shift is channel-7 CC63. The MK4 has no Rewind/Fast-forward controls. Shift+Undo sent Shift CC63 alongside ordinary Undo CC77. Verify Play starts/stops audition on hardware; the other transport actions remain inert. |
 | Octave controls, Scale/Arp/Chord controls, mode selectors | Device-side or unhandled by Polyclav's DAW event decoder | Octave presses changed subsequent key note numbers but sent no distinct button event. Scale/Arp sent channel-7 CC74/73; Chord Map reported pad layout CC29=14. Fixed Chord sent no distinct button event in the capture. Test modes before assigning host actions. |
 

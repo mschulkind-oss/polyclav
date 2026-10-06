@@ -1077,3 +1077,145 @@ func TestCycleRepaintCannotRevertPatchGating(t *testing.T) {
 		t.Errorf("page = %d %q, want 0 MAIN after leaving native", idx, name)
 	}
 }
+
+// fakeParamSource is an in-memory ParamSource for the generic browser
+// tests: each label becomes an adjustable parameter that records its
+// label and step-scaled delta in calls.
+type fakeParamSource struct {
+	params []Param
+	calls  []string
+}
+
+func newFakeParamSource(labels ...string) *fakeParamSource {
+	s := &fakeParamSource{}
+	for _, label := range labels {
+		label := label
+		s.params = append(s.params, Param{
+			Label: label,
+			Step:  1,
+			Adjust: func(_ *controls.Controls, delta float32) (string, bool) {
+				s.calls = append(s.calls, fmt.Sprintf("%s:%g", label, delta))
+				return fmt.Sprintf("v%g", delta), true
+			},
+		})
+	}
+	return s
+}
+
+func (s *fakeParamSource) Params() []Param { return s.params }
+
+// TestParamBrowserPagesHostThenInstrument pins the browser order: the
+// curated host pages come first (MAIN only for a non-native patch), the
+// instrument's own parameters follow 8 per page, and the encoder-bank
+// buttons wrap around the whole list.
+func TestParamBrowserPagesHostThenInstrument(t *testing.T) {
+	f := newFixture(t, nativePatch, sfPatch)
+	if err := f.ctl.SelectPatch("piano"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	src := newFakeParamSource("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9")
+	f.pg.AttachParams(src)
+	f.pg.OnPatchChange("soundfont")
+	f.screen.writes = nil
+
+	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "MAIN" {
+		t.Fatalf("initial page = %d %q, want 0 MAIN", idx, name)
+	}
+
+	want := []struct {
+		idx   int
+		name  string
+		flash string
+	}{
+		{1, "PARAMS", "1/2"},
+		{2, "PARAMS", "2/2"},
+		{0, "MAIN", "Page 1/1"}, // wrap
+	}
+	for _, w := range want {
+		f.pg.NextParamPage()
+		if idx, name := f.pg.CurrentPage(); idx != w.idx || name != w.name {
+			t.Fatalf("NextParamPage: page = %d %q, want %d %q", idx, name, w.idx, w.name)
+		}
+		got := f.screen.last(t)
+		if got.line1 != w.name || got.line2 != w.flash {
+			t.Errorf("NextParamPage screen = %q/%q, want %q/%q", got.line1, got.line2, w.name, w.flash)
+		}
+	}
+
+	f.pg.PrevParamPage()
+	if idx, name := f.pg.CurrentPage(); idx != 2 || name != "PARAMS" {
+		t.Fatalf("PrevParamPage wrap: page = %d %q, want 2 PARAMS", idx, name)
+	}
+
+	// Knob 1 on the last parameter page drives the ninth parameter; the
+	// first page of parameters drives the first.
+	f.pg.HandleKnob(1, 1)
+	f.pg.PrevParamPage()
+	f.pg.HandleKnob(1, -2)
+	wantCalls := []string{"p9:1", "p1:-2"}
+	if len(src.calls) != len(wantCalls) {
+		t.Fatalf("adjust calls = %v, want %v", src.calls, wantCalls)
+	}
+	for i := range wantCalls {
+		if src.calls[i] != wantCalls[i] {
+			t.Errorf("adjust call %d = %q, want %q", i, src.calls[i], wantCalls[i])
+		}
+	}
+	if got := f.screen.last(t); got.line1 != "p1" || got.line2 != "v-2" {
+		t.Errorf("knob popup = %q/%q, want p1/v-2", got.line1, got.line2)
+	}
+}
+
+// TestParamBrowserWithoutParamsIsCurated: a patch whose backend exposes no
+// parameters has a browser that is exactly the curated pages, so the
+// encoder-bank buttons behave like Scene paging (and refuse off native).
+func TestParamBrowserWithoutParamsIsCurated(t *testing.T) {
+	f := newNativeFixture(t)
+	f.pg.NextParamPage()
+	if idx, name := f.pg.CurrentPage(); idx != 1 || name != "OSC" {
+		t.Fatalf("NextParamPage native = %d %q, want 1 OSC", idx, name)
+	}
+	if got := f.screen.last(t); got.line1 != "OSC" || got.line2 != "Page 2/5" {
+		t.Errorf("flash = %q/%q, want OSC/Page 2/5", got.line1, got.line2)
+	}
+
+	// Non-native with no params: MAIN is the only page, so the switch is a
+	// (visible) no-op rather than a crash.
+	f2 := newFixture(t, sfPatch)
+	f2.pg.OnPatchChange("soundfont")
+	f2.pg.NextParamPage()
+	if idx, name := f2.pg.CurrentPage(); idx != 0 || name != "MAIN" {
+		t.Fatalf("NextParamPage soundfont = %d %q, want 0 MAIN", idx, name)
+	}
+}
+
+// TestParamBrowserClampsOnPatchChange: a cursor parked on a CLAP parameter
+// page must come home when the next patch has fewer pages.
+func TestParamBrowserClampsOnPatchChange(t *testing.T) {
+	f := newFixture(t, nativePatch, sfPatch)
+	f.pg.AttachParams(newFakeParamSource("p1", "p2"))
+	f.pg.OnPatchChange("clap")
+	f.pg.NextParamPage()
+	if idx, _ := f.pg.CurrentPage(); idx != 1 {
+		t.Fatalf("page = %d, want 1 (parameter page)", idx)
+	}
+	f.pg.OnPatchChange("native")
+	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "MAIN" {
+		t.Fatalf("after native change = %d %q, want 0 MAIN", idx, name)
+	}
+}
+
+// TestParamBrowserPads: the indicator row shows the parameter page
+// position while the browser is on an instrument-owned page.
+func TestParamBrowserPads(t *testing.T) {
+	f := newFixture(t, sfPatch)
+	f.pg.AttachParams(newFakeParamSource("a", "b", "c"))
+	f.pg.OnPatchChange("clap")
+	f.pg.NextParamPage() // page 1, parameter page 0 of 1
+	if got := f.pads.colors[padKey{PageIndicatorRow, 0}]; got != padPageActive {
+		t.Errorf("pad (1,0) = %d, want active %d", got, padPageActive)
+	}
+	if got := f.pads.colors[padKey{PageIndicatorRow, 1}]; got != padPageUnavailable {
+		t.Errorf("pad (1,1) = %d, want unavailable %d", got, padPageUnavailable)
+	}
+}

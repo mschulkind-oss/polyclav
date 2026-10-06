@@ -68,6 +68,18 @@ type ClapParamInfo struct {
 	Module       string
 }
 
+// CLAP parameter flag bits (clap/ext/params.h, clap_param_info.flags).
+// Only the ones the host acts on are named here; the raw Flags field
+// carries the rest.
+const (
+	ClapParamIsStepped  uint32 = 1 << 0
+	ClapParamIsPeriodic uint32 = 1 << 1
+	ClapParamIsHidden   uint32 = 1 << 2
+	ClapParamIsReadonly uint32 = 1 << 3
+	ClapParamIsBypass   uint32 = 1 << 4
+	ClapParamIsEnum     uint32 = 1 << 16
+)
+
 // ClapFeedbackEvent is one plugin-to-host CLAP parameter feedback event.
 type ClapFeedbackEvent struct {
 	ClapID uint32

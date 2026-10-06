@@ -528,6 +528,10 @@ example config's mute pads live there. Turning a knob pops the
 parameter name and value on the screen for 800 ms, then the patch name
 returns.
 
+The two buttons beside the encoders (**encoder ▲/▼**) page a longer
+list — the curated pages plus a CLAP plugin's own parameters — see
+"Browsing a plugin's own parameters" below.
+
 | # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
 |---|------|--------|--------|--------|--------|--------|--------|--------|--------|
 | 1 | **MAIN** | Volume | Reverb | Comp | Pedal | Resonance | Glide | Drive | — |
@@ -551,6 +555,34 @@ Notes:
 - **Play** on the transport row toggles the audition player's last-used
   clip. Every knob edit persists to the current patch automatically
   (debounced) — there is nothing to "save".
+
+### Browsing a plugin's own parameters
+
+> **Hardware-pending:** this browser is unit-tested but has not been
+> run against a Launchkey on the bench; see the on-device checklist in
+> `docs/HARDWARE_TESTS.md` ("Knob pages").
+
+The two buttons beside the encoders — **encoder ▲/▼** (DAW port CC 51/52)
+— page the encoders through a longer list than Scene does: the same
+curated MAIN (and native) pages first, then, for a **CLAP patch**, every
+non-hidden, non-read-only parameter the plugin publishes, 8 to a page.
+**encoder ▼** moves forward and **encoder ▲** back, wrapping at either
+end; the screen flashes the page name (for example `PARAMS` / `1/5`) and
+the bottom pad row marks the parameter page.
+
+Plugin parameters are not laid out the way a hand-built page is, so you
+discover what a knob does by turning it slightly: the screen shows the
+plugin's parameter name and its new value. A name that repeats across
+plugin modules (for example `Drive` in two places) gets its module as a
+prefix. A stepped or enumerated parameter moves one unit per detent; a
+continuous one sweeps its range in roughly one encoder rotation. Edits go
+straight to the live plugin and are saved with the patch's CLAP state when
+you switch patches or quit — the same as the organ faders.
+
+There is no plugin parameter list for a soundfont or LV2 patch (they
+expose none), and for a native patch the five curated pages already *are*
+the instrument's parameters, so **encoder ▲/▼** pages the same list as
+Scene ▲/▼ there.
 
 ## Web dashboard
 

@@ -201,6 +201,31 @@ func TestParseCapturedDAWTransportCC(t *testing.T) {
 	}
 }
 
+func TestParseEncoderBank(t *testing.T) {
+	// The two buttons beside the 8 encoders report on the DAW port,
+	// channel 1, as CC 51 (up) and CC 52 (down).
+	tests := []struct {
+		name  string
+		cc    byte
+		up    bool
+		press bool
+	}{
+		{"Up press", 51, true, true},
+		{"Up release", 51, true, false},
+		{"Down press", 52, false, true},
+		{"Down release", 52, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val := byte(0)
+			if tt.press {
+				val = 127
+			}
+			assertParseEvent(t, []byte{0xB0, tt.cc, val}, EncoderBankEvent{Up: tt.up, Pressed: tt.press})
+		})
+	}
+}
+
 func TestParseIgnoresOtherMessages(t *testing.T) {
 	tests := []struct {
 		name string

@@ -478,6 +478,19 @@ func main() {
 			// controls layer only and writes the label+value popup through
 			// the screen adapter below, which arms the 800 ms restore.
 			pg.HandleKnob(e.Index, e.Delta)
+		case driver.EncoderBankEvent:
+			// The two buttons beside the encoders page the generic
+			// parameter browser: curated host pages first, then the active
+			// instrument's own parameters (CLAP today). Press/release only;
+			// the release edge is ignored so one press pages once.
+			if !e.Pressed {
+				return
+			}
+			if e.Up {
+				pg.PrevParamPage()
+			} else {
+				pg.NextParamPage()
+			}
 		case driver.FaderEvent:
 			if faderRouter != nil {
 				faderRouter.HandleFader(e)
@@ -655,6 +668,10 @@ func main() {
 		}},
 	)
 	pg.AttachPlayer(playerToggle{plr: plr})
+	// The generic parameter browser's instrument-owned pages come from the
+	// active CLAP instance; for every other backend the source yields an
+	// empty list and the browser is just the curated host pages.
+	pg.AttachParams(clapParamSource{cache: clapParams, setter: realClapParamSetter{}})
 	// Seed the page machine with the already-selected boot patch; the
 	// followPages hub follower below keeps it in sync from here on.
 	if cur := registry.Current(); cur != nil {

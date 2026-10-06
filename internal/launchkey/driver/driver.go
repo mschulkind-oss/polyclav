@@ -60,11 +60,22 @@ type TransportEvent struct {
 	Pressed bool
 }
 
+// EncoderBankEvent is one of the two bank buttons beside the 8 encoders
+// (MK4 61 DAW port, channel 1, CC 51/52). Up=true is the upper button.
+// Unlike TransportEvent these are not part of the transport table: the
+// pages machine uses them as the generic instrument-parameter browser's
+// page gesture.
+type EncoderBankEvent struct {
+	Up      bool
+	Pressed bool
+}
+
 func (KnobEvent) isEvent()        {}
 func (FaderEvent) isEvent()       {}
 func (FaderButtonEvent) isEvent() {}
 func (PadEvent) isEvent()         {}
 func (TransportEvent) isEvent()   {}
+func (EncoderBankEvent) isEvent() {}
 
 const (
 	// In Relative mode (enabled by B6 45 7F at Open() time), the device
@@ -76,6 +87,11 @@ const (
 	ccKnobBase        = 0x55
 	ccFaderBase       = 5
 	ccFaderButtonBase = 37
+	// Encoder-bank ↑/↓ sit beside the 8 encoders and report on the DAW
+	// port, channel 1 (docs/HARDWARE_TESTS.md; the debugger names CC 51
+	// "encoder-up" and CC 52 "encoder-down").
+	ccEncoderBankUp   = 51
+	ccEncoderBankDown = 52
 
 	noteTransportRewind      = 0x71
 	noteTransportFastForward = 0x72
@@ -423,6 +439,12 @@ func parseMessage(msg []byte) (Event, bool) {
 		if channel == 0 {
 			if cc >= ccFaderButtonBase && cc < ccFaderButtonBase+9 {
 				return FaderButtonEvent{Index: int(cc-ccFaderButtonBase) + 1, Pressed: val >= 64}, true
+			}
+			if cc == ccEncoderBankUp {
+				return EncoderBankEvent{Up: true, Pressed: val >= 64}, true
+			}
+			if cc == ccEncoderBankDown {
+				return EncoderBankEvent{Up: false, Pressed: val >= 64}, true
 			}
 			if button, ok := transportFromDAWCC(cc); ok {
 				return TransportEvent{Button: button, Pressed: val >= 64}, true
