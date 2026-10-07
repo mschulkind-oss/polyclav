@@ -417,13 +417,15 @@ type fakeStore struct {
 	currentPatch string
 	pedalOrder   []string
 	macros       []state.Macro
+	masterVolume float32
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		knobs:  map[string]state.Knob{},
-		synths: map[string]state.SynthState{},
-		claps:  map[string]state.ClapState{},
+		knobs:        map[string]state.Knob{},
+		synths:       map[string]state.SynthState{},
+		claps:        map[string]state.ClapState{},
+		masterVolume: 1.0,
 	}
 }
 
@@ -516,6 +518,18 @@ func (f *fakeStore) SetMacros(m []state.Macro) error {
 	defer f.mu.Unlock()
 	f.macros = append([]state.Macro(nil), m...)
 	return nil
+}
+
+func (f *fakeStore) MasterVolume() float32 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.masterVolume
+}
+
+func (f *fakeStore) SetMasterVolume(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masterVolume = v
 }
 
 func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {

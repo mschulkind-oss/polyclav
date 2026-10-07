@@ -41,10 +41,11 @@ panel; see "Web dashboard" below.
   - Top-row pads select patches; the lit pad tracks the current patch.
   - Five knob pages (MAIN / OSC / FILTER / AMP / LFO/MOD) switched with
     Scene ▲/▼; the bottom pad row shows the active page. MAIN keeps the
-    classic layout: knob 1 = master volume, 2 = reverb wet/dry, 3 = input
-    compressor, 4 = filter cutoff (native patches). The other pages cover
-    the native synth's full voice. Code-complete, **pending hardware
-    verification** — see "Launchkey knob pages" below.
+    classic layout: knob 1 = patch volume, 2 = reverb wet/dry, 3 = input
+    compressor, 4 = drive pedal, 8 = Polyclav's global master volume
+    (independent of patches). The other pages cover the native synth's
+    full voice. Code-complete, **pending hardware verification** — see
+    "Launchkey knob pages" below.
   - The screen shows the current patch's `display` name, with value
     popups while you turn a knob.
   - The mastering compressor, brick-wall limiter, and per-patch gain are set
@@ -534,7 +535,7 @@ list — the curated pages plus a CLAP plugin's own parameters — see
 
 | # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
 |---|------|--------|--------|--------|--------|--------|--------|--------|--------|
-| 1 | **MAIN** | Volume | Reverb | Comp | Pedal | Resonance | Glide | Drive | — |
+| 1 | **MAIN** | Volume | Reverb | Comp | Pedal | Resonance | Glide | Drive | Master |
 | 2 | **OSC** | Osc1 lvl | Osc1 detune | Osc2 lvl | Osc2 detune | Osc3 lvl | Osc3 detune | Noise | Pulse width |
 | 3 | **FILTER** | Cutoff | Resonance | Env amount | F.Attack | F.Decay | F.Sustain | F.Release | Kbd track |
 | 4 | **AMP** | A.Attack | A.Decay | A.Sustain | A.Release | Vel→Amp | Vel→Cutoff | Drive | — |
@@ -547,6 +548,12 @@ Notes:
   respond on every patch type, not just native ones. Knob 4 was cutoff
   through earlier releases; cutoff is still one page-flip away on
   **FILTER**'s knob 1.
+- **MAIN knob 8 is Master** — Polyclav's own output level, stored
+  globally (not per patch). The engine's final gain is the selected
+  patch's *Volume* (knob 1) multiplied by *Master* (knob 8): knob 1 trims
+  one patch, knob 8 turns the whole instrument down without editing any
+  patch, and switching patches never changes it. It is saved to
+  `state.toml` and survives a restart. It applies on every patch type.
 - With a **non-native patch** selected, only MAIN's knobs 1–4 (the
   global volume / reverb / comp / pedal) respond; the rest of the synth
   pages apply to native patches only.

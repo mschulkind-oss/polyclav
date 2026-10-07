@@ -190,6 +190,13 @@ type Snapshot struct {
 	// assignments but never applies them (the web drives each Target param
 	// through the existing setters). See controls.SetMacros.
 	Macros []Macro `toml:"macros,omitempty"`
+	// MasterVolume is Polyclav's GLOBAL output level (0..1), applied on
+	// top of each patch's own Volume: the engine's final gain is
+	// Volume*MasterVolume. Stored globally (not per-patch) so switching
+	// patches never changes it. Absent means 1.0 (full), which is why it
+	// is a pointer — 0 is a real, meaningful setting (muted). See
+	// controls.AdjustMasterVolume.
+	MasterVolume *float32 `toml:"master_volume,omitempty"`
 }
 
 // Store owns the in-memory snapshot and a debounced write loop.
@@ -537,6 +544,16 @@ func cloneMacros(in []Macro) []Macro {
 	return append([]Macro(nil), in...)
 }
 
+// cloneFloat32 copies a *float32 so a snapshot handed to the encoder can
+// never alias the store's live pointer.
+func cloneFloat32(in *float32) *float32 {
+	if in == nil {
+		return nil
+	}
+	v := *in
+	return &v
+}
+
 // PedalOrder returns a copy of the global chain display order, or nil
 // when the user has never reordered (callers fall back to the registry's
 // canonical order).
@@ -590,6 +607,27 @@ func (s *Store) SetMacros(m []Macro) error {
 	s.mu.Unlock()
 	s.signalWake()
 	return nil
+}
+
+// MasterVolume returns Polyclav's global output level, defaulting to 1.0
+// (full) when the user has never set it.
+func (s *Store) MasterVolume() float32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.snap.MasterVolume == nil {
+		return 1.0
+	}
+	return *s.snap.MasterVolume
+}
+
+// SetMasterVolume stores Polyclav's global output level and schedules a
+// debounced write. Callers clamp to [0,1].
+func (s *Store) SetMasterVolume(v float32) {
+	s.mu.Lock()
+	s.snap.MasterVolume = &v
+	s.dirty = true
+	s.mu.Unlock()
+	s.signalWake()
 }
 
 // PatchKnob returns the stored Knob for patchName, or Defaults() if absent.
@@ -814,6 +852,7 @@ func (s *Store) flush() error {
 		Patches:      clonePatches(s.snap.Patches),
 		PedalOrder:   clonePedalOrder(s.snap.PedalOrder),
 		Macros:       cloneMacros(s.snap.Macros),
+		MasterVolume: cloneFloat32(s.snap.MasterVolume),
 	}
 	s.dirty = false
 	s.mu.Unlock()

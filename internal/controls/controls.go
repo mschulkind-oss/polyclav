@@ -104,6 +104,12 @@ type StateStore interface {
 	// the store's SetMacros always returns nil (see state.Snapshot.Macros).
 	Macros() []state.Macro
 	SetMacros([]state.Macro) error
+	// MasterVolume/SetMasterVolume carry Polyclav's GLOBAL output level
+	// (0..1), applied on top of each patch's own Volume as the engine's
+	// final gain. Stored globally, so it is independent of patch
+	// selection — see controls.AdjustMasterVolume.
+	MasterVolume() float32
+	SetMasterVolume(float32)
 }
 
 // Compile-time guarantees that the production types satisfy the seams —
@@ -571,6 +577,47 @@ func (c *Controls) AdjustDrivePedal(delta float32) (float32, bool) {
 	return c.adjustKnob("drive_pedal", delta)
 }
 
+// MasterVolume returns Polyclav's global output level (0..1). It is
+// independent of the current patch: the engine's final gain is the
+// selected patch's Volume multiplied by this value.
+func (c *Controls) MasterVolume() float32 {
+	if c.st == nil {
+		return 1.0
+	}
+	return c.st.MasterVolume()
+}
+
+// AdjustMasterVolume nudges Polyclav's global output level by delta,
+// persists it, re-applies the current patch's effective gain, and
+// publishes a "master" change. ok is false only when there is no state
+// store (wiring-only tests); unlike the per-patch adjusters it does not
+// require a selected patch, because the level belongs to Polyclav rather
+// than to a patch.
+func (c *Controls) AdjustMasterVolume(delta float32) (float32, bool) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	if c.st == nil {
+		return 0, false
+	}
+	v := clamp01(c.st.MasterVolume() + delta)
+	c.st.SetMasterVolume(v)
+	c.applyEffectiveVolume()
+	c.hub.Publish(Change{Type: "master", Data: map[string]any{"volume": v}})
+	return v, true
+}
+
+// applyEffectiveVolume pushes Volume*MasterVolume to the engine for the
+// current patch. Callers hold applyMu. No patch means nothing to hear, so
+// the engine is left alone until the next select restores it.
+func (c *Controls) applyEffectiveVolume() {
+	cur := c.reg.Current()
+	if cur == nil || c.st == nil {
+		return
+	}
+	k := c.st.PatchKnob(cur.Name)
+	c.audio.SetMasterVolume(k.Volume * c.st.MasterVolume())
+}
+
 // setKnob is the absolute-setter path shared by SetVolume/Reverb/Compressor.
 func (c *Controls) setKnob(field string, v float32) (float32, error) {
 	c.applyMu.Lock()
@@ -607,7 +654,10 @@ func (c *Controls) adjustKnob(field string, delta float32) (float32, bool) {
 func (c *Controls) applyKnob(field string, v float32) {
 	switch field {
 	case "volume":
-		c.audio.SetMasterVolume(v)
+		// Per-patch Volume is a patch trim, not the final gain: the
+		// engine's master stage is Volume*MasterVolume so the global level
+		// survives patch switches.
+		c.audio.SetMasterVolume(v * c.st.MasterVolume())
 	case "reverb":
 		c.audio.SetReverb(v)
 	case "compressor":
@@ -1719,7 +1769,7 @@ func (c *Controls) afterSelect() {
 		return
 	}
 	k := c.st.PatchKnob(cur.Name)
-	c.audio.SetMasterVolume(k.Volume)
+	c.audio.SetMasterVolume(k.Volume * c.st.MasterVolume())
 	c.audio.SetReverb(k.Reverb)
 	c.audio.SetCompressor(k.Compressor)
 	// The chain registry owns the post-synth restore, drive pedal

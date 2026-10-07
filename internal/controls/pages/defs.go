@@ -72,8 +72,9 @@ const (
 //
 // Non-native patches: only page 0 is live, and on it only the slots
 // that route through the always-available knob setters (Volume, Reverb,
-// Comp, Pedal — slots 1–4). The rest return ok=false from their
-// controls setters (ErrNoNativePatch) and show nothing.
+// Comp, Pedal — slots 1–4 — plus the global Master on slot 8). The rest
+// return ok=false from their controls setters (ErrNoNativePatch) and show
+// nothing.
 func pageDefs() []PageDef {
 	return []PageDef{
 		{
@@ -86,7 +87,7 @@ func pageDefs() []PageDef {
 				{Label: "Resonance", Step: stepResonance, Adjust: adjResonance()},
 				{Label: "Glide", Step: stepGlide, Adjust: adjGlide()},
 				{Label: "Drive", Step: stepUnit, Adjust: adjDrive()},
-				{}, // unbound
+				{Label: "Master", Step: stepUnit, Adjust: adjMasterVolume},
 			},
 		},
 		{
@@ -260,6 +261,17 @@ func adjCompressor(ctl *controls.Controls, delta float32) (string, bool) {
 
 func adjDrivePedal(ctl *controls.Controls, delta float32) (string, bool) {
 	v, ok := ctl.AdjustDrivePedal(delta)
+	if !ok {
+		return "", false
+	}
+	return formatPercent(v), true
+}
+
+// adjMasterVolume moves Polyclav's global output level — knob 8 on MAIN.
+// It is not a per-patch knob (it never resets on patch switch and is
+// stored globally in state.toml), so it applies on every patch type.
+func adjMasterVolume(ctl *controls.Controls, delta float32) (string, bool) {
+	v, ok := ctl.AdjustMasterVolume(delta)
 	if !ok {
 		return "", false
 	}

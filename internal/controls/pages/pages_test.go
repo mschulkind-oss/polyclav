@@ -177,10 +177,11 @@ type fakeStore struct {
 	currentPatch string
 	pedalOrder   []string
 	macros       []state.Macro
+	masterVolume float32
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{knobs: map[string]state.Knob{}, synths: map[string]state.SynthState{}, claps: map[string]state.ClapState{}}
+	return &fakeStore{knobs: map[string]state.Knob{}, synths: map[string]state.SynthState{}, claps: map[string]state.ClapState{}, masterVolume: 1.0}
 }
 
 func (f *fakeStore) PatchKnob(name string) state.Knob {
@@ -249,6 +250,10 @@ func (f *fakeStore) SetMacros(m []state.Macro) error {
 	f.macros = append([]state.Macro(nil), m...)
 	return nil
 }
+
+func (f *fakeStore) MasterVolume() float32 { return f.masterVolume }
+
+func (f *fakeStore) SetMasterVolume(v float32) { f.masterVolume = v }
 
 func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
 	syn, ok := f.synths[name]
@@ -440,7 +445,13 @@ func TestKnobRoutingAllPages(t *testing.T) {
 					t.Errorf("drive = %v", a.drive)
 				}
 			}},
-		{name: "MAIN knob 8 unbound", page: 0, knob: 8, ticks: 1},
+		{name: "MAIN knob 8 master", page: 0, knob: 8, ticks: -1, wantLabel: "Master", wantDisplay: "99%",
+			wantCall: "SetMasterVolume",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.volume, 1-1.0/127) {
+					t.Errorf("master volume = %v", a.volume)
+				}
+			}},
 
 		// ---- Page 2 OSC ----
 		{name: "OSC osc1 level", page: 1, knob: 1, ticks: -1, wantLabel: "Osc1 Level", wantDisplay: "99%",
@@ -765,8 +776,8 @@ func TestNonNativeGating(t *testing.T) {
 		t.Errorf("screen line1 = %q, want Pedal", w.line1)
 	}
 
-	// Knobs 5-8 on MAIN are native-only (or unbound): fully inert.
-	for knob := 5; knob <= 8; knob++ {
+	// Knobs 5-7 on MAIN are native-only: fully inert on a soundfont patch.
+	for knob := 5; knob <= 7; knob++ {
 		f.audio.reset()
 		f.screen.writes = nil
 		f.pg.HandleKnob(knob, 1)
@@ -776,6 +787,17 @@ func TestNonNativeGating(t *testing.T) {
 		if len(f.screen.writes) != 0 {
 			t.Errorf("knob %d wrote screen on soundfont: %+v", knob, f.screen.writes)
 		}
+	}
+
+	// Knob 8 is Polyclav's global Master — live on every patch type.
+	f.audio.reset()
+	f.screen.writes = nil
+	f.pg.HandleKnob(8, 1)
+	if f.audio.calls["SetMasterVolume"] != 1 {
+		t.Errorf("master knob dead on soundfont: %v", f.audio.calls)
+	}
+	if w := f.screen.last(t); w.line1 != "Master" {
+		t.Errorf("screen line1 = %q, want Master", w.line1)
 	}
 }
 

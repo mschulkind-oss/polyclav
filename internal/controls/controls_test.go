@@ -390,13 +390,15 @@ type fakeStore struct {
 	setCurrCalls int
 	pedalOrder   []string
 	macros       []state.Macro
+	masterVolume float32
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		knobs:  map[string]state.Knob{},
-		synths: map[string]state.SynthState{},
-		claps:  map[string]state.ClapState{},
+		knobs:        map[string]state.Knob{},
+		synths:       map[string]state.SynthState{},
+		claps:        map[string]state.ClapState{},
+		masterVolume: 1.0,
 	}
 }
 
@@ -467,6 +469,10 @@ func (f *fakeStore) SetMacros(m []state.Macro) error {
 	f.macros = append([]state.Macro(nil), m...)
 	return nil
 }
+
+func (f *fakeStore) MasterVolume() float32 { return f.masterVolume }
+
+func (f *fakeStore) SetMasterVolume(v float32) { f.masterVolume = v }
 
 func (f *fakeStore) PatchSynth(name string) (state.SynthState, bool) {
 	syn, ok := f.synths[name]
@@ -3026,5 +3032,87 @@ func TestSaveActiveClapStatePersistsOnShutdownPath(t *testing.T) {
 	got, ok := f.st.claps["organ"]
 	if !ok || got.BlobBase64 != "CgsM" || got.FormatVersion != 1 {
 		t.Fatalf("saved clap state = %+v ok=%v", got, ok)
+	}
+}
+
+// TestAdjustMasterVolumeComposesWithPatchVolume pins the two-stage gain:
+// the engine's final volume is the patch's Volume times the global
+// Master, and moving either re-applies the product.
+func TestAdjustMasterVolumeComposesWithPatchVolume(t *testing.T) {
+	f := newFixture(t, sfPatch)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if _, err := f.c.SetVolume(0.5); err != nil {
+		t.Fatalf("SetVolume: %v", err)
+	}
+	for len(f.ch) > 0 {
+		<-f.ch
+	}
+
+	v, ok := f.c.AdjustMasterVolume(-0.25)
+	if !ok {
+		t.Fatal("AdjustMasterVolume ok=false, want true")
+	}
+	if !approxEq(v, 0.75) {
+		t.Errorf("master = %v, want 0.75", v)
+	}
+	if !approxEq(f.audio.volume, 0.5*0.75) {
+		t.Errorf("engine volume = %v, want 0.375 (patch 0.5 x master 0.75)", f.audio.volume)
+	}
+	if got := f.st.MasterVolume(); !approxEq(got, 0.75) {
+		t.Errorf("stored master = %v, want 0.75", got)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "master" {
+		t.Errorf("change type = %q, want master", ch.Type)
+	}
+	if got, _ := ch.Data["volume"].(float32); !approxEq(got, 0.75) {
+		t.Errorf("change volume = %v, want 0.75", ch.Data["volume"])
+	}
+
+	// Clamps at both ends rather than exceeding the engine range.
+	if v, _ := f.c.AdjustMasterVolume(-2); !approxEq(v, 0) {
+		t.Errorf("master after big down = %v, want 0", v)
+	}
+	if !approxEq(f.audio.volume, 0) {
+		t.Errorf("engine volume at master 0 = %v, want 0", f.audio.volume)
+	}
+	if v, _ := f.c.AdjustMasterVolume(5); !approxEq(v, 1) {
+		t.Errorf("master after big up = %v, want 1", v)
+	}
+	if !approxEq(f.audio.volume, 0.5) {
+		t.Errorf("engine volume at master 1 = %v, want patch 0.5", f.audio.volume)
+	}
+}
+
+// TestMasterVolumeSurvivesPatchSelect: the global level is not per-patch,
+// so switching patches keeps it and re-applies it to the new patch's own
+// volume.
+func TestMasterVolumeSurvivesPatchSelect(t *testing.T) {
+	piano := patches.Patch{Name: "piano", Display: "Piano", Type: "soundfont"}
+	f := newFixture(t, sfPatch, piano)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if _, err := f.c.SetVolume(0.4); err != nil {
+		t.Fatalf("SetVolume: %v", err)
+	}
+	if _, ok := f.c.AdjustMasterVolume(-0.5); !ok { // master 0.5
+		t.Fatal("AdjustMasterVolume ok=false")
+	}
+	if !approxEq(f.audio.volume, 0.4*0.5) {
+		t.Fatalf("engine volume on salamander = %v, want 0.2", f.audio.volume)
+	}
+
+	if err := f.c.SelectPatch("piano"); err != nil {
+		t.Fatalf("SelectPatch piano: %v", err)
+	}
+	if !approxEq(f.c.MasterVolume(), 0.5) {
+		t.Errorf("master changed across patch select: %v, want 0.5", f.c.MasterVolume())
+	}
+	// Piano has never been tweaked, so its Volume is the Defaults() 1.0.
+	if !approxEq(f.audio.volume, 1.0*0.5) {
+		t.Errorf("engine volume on piano = %v, want 0.5 (1.0 x 0.5)", f.audio.volume)
 	}
 }

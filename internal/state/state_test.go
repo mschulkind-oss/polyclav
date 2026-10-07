@@ -1047,3 +1047,58 @@ func TestClapStatePersistsToDisk(t *testing.T) {
 		t.Fatalf("clap state = %+v", got)
 	}
 }
+
+// TestMasterVolumeDefaultAndRoundTrip: the global level defaults to full
+// when never set, 0 is a real stored value (muted), and it round-trips
+// through state.toml.
+func TestMasterVolumeDefaultAndRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.toml")
+
+	// A store that has never seen the key reports full volume.
+	store := NewStore(path, 10*time.Millisecond, slog.Default(), Snapshot{})
+	if got := store.MasterVolume(); got != 1.0 {
+		t.Fatalf("default MasterVolume = %v, want 1.0", got)
+	}
+
+	// Explicit 0 is a real setting, not "unset".
+	store.SetMasterVolume(0)
+	if got := store.MasterVolume(); got != 0 {
+		t.Fatalf("MasterVolume after set 0 = %v, want 0", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = store.Run(ctx); close(done) }()
+	store.SetMasterVolume(0.35)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit within 2s")
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.MasterVolume == nil || *got.MasterVolume != 0.35 {
+		t.Fatalf("persisted MasterVolume = %v, want 0.35", got.MasterVolume)
+	}
+
+	// A state.toml written before this key existed loads as full volume.
+	legacyPath := filepath.Join(dir, "legacy.toml")
+	if err := os.WriteFile(legacyPath, []byte("current_patch = \"ydp-grand\"\n"), 0o644); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	legacy, err := Load(legacyPath)
+	if err != nil {
+		t.Fatalf("Load legacy: %v", err)
+	}
+	if legacy.MasterVolume != nil {
+		t.Errorf("legacy MasterVolume = %v, want nil", *legacy.MasterVolume)
+	}
+	if got := NewStore(legacyPath, time.Second, slog.Default(), legacy).MasterVolume(); got != 1.0 {
+		t.Errorf("legacy store MasterVolume = %v, want 1.0", got)
+	}
+}

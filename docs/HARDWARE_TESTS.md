@@ -33,6 +33,12 @@ unit-tested against driver fakes, but has never met the device. Verify:
 - Knob 1 on each page sounds right on a native patch: MAIN=volume,
   OSC=osc1 level, FILTER=cutoff, AMP=amp attack, LFO/MOD=LFO rate
   (audible vibrato/wah once LFO>Pitch or LFO>Cutoff is raised).
+- MAIN knob 8 is **Master**, Polyclav's global output level: it changes
+  loudness on a soundfont patch too, and switching patches leaves it (and
+  the resulting level) where you set it. Set it low, switch patches, and
+  confirm the new patch comes in at its own volume scaled by the same
+  master; turn it to 0 for silence. Restart the daemon and confirm the
+  level survives (`master_volume` in `state.toml`).
 - Knob labels/values on the screen are legible for every slot (16-char
   lines; e.g. "Osc1 Detune" / "+7 c").
 - Transport Play toggles the audition player's last-used clip (run with
