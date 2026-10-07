@@ -605,8 +605,7 @@ offer the same cards:
   highlighted and colors follow each patch's `pad_color`.
 - **Patch params** — this patch's volume, reverb, and compressor
   sliders, plus a cutoff slider that activates while a native patch is
-  selected. (The board's **Master** slider is different: it is
-  Polyclav's global level, knob 8 on MAIN.)
+  selected.
 - **Native synth** — shown only while a native patch is current: the
   full voice — oscillators, pulse width, noise, drive, filter + both
   ADSRs, keyboard tracking, velocity routing, LFO, bend range, glide,
@@ -617,8 +616,12 @@ offer the same cards:
   watch each note appear as an (in, out) dot on the curve. Apply for
   the session, or Save to write the curve into `config.toml` (see
   "Velocity curves" below).
-- **Mastering** — comp amount, limiter ceiling, and Polyclav's global
-  master volume (the same level as MAIN knob 8), live.
+- **Mastering** — comp amount and limiter ceiling, live. The board's
+  **Master-out card** carries both volume stages side by side: **Patch**
+  (this patch's trim, MAIN knob 1) and **Master** (Polyclav's global
+  level, MAIN knob 8). They multiply — the engine gain is
+  `patch × master` — so switching patches keeps the master and any patch
+  can be trimmed under it.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
   (see "Audition mode" below).
 - **Config** — view and edit `config.toml` in the browser. Saving

@@ -51,9 +51,11 @@ export const PARAM_WIRING: Record<string, ParamWire> = {
   "comp.glue": { endpoint: "mastering", field: "comp_amount", toEngine: pct, fromEngine: unpct },
   // Reverb pedal — only the wet send is a live engine param today.
   "reverb.mix": { endpoint: "params", field: "reverb", toEngine: pct, fromEngine: unpct },
-  // Master-out card. Level is Polyclav's GLOBAL master volume (knob 8 on
-  // MAIN), independent of patches; ceiling is the mastering limiter. The
-  // per-patch volume stays on the Params card (/api/params volume).
+  // Master-out card. The two volume stages multiply: Patch is this patch's
+  // trim (/api/params volume, MAIN knob 1) and Master is Polyclav's global
+  // level (/api/mastering master_volume, MAIN knob 8, independent of
+  // patches). Ceiling is the mastering limiter.
+  "patch.level": { endpoint: "params", field: "volume", toEngine: pct, fromEngine: unpct },
   "master.level": {
     endpoint: "mastering",
     field: "master_volume",

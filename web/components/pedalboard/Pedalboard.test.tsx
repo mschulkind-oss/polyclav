@@ -123,11 +123,14 @@ test("raising trem Depth above 0 un-freezes the opto lamp once engaged", () => {
   expect(opto()).not.toHaveClass("pb-depth-zero");
 });
 
-test("master knobs are live too and share the board's value state", () => {
+test("the two volume knobs are live and share the board's value state", () => {
   const { container } = render(<Pedalboard />);
   fireEvent.keyDown(screen.getByRole("slider", { name: "Master" }), { key: "ArrowUp" });
-  const level = container.querySelector(".pb-bus-pair.pb-r1 .pb-param[data-role='level']");
-  expect(level?.querySelector(".pb-p-val")?.textContent).toBe("81%"); // 80 + 1/100 of 0–100
+  const params = Array.from(container.querySelectorAll(".pb-bus-pair.pb-r1 .pb-param"));
+  const byName = (n: string) =>
+    params.find((p) => p.querySelector(".pb-p-name")?.textContent?.includes(n));
+  expect(byName("Master")?.querySelector(".pb-p-val")?.textContent).toBe("81%"); // 80 + 1/100
+  expect(byName("Patch")?.querySelector(".pb-p-val")?.textContent).toBe("100%");
 });
 
 test("controlled mode: board knob edits report up through onParamChange", () => {

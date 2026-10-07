@@ -47,7 +47,7 @@ test("snapshot seeds patches, devices, and master/reverb/comp values", () => {
       ],
       params: {
         patch: "Moog",
-        volume: 0.8, // per-patch volume -> Params card only (no board param)
+        volume: 0.8, // -> patch.level 80
         master_volume: 0.9, // -> master.level 90
         reverb: 0.5, // -> reverb.mix 50
         compressor: 0.3, // -> comp.amount 30
@@ -62,6 +62,7 @@ test("snapshot seeds patches, devices, and master/reverb/comp values", () => {
   const s = result.current.state;
   expect(s.version).toBe("1.2.3");
   expect(s.current).toBe("Moog");
+  expect(s.chainValues["patch.level"]).toBe(80);
   expect(s.chainValues["master.level"]).toBe(90);
   expect(s.chainValues["reverb.mix"]).toBe(50);
   expect(s.chainValues["comp.amount"]).toBe(30);

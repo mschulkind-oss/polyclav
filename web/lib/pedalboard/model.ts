@@ -234,13 +234,22 @@ export const CHAIN: PedalSpec[] = [
 ];
 
 /**
- * Master-out card params at the tail of the rail (accent = the neutral tone,
- * set by .pb-bus in CSS). The old stereo-bus card's Comp and Reverb graduated
- * into their own pedals (see CHAIN); what's left is the true stereo terminus:
- * the master fader and the brick-wall limiter ceiling. Both are live —
- * see lib/pedalboard/wiring.ts (volume, limiter_ceiling_db).
+ * The two volume stages, in signal order: **Patch** (the per-patch trim, MAIN
+ * knob 1) then **Master** (Polyclav's global level, MAIN knob 8). The engine's
+ * final gain is their product, so turning either changes loudness while
+ * switching patches keeps the master. Both are live — see
+ * lib/pedalboard/wiring.ts (volume, master_volume).
  */
-export const MASTER_PARAMS: ParamSpec[] = [
+export const LEVEL_PARAMS: ParamSpec[] = [
+  {
+    id: "patch.level",
+    label: "Patch",
+    role: "level",
+    min: 0,
+    max: 100,
+    defaultValue: 100,
+    unit: "%",
+  },
   {
     id: "master.level",
     label: "Master",
@@ -250,6 +259,17 @@ export const MASTER_PARAMS: ParamSpec[] = [
     defaultValue: 80,
     unit: "%",
   },
+];
+
+/**
+ * Master-out card params at the tail of the rail (accent = the neutral tone,
+ * set by .pb-bus in CSS). The old stereo-bus card's Comp and Reverb graduated
+ * into their own pedals (see CHAIN); what's left is the true stereo terminus:
+ * the two volume stages and the brick-wall limiter ceiling. All are live —
+ * see lib/pedalboard/wiring.ts.
+ */
+export const MASTER_PARAMS: ParamSpec[] = [
+  ...LEVEL_PARAMS,
   {
     id: "master.ceiling",
     label: "Ceiling",
