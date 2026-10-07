@@ -208,6 +208,7 @@ type paramsJSON struct {
 	Reverb           float32   `json:"reverb"`
 	Compressor       float32   `json:"compressor"`
 	DrivePedal       float32   `json:"drive_pedal"`
+	MasterVolume     float32   `json:"master_volume"`
 	CutoffPos        float32   `json:"cutoff_pos"`
 	CutoffHz         float32   `json:"cutoff_hz"`
 	MasteringComp    float32   `json:"mastering_comp"`
@@ -350,6 +351,7 @@ func paramsView(sn controls.ParamsSnapshot) paramsJSON {
 		Reverb:           sn.Reverb,
 		Compressor:       sn.Compressor,
 		DrivePedal:       sn.DrivePedal,
+		MasterVolume:     sn.MasterVolume,
 		CutoffPos:        sn.CutoffPos,
 		CutoffHz:         sn.CutoffHz,
 		MasteringComp:    sn.MasteringComp,
@@ -937,6 +939,7 @@ func (s *Server) handleHwmap(w http.ResponseWriter, _ *http.Request) {
 type masteringPatchBody struct {
 	CompAmount       *float64 `json:"comp_amount"`
 	LimiterCeilingDB *float64 `json:"limiter_ceiling_db"`
+	MasterVolume     *float64 `json:"master_volume"`
 }
 
 func (s *Server) handleMastering(w http.ResponseWriter, r *http.Request) {
@@ -962,10 +965,24 @@ func (s *Server) handleMastering(w http.ResponseWriter, r *http.Request) {
 		v := float32(*body.LimiterCeilingDB)
 		ceilP = &v
 	}
+	master := s.deps.Controls.MasterVolume()
+	if body.MasterVolume != nil {
+		if !finite(*body.MasterVolume) {
+			writeErr(w, http.StatusBadRequest, "master_volume must be finite")
+			return
+		}
+		v, err := s.deps.Controls.SetMasterVolume(float32(*body.MasterVolume))
+		if err != nil {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		master = v
+	}
 	comp, ceiling := s.deps.Controls.SetMastering(compP, ceilP)
 	writeJSON(w, http.StatusOK, map[string]float32{
 		"comp_amount":        comp,
 		"limiter_ceiling_db": ceiling,
+		"master_volume":      master,
 	})
 }
 

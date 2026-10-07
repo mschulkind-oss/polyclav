@@ -135,6 +135,7 @@ function reducer(state: PolyclavState, a: Action): PolyclavState {
       if (typeof p.mastering_comp === "number") mastering.comp_amount = p.mastering_comp;
       if (typeof p.limiter_ceiling_db === "number")
         mastering.limiter_ceiling_db = p.limiter_ceiling_db;
+      if (typeof p.master_volume === "number") mastering.master_volume = p.master_volume;
       let chainValues = foldBackend(state.chainValues, "params", params, a.skip);
       chainValues = foldBackend(chainValues, "mastering", mastering, a.skip);
       return {

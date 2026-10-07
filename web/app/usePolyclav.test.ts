@@ -47,7 +47,8 @@ test("snapshot seeds patches, devices, and master/reverb/comp values", () => {
       ],
       params: {
         patch: "Moog",
-        volume: 0.8, // -> master.level 80
+        volume: 0.8, // per-patch volume -> Params card only (no board param)
+        master_volume: 0.9, // -> master.level 90
         reverb: 0.5, // -> reverb.mix 50
         compressor: 0.3, // -> comp.amount 30
         mastering_comp: 0.2, // -> comp.glue 20
@@ -61,7 +62,7 @@ test("snapshot seeds patches, devices, and master/reverb/comp values", () => {
   const s = result.current.state;
   expect(s.version).toBe("1.2.3");
   expect(s.current).toBe("Moog");
-  expect(s.chainValues["master.level"]).toBe(80);
+  expect(s.chainValues["master.level"]).toBe(90);
   expect(s.chainValues["reverb.mix"]).toBe(50);
   expect(s.chainValues["comp.amount"]).toBe(30);
   expect(s.chainValues["comp.glue"]).toBe(20);
@@ -72,6 +73,20 @@ test("a chain SSE event (engine units) updates the display value", () => {
   const { result } = renderHook(() => usePolyclav());
   act(() => handlers.chain?.({ field: "chorus.mix", value: 0.4, patch: "Moog" }));
   expect(result.current.state.chainValues["chorus.mix"]).toBe(40);
+});
+
+test("a mastering SSE event carries the global master level", () => {
+  const { result } = renderHook(() => usePolyclav());
+  act(() => handlers.mastering?.({ master_volume: 0.25 }));
+  expect(result.current.state.chainValues["master.level"]).toBe(25);
+});
+
+test("setParam on master.level posts to /api/mastering in engine units", () => {
+  vi.useFakeTimers();
+  const { result } = renderHook(() => usePolyclav());
+  act(() => result.current.setParam("master.level", 40));
+  act(() => vi.advanceTimersByTime(120));
+  expect(mocked.patchMastering).toHaveBeenCalledWith({ master_volume: 0.4 });
 });
 
 test("a chain enable event flips the pedal (tremolo -> trem)", () => {

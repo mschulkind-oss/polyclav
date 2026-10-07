@@ -603,8 +603,10 @@ offer the same cards:
 
 - **Patches** — a pad-style grid; click to switch. The current patch is
   highlighted and colors follow each patch's `pad_color`.
-- **Patch params** — volume, reverb, and compressor sliders, plus a
-  cutoff slider that activates while a native patch is selected.
+- **Patch params** — this patch's volume, reverb, and compressor
+  sliders, plus a cutoff slider that activates while a native patch is
+  selected. (The board's **Master** slider is different: it is
+  Polyclav's global level, knob 8 on MAIN.)
 - **Native synth** — shown only while a native patch is current: the
   full voice — oscillators, pulse width, noise, drive, filter + both
   ADSRs, keyboard tracking, velocity routing, LFO, bend range, glide,
@@ -615,7 +617,8 @@ offer the same cards:
   watch each note appear as an (in, out) dot on the curve. Apply for
   the session, or Save to write the curve into `config.toml` (see
   "Velocity curves" below).
-- **Mastering** — comp amount and limiter ceiling, live.
+- **Mastering** — comp amount, limiter ceiling, and Polyclav's global
+  master volume (the same level as MAIN knob 8), live.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
   (see "Audition mode" below).
 - **Config** — view and edit `config.toml` in the browser. Saving
@@ -640,7 +643,7 @@ The page is a thin client over a JSON API you can also drive with curl:
 | `POST /api/patches/{name}/select` | Switch patch by name. |
 | `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` (each 0..1, all fields optional). |
 | `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
-| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db`. |
+| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db` / `master_volume`. |
 | `GET /api/config` | Your `config.toml`, verbatim. |
 | `PUT /api/config` | Replace `config.toml` (full TOML text). Validated before write; 422 on a config the daemon would refuse. Restart to apply. |
 | `GET /api/velocity` | The active velocity curve and whether it came from config or a session edit. |

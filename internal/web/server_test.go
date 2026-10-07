@@ -707,6 +707,9 @@ func TestStatusShape(t *testing.T) {
 	if v := params["volume"].(float64); v != 1.0 { // state.Defaults()
 		t.Errorf("params.volume: expected 1.0, got %v", v)
 	}
+	if v := params["master_volume"].(float64); v != 1.0 { // global default
+		t.Errorf("params.master_volume: expected 1.0, got %v", v)
+	}
 	if v := params["mastering_comp"].(float64); !approxEq(v, 0.4) {
 		t.Errorf("params.mastering_comp: expected 0.4, got %v", v)
 	}
@@ -1507,6 +1510,38 @@ func TestMasteringPatchClamps(t *testing.T) {
 	if v := m["limiter_ceiling_db"].(float64); v != 0 {
 		t.Errorf("limiter_ceiling_db: expected clamp to 0, got %v", v)
 	}
+}
+
+// TestMasteringPatchMasterVolume: the /api/mastering endpoint also carries
+// Polyclav's global master volume (knob 8 on MAIN), so the web Master
+// slider survives its repoint away from the per-patch volume.
+func TestMasteringPatchMasterVolume(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	rec := f.do(t, "PATCH", "/api/mastering", map[string]any{"master_volume": 0.25})
+	wantStatus(t, rec, http.StatusOK)
+	m := decodeBody(t, rec)
+	if v := m["master_volume"].(float64); !approxEq(v, 0.25) {
+		t.Errorf("master_volume: expected 0.25, got %v", v)
+	}
+	// Per-patch Volume is Defaults() 1.0, so the engine sees 1.0*0.25.
+	if v := f.audio.get("volume"); !approxEq(float64(v), 0.25) {
+		t.Errorf("audio volume: expected 0.25, got %v", v)
+	}
+
+	// A partial update leaves the master alone and echoes it back.
+	rec = f.do(t, "PATCH", "/api/mastering", map[string]any{"limiter_ceiling_db": -1.0})
+	wantStatus(t, rec, http.StatusOK)
+	m = decodeBody(t, rec)
+	if v := m["master_volume"].(float64); !approxEq(v, 0.25) {
+		t.Errorf("master_volume after partial: expected 0.25, got %v", v)
+	}
+
+	rec = f.do(t, "PATCH", "/api/mastering", `{"master_volume": "loud"}`)
+	wantStatus(t, rec, http.StatusBadRequest)
 }
 
 // ---- config ----------------------------------------------------------------

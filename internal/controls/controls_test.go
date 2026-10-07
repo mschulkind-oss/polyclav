@@ -3064,11 +3064,11 @@ func TestAdjustMasterVolumeComposesWithPatchVolume(t *testing.T) {
 		t.Errorf("stored master = %v, want 0.75", got)
 	}
 	ch := recvChange(t, f.ch)
-	if ch.Type != "master" {
-		t.Errorf("change type = %q, want master", ch.Type)
+	if ch.Type != "mastering" {
+		t.Errorf("change type = %q, want mastering", ch.Type)
 	}
-	if got, _ := ch.Data["volume"].(float32); !approxEq(got, 0.75) {
-		t.Errorf("change volume = %v, want 0.75", ch.Data["volume"])
+	if got, _ := ch.Data["master_volume"].(float32); !approxEq(got, 0.75) {
+		t.Errorf("change master_volume = %v, want 0.75", ch.Data["master_volume"])
 	}
 
 	// Clamps at both ends rather than exceeding the engine range.
@@ -3114,5 +3114,49 @@ func TestMasterVolumeSurvivesPatchSelect(t *testing.T) {
 	// Piano has never been tweaked, so its Volume is the Defaults() 1.0.
 	if !approxEq(f.audio.volume, 1.0*0.5) {
 		t.Errorf("engine volume on piano = %v, want 0.5 (1.0 x 0.5)", f.audio.volume)
+	}
+}
+
+// TestSetMasterVolumeAbsolute pins the web slider's absolute path: it
+// clamps, stores globally, re-applies Volume*Master, and publishes a
+// "mastering" change carrying master_volume.
+func TestSetMasterVolumeAbsolute(t *testing.T) {
+	f := newFixture(t, sfPatch)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+	if _, err := f.c.SetVolume(0.5); err != nil {
+		t.Fatalf("SetVolume: %v", err)
+	}
+	for len(f.ch) > 0 {
+		<-f.ch
+	}
+
+	v, err := f.c.SetMasterVolume(0.25)
+	if err != nil {
+		t.Fatalf("SetMasterVolume: %v", err)
+	}
+	if !approxEq(v, 0.25) {
+		t.Errorf("SetMasterVolume returned %v, want 0.25", v)
+	}
+	if !approxEq(f.audio.volume, 0.5*0.25) {
+		t.Errorf("engine volume = %v, want 0.125", f.audio.volume)
+	}
+	if !approxEq(f.st.MasterVolume(), 0.25) {
+		t.Errorf("stored master = %v, want 0.25", f.st.MasterVolume())
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "mastering" {
+		t.Errorf("change type = %q, want mastering", ch.Type)
+	}
+	if got, _ := ch.Data["master_volume"].(float32); !approxEq(got, 0.25) {
+		t.Errorf("change master_volume = %v, want 0.25", ch.Data["master_volume"])
+	}
+
+	if _, err := f.c.SetMasterVolume(2); err != nil {
+		t.Fatalf("SetMasterVolume clamp: %v", err)
+	}
+	if !approxEq(f.c.MasterVolume(), 1) {
+		t.Errorf("master after clamp = %v, want 1", f.c.MasterVolume())
 	}
 }

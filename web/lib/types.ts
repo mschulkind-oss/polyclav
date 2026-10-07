@@ -31,6 +31,7 @@ export interface Params {
   volume: number;
   reverb: number;
   compressor: number;
+  master_volume: number;
   cutoff_pos: number;
   cutoff_hz: number;
   mastering_comp: number;
@@ -175,6 +176,7 @@ export interface SynthEvent {
 export interface MasteringEvent {
   comp_amount?: number;
   limiter_ceiling_db?: number;
+  master_volume?: number;
 }
 
 export interface VelocityEvent {

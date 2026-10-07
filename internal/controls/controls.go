@@ -587,12 +587,30 @@ func (c *Controls) MasterVolume() float32 {
 	return c.st.MasterVolume()
 }
 
+// SetMasterVolume sets Polyclav's global output level to v (clamped to
+// [0,1]), persists it, re-applies the current patch's effective gain, and
+// publishes a "mastering" change (with a master_volume key) so every
+// surface echoes the new level. This is the web slider's absolute path;
+// knob 8 uses AdjustMasterVolume.
+func (c *Controls) SetMasterVolume(v float32) (float32, error) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	if c.st == nil {
+		return 0, errNoPatch
+	}
+	v = clamp01(v)
+	c.st.SetMasterVolume(v)
+	c.applyEffectiveVolume()
+	c.publishMasterVolume(v)
+	return v, nil
+}
+
 // AdjustMasterVolume nudges Polyclav's global output level by delta,
 // persists it, re-applies the current patch's effective gain, and
-// publishes a "master" change. ok is false only when there is no state
-// store (wiring-only tests); unlike the per-patch adjusters it does not
-// require a selected patch, because the level belongs to Polyclav rather
-// than to a patch.
+// publishes it. ok is false only when there is no state store
+// (wiring-only tests); unlike the per-patch adjusters it does not require
+// a selected patch, because the level belongs to Polyclav rather than to
+// a patch.
 func (c *Controls) AdjustMasterVolume(delta float32) (float32, bool) {
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
@@ -602,8 +620,15 @@ func (c *Controls) AdjustMasterVolume(delta float32) (float32, bool) {
 	v := clamp01(c.st.MasterVolume() + delta)
 	c.st.SetMasterVolume(v)
 	c.applyEffectiveVolume()
-	c.hub.Publish(Change{Type: "master", Data: map[string]any{"volume": v}})
+	c.publishMasterVolume(v)
 	return v, true
+}
+
+// publishMasterVolume rides the "mastering" change type (the global DSP
+// tail) so the web dashboard's mastering listener folds it like the
+// compressor and limiter values. Callers hold applyMu.
+func (c *Controls) publishMasterVolume(v float32) {
+	c.hub.Publish(Change{Type: "mastering", Data: map[string]any{"master_volume": v}})
 }
 
 // applyEffectiveVolume pushes Volume*MasterVolume to the engine for the
@@ -1933,6 +1958,7 @@ type ParamsSnapshot struct {
 	Patch, PatchDisplay                    string
 	Volume, Reverb, Compressor, DrivePedal float32
 	CutoffPos, CutoffHz                    float32
+	MasterVolume                           float32
 	MasteringComp, LimiterCeilingDB        float32
 	VelocityCurve                          string
 	Synth                                  SynthSnapshot
@@ -1951,6 +1977,7 @@ func (c *Controls) Snapshot() ParamsSnapshot {
 		s.DrivePedal = k.DrivePedal
 	}
 	s.CutoffPos, s.CutoffHz = c.CutoffState()
+	s.MasterVolume = c.MasterVolume()
 	s.MasteringComp, s.LimiterCeilingDB = c.Mastering()
 	s.VelocityCurve = c.VelocityLabel()
 	s.Synth = c.Synth()
