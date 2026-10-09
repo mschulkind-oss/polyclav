@@ -62,6 +62,16 @@
     "zynaddsubfx"
   ],
 
+  // Inspect the host dev loop and its children with `yolo-ps --tree`.
+  "loopholes": {
+    "host-processes": {
+      "enabled": true,
+      "settings": {
+        "visible": ["just", "hivemind", "air", "polyclav", "pnpm", "node", "next-server"]
+      }
+    }
+  },
+
   // Machine-specific overrides (mounts, etc.) live in yolo-jail.local.jsonc,
   // swept into swarf/ (gitignored, not portable across machines) rather than
   // committed here.
