@@ -1904,6 +1904,23 @@ func (c *Controls) Mastering() (comp, ceiling float32) {
 	return c.masteringComp, c.limiterCeilingDB
 }
 
+// AdjustMasteringComp nudges the global mastering compressor amount by delta
+// (clamped to [0,1]) and applies it. It is the MAIN knob 7 control — the
+// master-bus counterpart to the per-patch input compressor on knob 3 — and
+// like Master it is global, so it works on every patch type and never resets
+// on a patch switch. Publishes a "mastering" change.
+func (c *Controls) AdjustMasteringComp(delta float32) (float32, bool) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.mu.Lock()
+	v := clamp01(c.masteringComp + delta)
+	c.masteringComp = v
+	c.mu.Unlock()
+	c.audio.SetMasteringCompressor(v)
+	c.hub.Publish(Change{Type: "mastering", Data: map[string]any{"comp_amount": v}})
+	return v, true
+}
+
 // InitMastering is the startup seed: apply the config-file values and
 // cache them WITHOUT publishing — nothing has "changed" at boot, and
 // early subscribers should not see a phantom edit. Values clamp to the

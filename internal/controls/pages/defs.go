@@ -40,11 +40,15 @@ const (
 //     sixth page.
 //   - MAIN knob 4 was Cutoff through Phase 2; as of the drive-pedal
 //     effect (docs/OPEN_SOUND_ENGINES.md §1) it's reassigned to Pedal.
-//     Cutoff remains one page-flip away on FILTER knob 1 (already
-//     aliased there, same pattern as Drive on MAIN 7 / AMP 7) — the
+//     Cutoff remains one page-flip away on FILTER knob 1 — the
 //     pedal is backend-agnostic like Volume/Reverb/Comp, so this also
 //     makes every MAIN slot 1–4 work on every patch type, not just
 //     native ones (see the "Non-native patches" note below).
+//   - MAIN knob 7 was the native Drive alias (still on AMP knob 7); it
+//     became the global mastering compressor amount so the master
+//     section (7–8) is the two master-bus dynamics controls — the
+//     limiter-adjacent "Glue" the web Comp pedal exposes — and they
+//     work on every patch type rather than only native ones.
 //   - §2.1's MIX page content (osc levels/detunes, noise, drive) lands
 //     on page 2 (OSC), plus the shipped shared Pulse Width; per-osc
 //     waveform/octave selection has no knob shape (it's a selector, not
@@ -72,9 +76,9 @@ const (
 //
 // Non-native patches: only page 0 is live, and on it only the slots
 // that route through the always-available knob setters (Volume, Reverb,
-// Comp, Pedal — slots 1–4 — plus the global Master on slot 8). The rest
-// return ok=false from their controls setters (ErrNoNativePatch) and show
-// nothing.
+// Comp, Pedal — slots 1–4 — plus the global mastering compressor on 7
+// and Master on 8). The rest return ok=false from their controls setters
+// (ErrNoNativePatch) and show nothing.
 func pageDefs() []PageDef {
 	return []PageDef{
 		{
@@ -86,7 +90,7 @@ func pageDefs() []PageDef {
 				{Label: "Pedal", Step: stepUnit, Adjust: adjDrivePedal},
 				{Label: "Resonance", Step: stepResonance, Adjust: adjResonance()},
 				{Label: "Glide", Step: stepGlide, Adjust: adjGlide()},
-				{Label: "Drive", Step: stepUnit, Adjust: adjDrive()},
+				{Label: "Mstr Comp", Step: stepUnit, Adjust: adjMasteringComp},
 				{Label: "Master", Step: stepUnit, Adjust: adjMasterVolume},
 			},
 		},
@@ -272,6 +276,18 @@ func adjDrivePedal(ctl *controls.Controls, delta float32) (string, bool) {
 // stored globally in state.toml), so it applies on every patch type.
 func adjMasterVolume(ctl *controls.Controls, delta float32) (string, bool) {
 	v, ok := ctl.AdjustMasterVolume(delta)
+	if !ok {
+		return "", false
+	}
+	return formatPercent(v), true
+}
+
+// adjMasteringComp moves the global mastering compressor amount — MAIN
+// knob 7, the master-bus counterpart to the per-patch input Comp on knob 3
+// and the neighbor of Master. Global like Master, so it applies on every
+// patch type and never resets on a patch switch.
+func adjMasteringComp(ctl *controls.Controls, delta float32) (string, bool) {
+	v, ok := ctl.AdjustMasteringComp(delta)
 	if !ok {
 		return "", false
 	}

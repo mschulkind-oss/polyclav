@@ -438,11 +438,11 @@ func TestKnobRoutingAllPages(t *testing.T) {
 					t.Errorf("glide = %v", a.glide)
 				}
 			}},
-		{name: "MAIN drive", page: 0, knob: 7, ticks: 1, wantLabel: "Drive", wantDisplay: "1%",
-			wantCall: "SetNativeDrive",
+		{name: "MAIN mastering comp", page: 0, knob: 7, ticks: 1, wantLabel: "Mstr Comp", wantDisplay: "1%",
+			wantCall: "SetMasteringCompressor",
 			check: func(t *testing.T, a *fakeAudio) {
-				if !approxEq(a.drive, 1.0/127) {
-					t.Errorf("drive = %v", a.drive)
+				if !approxEq(a.masteringComp, 1.0/127) {
+					t.Errorf("mastering comp = %v", a.masteringComp)
 				}
 			}},
 		{name: "MAIN knob 8 master", page: 0, knob: 8, ticks: -1, wantLabel: "Master", wantDisplay: "99%",
@@ -776,8 +776,8 @@ func TestNonNativeGating(t *testing.T) {
 		t.Errorf("screen line1 = %q, want Pedal", w.line1)
 	}
 
-	// Knobs 5-7 on MAIN are native-only: fully inert on a soundfont patch.
-	for knob := 5; knob <= 7; knob++ {
+	// Knobs 5-6 on MAIN are native-only: fully inert on a soundfont patch.
+	for knob := 5; knob <= 6; knob++ {
 		f.audio.reset()
 		f.screen.writes = nil
 		f.pg.HandleKnob(knob, 1)
@@ -787,6 +787,18 @@ func TestNonNativeGating(t *testing.T) {
 		if len(f.screen.writes) != 0 {
 			t.Errorf("knob %d wrote screen on soundfont: %+v", knob, f.screen.writes)
 		}
+	}
+
+	// Knob 7 is the global mastering compressor — live on every patch type,
+	// like the Master beside it.
+	f.audio.reset()
+	f.screen.writes = nil
+	f.pg.HandleKnob(7, 1)
+	if f.audio.calls["SetMasteringCompressor"] != 1 {
+		t.Errorf("mastering comp knob dead on soundfont: %v", f.audio.calls)
+	}
+	if w := f.screen.last(t); w.line1 != "Mstr Comp" {
+		t.Errorf("screen line1 = %q, want Mstr Comp", w.line1)
 	}
 
 	// Knob 8 is Polyclav's global Master — live on every patch type.

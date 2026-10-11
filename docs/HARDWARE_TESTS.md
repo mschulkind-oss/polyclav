@@ -39,6 +39,10 @@ unit-tested against driver fakes, but has never met the device. Verify:
   confirm the new patch comes in at its own volume scaled by the same
   master; turn it to 0 for silence. Restart the daemon and confirm the
   level survives (`master_volume` in `state.toml`).
+- MAIN knob 7 is **Mstr Comp**, the global mastering compressor: turning it
+  up audibly levels the whole mix (same result as the web Comp pedal's
+  "Glue"), works on a soundfont patch too, and does not reset when you
+  switch patches. Drive is still on AMP knob 7.
 - Knob labels/values on the screen are legible for every slot (16-char
   lines; e.g. "Osc1 Detune" / "+7 c").
 - Transport Play toggles the audition player's last-used clip (run with

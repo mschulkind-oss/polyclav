@@ -48,11 +48,13 @@ panel; see "Web dashboard" below.
   - Five knob pages (MAIN / OSC / FILTER / AMP / LFO/MOD) switched with
     Scene ▲/▼; the bottom pad row shows the active page. MAIN keeps the
     classic layout: knob 1 = patch volume, 2 = reverb wet/dry, 3 = input
-    compressor, 4 = drive pedal, 8 = Polyclav's global master volume
+    compressor, 4 = drive pedal, 7 = mastering compressor, 8 = Polyclav's
+    global master volume
     (independent of patches). The two volume knobs (1 and 8) go to 200%:
     100% is unity, and the headroom lets you balance patches to each other
-    and then make the whole board up with the master. The other pages cover
-    the native synth's
+    and then make the whole board up with the master. Knob 7 shapes the
+    master bus the same way the input compressor shapes one patch. The
+    other pages cover the native synth's
     full voice. Code-complete, **pending hardware verification** — see
     "Launchkey knob pages" below.
   - The screen shows the current patch's `display` name, with value
@@ -557,6 +559,12 @@ Notes:
   respond on every patch type, not just native ones. Knob 4 was cutoff
   through earlier releases; cutoff is still one page-flip away on
   **FILTER**'s knob 1.
+- **MAIN knob 7 is Mstr Comp** — the global mastering compressor amount
+  (the web Comp pedal's "Glue"). It is the master-bus counterpart to knob
+  3's per-patch input compressor: stored globally, applied to the whole mix
+  on every patch type, and never reset by a patch switch. Turn it up to
+  level the mix instead of just backing the master down. (Native Drive
+  previously lived here; it is still on AMP knob 7.)
 - **MAIN knob 8 is Master** — Polyclav's own output level, stored
   globally (not per patch). The engine's master gain is the selected
   patch's *Volume* (knob 1) multiplied by *Master* (knob 8): knob 1 trims
@@ -567,7 +575,8 @@ Notes:
   "Mastering & level matching". It is saved to `state.toml` and survives a
   restart. It applies on every patch type.
 - With a **non-native patch** selected, only MAIN's knobs 1–4 (the
-  global volume / reverb / comp / pedal) respond; the rest of the synth
+  global volume / reverb / comp / pedal) plus 7–8 (mastering comp and
+  master) respond; the rest of the synth
   pages apply to native patches only.
 - **Voice mode** (LFO/MOD knob 7) steps mono_legato → mono_retrig →
   poly, one detent per step.

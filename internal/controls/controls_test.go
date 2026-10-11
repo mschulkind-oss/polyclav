@@ -1041,6 +1041,45 @@ func TestSetMastering(t *testing.T) {
 	}
 }
 
+// TestAdjustMasteringComp: MAIN knob 7's path. The mastering compressor is
+// global, so unlike the synth knobs it applies even with no patch selected,
+// clamps to [0,1], and publishes a "mastering" change.
+func TestAdjustMasteringComp(t *testing.T) {
+	f := newFixture(t) // nothing selected: mastery is global
+	for len(f.ch) > 0 {
+		<-f.ch
+	}
+
+	v, ok := f.c.AdjustMasteringComp(0.25)
+	if !ok {
+		t.Fatal("AdjustMasteringComp ok=false")
+	}
+	if !approxEq(v, 0.25) {
+		t.Errorf("comp = %v, want 0.25", v)
+	}
+	if !approxEq(f.audio.masteringComp, 0.25) {
+		t.Errorf("audio comp = %v, want 0.25", f.audio.masteringComp)
+	}
+	if c, _ := f.c.Mastering(); !approxEq(c, 0.25) {
+		t.Errorf("cached comp = %v, want 0.25", c)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "mastering" {
+		t.Errorf("change type = %q, want mastering", ch.Type)
+	}
+	if got, _ := ch.Data["comp_amount"].(float32); !approxEq(got, 0.25) {
+		t.Errorf("change comp_amount = %v, want 0.25", ch.Data["comp_amount"])
+	}
+
+	// Clamps at both ends rather than exceeding the engine range.
+	if v, _ := f.c.AdjustMasteringComp(5); !approxEq(v, 1) {
+		t.Errorf("comp after big up = %v, want 1", v)
+	}
+	if v, _ := f.c.AdjustMasteringComp(-5); !approxEq(v, 0) {
+		t.Errorf("comp after big down = %v, want 0", v)
+	}
+}
+
 func TestSetMasteringClampsToEngineRanges(t *testing.T) {
 	f := newFixture(t)
 
