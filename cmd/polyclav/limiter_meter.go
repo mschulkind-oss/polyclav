@@ -66,3 +66,43 @@ func limiterScreenLabel(peakDB float32) string {
 	}
 	return fmt.Sprintf("LIMIT %.1f dB", peakDB)
 }
+
+// limiterPadFlash is the pure state for the patch-pad clip flash: which row-0
+// column currently shows red, and when it was last written. main maps its
+// decisions onto SetPadColor and the row repaint.
+//
+// Red is re-asserted every limiterIndicatorRefresh while engaged so a
+// patch/bank repaint during a long clip can't leave the pad dark; it is
+// released (whole row repainted to configured colors) as soon as the clip
+// clears.
+//
+// step folds one poll and reports whether to repaint the row and which column
+// to set red (-1 for none). Both can be set in the same call when the loaded
+// patch moves to a different pad — repaint first, then red.
+type limiterPadFlash struct {
+	lit bool
+	col int
+	at  time.Time
+}
+
+func (f *limiterPadFlash) step(engaged bool, col int, now time.Time) (restoreRow bool, setRed int) {
+	if !engaged || col < 0 {
+		if !f.lit {
+			return false, -1
+		}
+		f.lit = false
+		return true, -1
+	}
+	if !f.lit || col != f.col {
+		restoreRow = f.lit
+		f.lit = true
+		f.col = col
+		f.at = now
+		return restoreRow, col
+	}
+	if now.Sub(f.at) < limiterIndicatorRefresh {
+		return false, -1
+	}
+	f.at = now
+	return false, col
+}

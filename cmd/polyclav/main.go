@@ -396,11 +396,16 @@ func main() {
 		}
 		return sup.Launchkey()
 	}}, activeOrgan, pedalRouter.LeslieOn)
-	patchBank := 0
-	pushPadColors := func() {
+	// patchBank is read off the DAW goroutine by the limiter pad flash, so it
+	// is atomic rather than a plain int.
+	patchBank := atomic.Int32{}
+	// paintPatchRow repaints row 0 from the visible bank without touching the
+	// display — the flash owns one pad at a time and restores the row through
+	// this. pushPadColors adds the page-indicator row and the screen repaint.
+	paintPatchRow := func() {
 		lk := sup.Launchkey()
 		all := registry.All()
-		start := patchBank * 8
+		start := int(patchBank.Load()) * 8
 		for col := 0; col < 8; col++ {
 			color := components.Color(0)
 			if idx := start + col; idx >= 0 && idx < len(all) {
@@ -410,11 +415,14 @@ func main() {
 				logger.Warn("launchkey set pad color", "col", col, "err", err)
 			}
 		}
+	}
+	pushPadColors := func() {
+		paintPatchRow()
 		// The device forgets pad LEDs across power cycles: repaint the
 		// page-indicator row (row 1) alongside the patch row (row 0).
 		pg.RefreshPads()
 		if cur := registry.Current(); cur != nil {
-			if err := lk.SetDisplayText(cur.Display, ""); err != nil {
+			if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
 				logger.Warn("launchkey set display text", "err", err)
 			}
 		}
@@ -545,10 +553,10 @@ func main() {
 			if !e.Pressed {
 				return
 			}
-			if next, ok := patchBankAfterTransport(patchBank, len(registry.All()), e.Button); ok {
-				patchBank = next
+			if next, ok := patchBankAfterTransport(int(patchBank.Load()), len(registry.All()), e.Button); ok {
+				patchBank.Store(int32(next))
 				pushPadColors()
-				start, end := patchBankRangeLabel(patchBank, len(registry.All()))
+				start, end := patchBankRangeLabel(int(patchBank.Load()), len(registry.All()))
 				if err := sup.Launchkey().SetDisplayText("PATCH BANK", fmt.Sprintf("%d-%d", start, end)); err != nil {
 					logger.Warn("launchkey patch bank display", "err", err)
 				}
@@ -561,7 +569,7 @@ func main() {
 			if e.Row != 0 || !e.Pressed {
 				return
 			}
-			patchIndex, ok := patchIndexForBankPad(patchBank, e.Col, len(registry.All()))
+			patchIndex, ok := patchIndexForBankPad(int(patchBank.Load()), e.Col, len(registry.All()))
 			if !ok {
 				return
 			}
@@ -744,19 +752,56 @@ func main() {
 
 	// Clip/limit indicator: audio-core reports the limiter's worst-case gain
 	// for each callback; when it is actually compressing, show the reduction
-	// on the screen's second line — the guitar-POD "you're in the red" — so a
-	// squashed peak isn't mistaken for distortion elsewhere in the chain. It
-	// yields to knob popups and re-asserts once the screen is idle.
+	// on the screen's second line and flash the loaded patch's pad red — the
+	// guitar-POD "you're in the red" — so a squashed peak isn't mistaken for
+	// distortion elsewhere in the chain. The screen marker yields to knob
+	// popups and re-asserts once the screen is idle.
 	limiterState := &limiterMeter{}
 	var (
 		limiterLabel string
 		limiterWrite time.Time
 	)
+	// activePatchColumn is the row-0 pad of the loaded patch in the visible
+	// patch bank, or -1 when it isn't on this bank (or no patch is loaded).
+	activePatchColumn := func() int {
+		cur := registry.Current()
+		if cur == nil {
+			return -1
+		}
+		all := registry.All()
+		for i := range all {
+			if all[i].Name == cur.Name {
+				return patchPadColumnFor(int(patchBank.Load()), i)
+			}
+		}
+		return -1
+	}
+	// updateLimiterPad flashes the loaded patch's pad red while the limiter is
+	// engaged. Pad colors are per-patch, not a selection indicator, so one pad
+	// going red is unambiguous. The pure limiterPadFlash state decides when to
+	// repaint the row and when to write red; main maps that onto the device.
+	limiterPad := &limiterPadFlash{}
+	updateLimiterPad := func(engaged bool, now time.Time) {
+		col := -1
+		if engaged {
+			col = activePatchColumn()
+		}
+		restoreRow, setRed := limiterPad.step(engaged, col, now)
+		if restoreRow {
+			paintPatchRow()
+		}
+		if setRed >= 0 {
+			if err := sup.Launchkey().SetPadColor(0, setRed, components.ColorVibrantRed); err != nil {
+				logger.Warn("launchkey limiter pad", "err", err)
+			}
+		}
+	}
 	pollLimiter := func(now time.Time) {
 		if sup == nil || sup.Launchkey() == nil || sup.Launchkey().State() != "active" {
 			return
 		}
 		peak := limiterState.observe(float32(audio.GetMetrics().LimiterMinGainMilli)/1000, now)
+		updateLimiterPad(peak >= limiterEngageDB, now)
 		label := limiterScreenLabel(peak)
 		if label == "" {
 			if limiterLabel == "" {
@@ -1021,6 +1066,18 @@ func patchIndexForBankPad(bank, col, total int) (int, bool) {
 		return 0, false
 	}
 	return idx, true
+}
+
+// patchPadColumnFor is patchIndexForBankPad's inverse: the row-0 pad column
+// for a patch at `index` in the full list within `bank`, or -1 when that patch
+// is not on this bank. The limiter flash uses it to find the loaded patch's
+// pad.
+func patchPadColumnFor(bank, index int) int {
+	col := index - bank*8
+	if col < 0 || col >= 8 {
+		return -1
+	}
+	return col
 }
 
 func patchBankAfterTransport(bank, total int, b driver.TransportButton) (int, bool) {

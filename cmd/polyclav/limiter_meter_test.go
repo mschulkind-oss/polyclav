@@ -53,3 +53,41 @@ func TestLimiterMeterHoldsPeak(t *testing.T) {
 		t.Errorf("new peak = %v dB, want ~3.01", got)
 	}
 }
+
+func TestLimiterPadFlash(t *testing.T) {
+	base := time.Unix(0, 0)
+	f := &limiterPadFlash{}
+
+	// Idle: nothing to do, no matter how many polls.
+	if r, c := f.step(false, 3, base); r || c != -1 {
+		t.Fatalf("idle step = (%v,%d), want (false,-1)", r, c)
+	}
+	if r, c := f.step(true, -1, base); r || c != -1 {
+		t.Fatalf("engaged but pad off-bank = (%v,%d), want (false,-1)", r, c)
+	}
+
+	// The first engaged poll lights the loaded patch's pad red.
+	if r, c := f.step(true, 3, base); r || c != 3 {
+		t.Fatalf("first clip = (%v,%d), want (false,3)", r, c)
+	}
+	// A repeat inside the refresh window is throttled.
+	if r, c := f.step(true, 3, base.Add(limiterIndicatorRefresh/2)); r || c != -1 {
+		t.Fatalf("throttled repeat = (%v,%d), want (false,-1)", r, c)
+	}
+	// Past the window it re-asserts (recovers from a row repaint).
+	if r, c := f.step(true, 3, base.Add(limiterIndicatorRefresh)); r || c != 3 {
+		t.Fatalf("re-assert = (%v,%d), want (false,3)", r, c)
+	}
+	// The loaded patch moves to another pad: restore the row, then red.
+	if r, c := f.step(true, 5, base.Add(limiterIndicatorRefresh*2)); !r || c != 5 {
+		t.Fatalf("moved patch = (%v,%d), want (true,5)", r, c)
+	}
+	// The clip clears: repaint the row, nothing red.
+	if r, c := f.step(false, 5, base.Add(limiterIndicatorRefresh*3)); !r || c != -1 {
+		t.Fatalf("release = (%v,%d), want (true,-1)", r, c)
+	}
+	// And stays quiet while clear.
+	if r, c := f.step(false, 5, base.Add(limiterIndicatorRefresh*4)); r || c != -1 {
+		t.Fatalf("after release = (%v,%d), want (false,-1)", r, c)
+	}
+}

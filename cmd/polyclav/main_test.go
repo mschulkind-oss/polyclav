@@ -620,6 +620,29 @@ func TestPatchBankPadSelection(t *testing.T) {
 	}
 }
 
+// patchPadColumnFor is patchIndexForBankPad's inverse — the limiter flash
+// looks up the loaded patch's pad with it.
+func TestPatchPadColumnFor(t *testing.T) {
+	cases := []struct {
+		name       string
+		bank, idx  int
+		wantColumn int
+	}{
+		{name: "first patch first bank", bank: 0, idx: 0, wantColumn: 0},
+		{name: "eighth patch first bank", bank: 0, idx: 7, wantColumn: 7},
+		{name: "ninth patch second bank", bank: 1, idx: 8, wantColumn: 0},
+		{name: "first patch not on second bank", bank: 1, idx: 0, wantColumn: -1},
+		{name: "ninth patch not on first bank", bank: 0, idx: 8, wantColumn: -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := patchPadColumnFor(tc.bank, tc.idx); got != tc.wantColumn {
+				t.Fatalf("patchPadColumnFor(%d,%d) = %d, want %d", tc.bank, tc.idx, got, tc.wantColumn)
+			}
+		})
+	}
+}
+
 func TestPatchBankTrackTransportBoundaries(t *testing.T) {
 	if _, ok := patchBankAfterTransport(0, 8, driver.TransportTrackRight); ok {
 		t.Fatal("single bank must not consume Track Right")
