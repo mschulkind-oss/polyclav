@@ -44,6 +44,10 @@ typedef struct {
     uint64_t clap_input_event_drops;
     uint32_t last_frames;
     uint32_t max_frames;
+    /* Worst-case limiter gain of the most recent audio callback, in
+     * thousandths (0..=1000). 1000 = no reduction; lower = the limiter is
+     * compressing. 0 = no callback yet. Drives the clip/limit indicator. */
+    uint32_t limiter_min_gain_milli;
 } PolyclavAudioMetrics;
 
 void polyclav_audio_get_metrics(PolyclavAudioMetrics *out);

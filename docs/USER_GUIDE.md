@@ -58,7 +58,11 @@ panel; see "Web dashboard" below.
     full voice. Code-complete, **pending hardware verification** — see
     "Launchkey knob pages" below.
   - The screen shows the current patch's `display` name, with value
-    popups while you turn a knob.
+    popups while you turn a knob. When the brick-wall limiter is actually
+    compressing, the second line shows the gain reduction (`LIMIT 3.4 dB`)
+    for as long as it lasts — the "you're in the red" readout, so a squashed
+    peak isn't mistaken for distortion elsewhere in the chain. It yields to
+    knob popups and returns when they clear.
   - The mastering compressor, brick-wall limiter, and per-patch gain are set
     from config and apply automatically (and can be adjusted live from the
     web dashboard).
@@ -885,7 +889,11 @@ you want it against everything else on the system. Because the gain lands
 before the limiter, turning past 100% makes polyclav louder (the limiter
 catches the peaks) rather than clipping the output past the Ceiling — so
 you can push it until it's clearly too loud, then back off, without ever
-hearing hard digital clipping.
+hearing hard digital clipping. When it is compressing, the Launchkey
+screen says so (`LIMIT 3.4 dB` on the second line) — watch that instead of
+guessing, and back the level off if you'd rather not hand the peaks to the
+limiter. Past that point, MAIN knob 7 (the mastering compressor) tightens
+the mix without taking the whole level down.
 
 `gain_db` and the Live Volume knobs stack: a patch with `gain_db = +6`
 and Volume 100% is already twice as hot as a `gain_db = 0` patch at

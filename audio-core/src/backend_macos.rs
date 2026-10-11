@@ -31,8 +31,8 @@ use cpal::{BufferSize, OutputCallbackInfo, SampleFormat, StreamConfig, Supported
 //   LATENCY_FRAMES       : the shared, already-clamped ([16,8192], 0->128)
 //                          latency request from polyclav_audio_set_latency_frames
 use crate::{
-    build_user_data, drain_midi, record_audio_callback, render_block, swap_pending_backend,
-    LATENCY_FRAMES,
+    build_user_data, drain_midi, record_audio_callback, record_limiter_gain, render_block,
+    swap_pending_backend, LATENCY_FRAMES,
 };
 
 /// Hard target format. 48 kHz is a compile-time const across audio-core — there
@@ -138,6 +138,7 @@ pub(crate) fn run_audio(
                 drain_midi(&mut user_data);
                 swap_pending_backend(&mut user_data);
                 render_block(&mut user_data, samples);
+                record_limiter_gain(user_data.limiter_min_gain());
 
                 record_audio_callback(samples.len() / CHANNELS as usize);
             },

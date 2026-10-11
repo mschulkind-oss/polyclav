@@ -7,6 +7,10 @@ pub struct Limiter {
     ceiling_lin: f32,
     release_coeff: f32,
     gain: f32,
+    /// Worst-case (minimum) gain applied during the most recent `process`
+    /// call — the peak gain reduction for that block, read by the limiter
+    /// activity indicator. 1.0 means "no reduction this block".
+    block_min_gain: f32,
 }
 
 impl Limiter {
@@ -20,6 +24,7 @@ impl Limiter {
             ceiling_lin,
             release_coeff,
             gain: 1.0,
+            block_min_gain: 1.0,
         }
     }
 
@@ -34,8 +39,17 @@ impl Limiter {
         self.ceiling_db
     }
 
+    /// Minimum gain the limiter applied during the last `process` call.
+    /// 1.0 = no reduction (signal stayed under the knee); < 1.0 = the
+    /// limiter is compressing. The activity indicator reads this once per
+    /// callback.
+    pub fn block_min_gain(&self) -> f32 {
+        self.block_min_gain
+    }
+
     pub fn process(&mut self, samples: &mut [f32]) {
         let knee_lin = self.ceiling_lin * 10f32.powf(-KNEE_DB / 20.0);
+        self.block_min_gain = 1.0;
 
         for chunk in samples.chunks_exact_mut(2) {
             let l = chunk[0];
@@ -57,6 +71,9 @@ impl Limiter {
                 self.gain = target_gain;
             } else {
                 self.gain += self.release_coeff * (target_gain - self.gain);
+            }
+            if self.gain < self.block_min_gain {
+                self.block_min_gain = self.gain;
             }
 
             chunk[0] = (l * self.gain).clamp(-self.ceiling_lin, self.ceiling_lin);
@@ -103,6 +120,42 @@ mod tests {
         for &s in &samples {
             assert!(s.abs() <= ceiling_lin + 1e-4);
         }
+    }
+
+    #[test]
+    fn test_block_min_gain_reports_reduction() {
+        let mut limiter = Limiter::new(48_000.0);
+
+        // Silence stays at unity.
+        let mut quiet = vec![0.0f32; 256];
+        limiter.process(&mut quiet);
+        assert_eq!(limiter.block_min_gain(), 1.0);
+
+        // A burst well over the ceiling reduces gain this block; the value
+        // is the peak reduction, strictly between 0 and 1.
+        let mut loud = vec![4.0f32; 256];
+        limiter.process(&mut loud);
+        let min_gain = limiter.block_min_gain();
+        assert!(
+            min_gain > 0.0 && min_gain < 1.0,
+            "expected a reduction below unity, got {min_gain}"
+        );
+
+        // The next quiet block does not jump back to unity: the limiter is
+        // still releasing, so the block minimum is the gain it entered with.
+        limiter.process(&mut quiet);
+        assert!(limiter.block_min_gain() < 1.0);
+
+        // Once the release has settled, a quiet block reports unity again
+        // (the exponential release approaches it asymptotically).
+        let mut settle = vec![0.0f32; 4_800]; // 100 ms — release fully settles
+        limiter.process(&mut settle);
+        limiter.process(&mut settle);
+        assert!(
+            limiter.block_min_gain() > 0.999,
+            "expected full recovery, got {}",
+            limiter.block_min_gain()
+        );
     }
 
     #[test]

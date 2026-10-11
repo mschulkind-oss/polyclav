@@ -90,6 +90,11 @@ pub struct PolyclavAudioMetrics {
     pub clap_input_event_drops: u64,
     pub last_frames: u32,
     pub max_frames: u32,
+    /// Worst-case limiter gain of the most recent audio callback, in
+    /// thousandths (0..=1000). 1000 = no reduction; lower = the limiter is
+    /// compressing. 0 means "no callback yet". Drives the clip/limit
+    /// indicator.
+    pub limiter_min_gain_milli: u32,
 }
 
 #[repr(C)]
@@ -240,6 +245,7 @@ struct AudioMetricsAtomics {
     clap_input_event_drops: AtomicU64,
     last_frames: AtomicU32,
     max_frames: AtomicU32,
+    limiter_min_gain_milli: AtomicU32,
 }
 
 static AUDIO_METRICS: OnceLock<AudioMetricsAtomics> = OnceLock::new();
@@ -270,6 +276,26 @@ pub(crate) fn record_audio_callback(frames: usize) {
             .requested_over_max_quantum
             .fetch_add(1, Ordering::Relaxed);
     }
+}
+
+/// Quantize a limiter gain to thousandths for the metrics struct: 1.0 ->
+/// 1000, 0.25 -> 250. A non-finite gain stores 0, meaning "unknown".
+fn limiter_gain_milli(gain: f32) -> u32 {
+    if gain.is_finite() {
+        (gain.clamp(0.0, 1.0) * 1000.0).round() as u32
+    } else {
+        0
+    }
+}
+
+/// Record the limiter's worst-case gain for this callback (1.0 = no
+/// reduction), as thousandths, for the clip/limit indicator. Called from
+/// the realtime callbacks only — offline renders must not touch the
+/// shared metrics.
+pub(crate) fn record_limiter_gain(gain: f32) {
+    audio_metrics()
+        .limiter_min_gain_milli
+        .store(limiter_gain_milli(gain), Ordering::Relaxed);
 }
 
 #[cfg(target_os = "linux")]
@@ -1319,6 +1345,15 @@ pub(crate) struct UserData {
     last_drive_pedal_amount: f32,
 }
 
+impl UserData {
+    /// Worst-case limiter gain applied on the last `render_block` (1.0 = no
+    /// reduction). The realtime callbacks read it after rendering to feed
+    /// the clip/limit indicator metric.
+    pub(crate) fn limiter_min_gain(&self) -> f32 {
+        self.limiter.block_min_gain()
+    }
+}
+
 static STATE: OnceLock<Mutex<Option<State>>> = OnceLock::new();
 
 fn state_cell() -> &'static Mutex<Option<State>> {
@@ -1474,6 +1509,7 @@ pub unsafe extern "C" fn polyclav_audio_get_metrics(out: *mut PolyclavAudioMetri
             clap_input_event_drops: m.clap_input_event_drops.load(Ordering::Relaxed),
             last_frames: m.last_frames.load(Ordering::Relaxed),
             max_frames: m.max_frames.load(Ordering::Relaxed),
+            limiter_min_gain_milli: m.limiter_min_gain_milli.load(Ordering::Relaxed),
         };
     }
 }
@@ -1497,6 +1533,7 @@ pub extern "C" fn polyclav_audio_reset_metrics() {
     m.clap_input_event_drops.store(0, Ordering::Relaxed);
     m.last_frames.store(0, Ordering::Relaxed);
     m.max_frames.store(0, Ordering::Relaxed);
+    m.limiter_min_gain_milli.store(0, Ordering::Relaxed);
 }
 
 /// Reload the soundfont set by `polyclav_audio_set_soundfont`. Loads on a
@@ -3449,6 +3486,7 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
         let samples =
             unsafe { std::slice::from_raw_parts_mut(data.data.cast::<f32>(), n_frames * 2) };
         render_block(user_data, samples);
+        record_limiter_gain(user_data.limiter_min_gain());
     }
 
     if !data.chunk.is_null() {
@@ -3558,6 +3596,21 @@ mod tests {
         polyclav_audio_reset_metrics();
         unsafe { polyclav_audio_get_metrics(&mut metrics) };
         assert_eq!(metrics, PolyclavAudioMetrics::default());
+    }
+
+    /// The limiter activity metric's quantization (the indicator's input):
+    /// 1.0 -> 1000 ("no reduction"), values clamp to [0,1], and a
+    /// non-finite gain maps to 0 ("unknown"). Pure — no shared state, so no
+    /// cross-test race.
+    #[test]
+    fn limiter_gain_milli_quantizes() {
+        assert_eq!(limiter_gain_milli(1.0), 1000);
+        assert_eq!(limiter_gain_milli(0.25), 250);
+        assert_eq!(limiter_gain_milli(0.9996), 1000);
+        assert_eq!(limiter_gain_milli(2.0), 1000); // clamped
+        assert_eq!(limiter_gain_milli(-1.0), 0); // clamped
+        assert_eq!(limiter_gain_milli(f32::NAN), 0);
+        assert_eq!(limiter_gain_milli(f32::INFINITY), 0);
     }
 
     #[test]

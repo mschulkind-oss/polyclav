@@ -427,8 +427,15 @@ func main() {
 	var (
 		knobMu           sync.Mutex
 		knobRestoreTimer *time.Timer
+		// screenBusy is true while a knob popup / page flash / transport
+		// message owns the 2-line display. The limiter indicator yields to it
+		// and re-asserts once the screen is idle again.
+		screenBusy bool
 	)
 	restoreDisplayToPatch := func() {
+		knobMu.Lock()
+		screenBusy = false
+		knobMu.Unlock()
 		if cur := registry.Current(); cur != nil {
 			_ = sup.Launchkey().SetDisplayText(cur.Display, "")
 		}
@@ -439,11 +446,17 @@ func main() {
 	// unchanged from the pre-pages hardcoded knobs.
 	armScreenRestore := func() {
 		knobMu.Lock()
+		screenBusy = true
 		if knobRestoreTimer != nil {
 			knobRestoreTimer.Stop()
 		}
 		knobRestoreTimer = time.AfterFunc(800*time.Millisecond, restoreDisplayToPatch)
 		knobMu.Unlock()
+	}
+	screenIdle := func() bool {
+		knobMu.Lock()
+		defer knobMu.Unlock()
+		return !screenBusy
 	}
 
 	onMIDIEvent := func(ev midi.Event) {
@@ -729,6 +742,51 @@ func main() {
 		}
 	}()
 
+	// Clip/limit indicator: audio-core reports the limiter's worst-case gain
+	// for each callback; when it is actually compressing, show the reduction
+	// on the screen's second line — the guitar-POD "you're in the red" — so a
+	// squashed peak isn't mistaken for distortion elsewhere in the chain. It
+	// yields to knob popups and re-asserts once the screen is idle.
+	limiterState := &limiterMeter{}
+	var (
+		limiterLabel string
+		limiterWrite time.Time
+	)
+	pollLimiter := func(now time.Time) {
+		if sup == nil || sup.Launchkey() == nil || sup.Launchkey().State() != "active" {
+			return
+		}
+		peak := limiterState.observe(float32(audio.GetMetrics().LimiterMinGainMilli)/1000, now)
+		label := limiterScreenLabel(peak)
+		if label == "" {
+			if limiterLabel == "" {
+				return
+			}
+			limiterLabel = ""
+			if cur := registry.Current(); cur != nil && screenIdle() {
+				if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
+					logger.Warn("launchkey limiter display", "err", err)
+				}
+			}
+			return
+		}
+		if !screenIdle() {
+			return // a knob popup or flash owns the screen; re-assert when idle
+		}
+		if label == limiterLabel && now.Sub(limiterWrite) < limiterIndicatorRefresh {
+			return
+		}
+		cur := registry.Current()
+		if cur == nil {
+			return
+		}
+		limiterLabel = label
+		limiterWrite = now
+		if err := sup.Launchkey().SetDisplayText(cur.Display, label); err != nil {
+			logger.Warn("launchkey limiter display", "err", err)
+		}
+	}
+
 	go func() {
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
@@ -787,6 +845,7 @@ func main() {
 					}
 					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
+				pollLimiter(time.Now())
 			}
 		}
 	}()

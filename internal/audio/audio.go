@@ -382,6 +382,11 @@ type Metrics struct {
 	ClapInputEventDrops          uint64
 	LastFrames                   uint32
 	MaxFrames                    uint32
+	// LimiterMinGainMilli is the worst-case limiter gain of the most recent
+	// audio callback, in thousandths: 1000 = no reduction, lower = the
+	// limiter is compressing, 0 = no callback yet. Drives the clip/limit
+	// indicator.
+	LimiterMinGainMilli uint32
 }
 
 func GetMetrics() Metrics {
@@ -403,6 +408,7 @@ func GetMetrics() Metrics {
 		ClapInputEventDrops:          uint64(cm.clap_input_event_drops),
 		LastFrames:                   uint32(cm.last_frames),
 		MaxFrames:                    uint32(cm.max_frames),
+		LimiterMinGainMilli:          uint32(cm.limiter_min_gain_milli),
 	}
 }
 
