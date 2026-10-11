@@ -3117,13 +3117,14 @@ func TestAdjustMasterVolumeComposesWithPatchVolume(t *testing.T) {
 	if !approxEq(f.audio.volume, 0) {
 		t.Errorf("engine volume at master 0 = %v, want 0", f.audio.volume)
 	}
-	// The master knob carries headroom above unity: it tops out at
-	// levelMax (2.0, +6 dB), not 1.0.
-	if v, _ := f.c.AdjustMasterVolume(5); !approxEq(v, levelMax) {
-		t.Errorf("master after big up = %v, want %v", v, levelMax)
+	// The master knob carries headroom above unity, and more than the
+	// per-patch trim: it tops out at masterLevelMax (4.0, +12 dB), because it
+	// is the loudness knob.
+	if v, _ := f.c.AdjustMasterVolume(9); !approxEq(v, masterLevelMax) {
+		t.Errorf("master after big up = %v, want %v", v, masterLevelMax)
 	}
-	if !approxEq(f.audio.volume, 0.5*levelMax) {
-		t.Errorf("engine volume at master %v = %v, want patch 0.5 x master", levelMax, f.audio.volume)
+	if !approxEq(f.audio.volume, 0.5*masterLevelMax) {
+		t.Errorf("engine volume at master %v = %v, want patch 0.5 x master", masterLevelMax, f.audio.volume)
 	}
 }
 
@@ -3194,11 +3195,11 @@ func TestSetMasterVolumeAbsolute(t *testing.T) {
 		t.Errorf("change master_volume = %v, want 0.25", ch.Data["master_volume"])
 	}
 
-	if _, err := f.c.SetMasterVolume(2); err != nil {
+	if _, err := f.c.SetMasterVolume(9); err != nil {
 		t.Fatalf("SetMasterVolume clamp: %v", err)
 	}
-	if !approxEq(f.c.MasterVolume(), levelMax) {
-		t.Errorf("master after clamp = %v, want %v", f.c.MasterVolume(), levelMax)
+	if !approxEq(f.c.MasterVolume(), masterLevelMax) {
+		t.Errorf("master after clamp = %v, want %v", f.c.MasterVolume(), masterLevelMax)
 	}
 }
 
@@ -3222,7 +3223,7 @@ func TestLevelKnobsCarryHeadroom(t *testing.T) {
 		t.Errorf("engine volume = %v, want 1.5", f.audio.volume)
 	}
 
-	// Master 2.0 adds to it: the product (up to +12 dB) reaches the engine.
+	// Master 2.0 adds to it: the product (patch x master) reaches the engine.
 	if v, err := f.c.SetMasterVolume(2.0); err != nil {
 		t.Fatalf("SetMasterVolume: %v", err)
 	} else if !approxEq(v, 2.0) {

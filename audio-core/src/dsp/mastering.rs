@@ -1,7 +1,24 @@
-const DEFAULT_RATIO: f32 = 4.0;
-const DEFAULT_ATTACK_S: f32 = 0.010;
+const DEFAULT_RATIO: f32 = 2.0;
+/// 2 ms attack: fast enough that the peak-preserving makeup can't overshoot a
+/// transient into the limiter (a lagging envelope would apply the makeup
+/// before it applied the matching gain reduction).
+const DEFAULT_ATTACK_S: f32 = 0.002;
 const DEFAULT_RELEASE_S: f32 = 0.100;
 const DEFAULT_KNEE_DB: f32 = 6.0;
+/// Adaptive peak-reference decay, dB/s: slow enough to hold a section's level,
+/// fast enough to follow a patch change or a long quiet passage.
+const PEAK_REF_DECAY_DB_PER_SEC: f32 = 12.0;
+
+/// Soft-knee gain reduction in dB for an input `over` dB above threshold.
+fn knee_gr_db(over: f32, slope: f32, knee_half: f32, knee_inv_2: f32) -> f32 {
+    if over <= -knee_half {
+        0.0
+    } else if over >= knee_half {
+        over * slope
+    } else {
+        slope * (over + knee_half).powi(2) * knee_inv_2
+    }
+}
 
 pub struct MasteringCompressor {
     attack_coeff: f32,
@@ -11,7 +28,12 @@ pub struct MasteringCompressor {
     threshold_db: f32,
     ratio: f32,
     knee_db: f32,
-    makeup_db: f32,
+    /// Adaptive peak reference (dBFS): rises instantly to a new peak, decays
+    /// slowly. The makeup is the reduction applied *here*, so peaks are left
+    /// where they were and the body below them is lifted — loudness without
+    /// pushing anything new into the limiter.
+    peak_ref_db: f32,
+    peak_decay_db: f32,
 }
 
 impl MasteringCompressor {
@@ -26,7 +48,8 @@ impl MasteringCompressor {
             threshold_db: 0.0,
             ratio: DEFAULT_RATIO,
             knee_db: DEFAULT_KNEE_DB,
-            makeup_db: 0.0,
+            peak_ref_db: -120.0,
+            peak_decay_db: PEAK_REF_DECAY_DB_PER_SEC / sample_rate,
         }
     }
 
@@ -34,14 +57,10 @@ impl MasteringCompressor {
         let amt = amount.clamp(0.0, 1.0);
         self.amount = amt;
         // More amount lowers the threshold AND raises the ratio: at 0 it is
-        // transparent, at 1 it is a hard leveler (-30 dBFS threshold, 10:1)
-        // that drives the limiter. The auto-makeup recovers the reduction at a
-        // 0 dBFS reference (-threshold * (1 - 1/ratio)), so more amount is
-        // always at least as loud, never quieter while adding clipping — the
-        // bug when makeup under-compensated the threshold drop.
+        // transparent (0 dBFS threshold, 2:1), at 1 it is a hard leveler
+        // (-30 dBFS threshold, 10:1).
         self.threshold_db = -30.0 * amt;
         self.ratio = 2.0 + amt * 8.0;
-        self.makeup_db = -self.threshold_db * (1.0 - 1.0 / self.ratio);
     }
 
     #[allow(dead_code)]
@@ -51,14 +70,11 @@ impl MasteringCompressor {
 
     pub fn process(&mut self, samples: &mut [f32]) {
         let threshold_db = self.threshold_db;
-        let ratio = self.ratio;
-        let knee_db = self.knee_db;
-        let makeup_db = self.makeup_db;
+        let knee_half = self.knee_db / 2.0;
+        let slope = 1.0 - 1.0 / self.ratio;
+        let knee_inv_2 = 1.0 / (2.0 * self.knee_db);
         let attack_coeff = self.attack_coeff;
         let release_coeff = self.release_coeff;
-        let knee_half = knee_db / 2.0;
-        let slope = 1.0 - 1.0 / ratio;
-        let knee_inv_2 = 1.0 / (2.0 * knee_db);
 
         for chunk in samples.chunks_exact_mut(2) {
             let l = chunk[0];
@@ -77,15 +93,20 @@ impl MasteringCompressor {
             let env_safe = self.envelope.max(1e-20);
             let env_db = 20.0 * env_safe.log10();
 
-            let over = env_db - threshold_db;
-
-            let gr_db = if over <= -knee_half {
-                0.0
-            } else if over >= knee_half {
-                over * slope
+            if env_db > self.peak_ref_db {
+                self.peak_ref_db = env_db;
             } else {
-                slope * (over + knee_half).powi(2) * knee_inv_2
-            };
+                self.peak_ref_db = (self.peak_ref_db - self.peak_decay_db).max(-120.0);
+            }
+
+            let gr_db = knee_gr_db(env_db - threshold_db, slope, knee_half, knee_inv_2);
+            let makeup_db = knee_gr_db(
+                self.peak_ref_db - threshold_db,
+                slope,
+                knee_half,
+                knee_inv_2,
+            )
+            .max(0.0);
 
             let lin_gain = 10.0_f32.powf((-gr_db + makeup_db) / 20.0);
 

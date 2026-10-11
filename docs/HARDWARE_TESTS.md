@@ -33,24 +33,30 @@ unit-tested against driver fakes, but has never met the device. Verify:
 - Knob 1 on each page sounds right on a native patch: MAIN=volume,
   OSC=osc1 level, FILTER=cutoff, AMP=amp attack, LFO/MOD=LFO rate
   (audible vibrato/wah once LFO>Pitch or LFO>Cutoff is raised).
-- MAIN knob 8 is **Master**, Polyclav's global output level: it changes
+- MAIN knob 8 is **Master**, Polyclav's global output level and the loudness
+  knob (to 400%, +12 dB): it changes
   loudness on a soundfont patch too, and switching patches leaves it (and
   the resulting level) where you set it. Set it low, switch patches, and
   confirm the new patch comes in at its own volume scaled by the same
   master; turn it to 0 for silence. Restart the daemon and confirm the
-  level survives (`master_volume` in `state.toml`).
+  level survives (`master_volume` in `state.toml`). As you push it up the
+  limiter light (`LIMIT`, red pad) comes on *and stays on* — that is the
+  limiter doing its job, which is exactly what you want at high level, not a
+  fault; the sound should stay clean as it engages and only start to sound
+  squashed at the very top.
 - MAIN knob 7 is **Mstr Comp**, the global mastering compressor: turning it
-  up audibly levels *and* boosts the mix (same result as the web Comp
-  pedal's "Glue"), works on a soundfont patch too, and does not reset when you
-  switch patches. At 100% it should be clearly the loudest, most squashed
-  setting — not quieter, and not only more clipped. Drive is still on AMP
-  knob 7.
-- The limiter/clip indicator: play hard with Master at 200% and the
+  up levels the performance (quiet notes lift toward loud ones) and works on
+  a soundfont patch too, and does not reset when you switch patches. It
+  should *not* force the Master down to stay clean — the compressor never
+  adds level. Drive is still on AMP knob 7.
+- The limiter/limit indicator: play hard with Master high and the
   screen's second line shows `LIMIT x.x dB` and the loaded patch's pad on
   the top row lights red while the brick-wall limiter is compressing; both
-  clear (back to the patch name / patch color) when you back off. The
-  screen marker should not interrupt a knob popup while you are turning an
-  encoder, and neither should disturb the page-indicator row (bottom row).
+  clear (back to the patch name / patch color) when you back off. Reducing
+  gain by a dB or two is *normal and desirable* when loud — this is a
+  limiter, not a fault light. The screen marker should not interrupt a knob
+  popup while you are turning an encoder, and neither should disturb the
+  page-indicator row (bottom row).
 - Knob labels/values on the screen are legible for every slot (16-char
   lines; e.g. "Osc1 Detune" / "+7 c").
 - Transport Play toggles the audition player's last-used clip (run with

@@ -47,5 +47,5 @@ test("onParamChange makes every mini adjustable and reports edits by id", () => 
   fireEvent.keyDown(screen.getByRole("slider", { name: "Patch" }), { key: "ArrowDown" });
   expect(onParamChange).toHaveBeenLastCalledWith("patch.level", 98); // 100 - 1/100 of 0–200
   fireEvent.keyDown(screen.getByRole("slider", { name: "Master" }), { key: "ArrowUp" });
-  expect(onParamChange).toHaveBeenLastCalledWith("master.level", 82); // 80 + 1/100 of 0–200
+  expect(onParamChange).toHaveBeenLastCalledWith("master.level", 84); // 80 + 1/100 of 0–400
 });

@@ -105,7 +105,7 @@ type StateStore interface {
 	Macros() []state.Macro
 	SetMacros([]state.Macro) error
 	// MasterVolume/SetMasterVolume carry Polyclav's GLOBAL output level
-	// (0..2, 1 = unity), multiplied with each patch's own Volume into the
+	// (0..4, 1 = unity), multiplied with each patch's own Volume into the
 	// engine's master gain. Stored globally, so it is independent of patch
 	// selection — see controls.AdjustMasterVolume.
 	MasterVolume() float32
@@ -579,7 +579,7 @@ func (c *Controls) AdjustDrivePedal(delta float32) (float32, bool) {
 	return c.adjustKnob("drive_pedal", delta)
 }
 
-// MasterVolume returns Polyclav's global output level (0..2, 1 = unity). It
+// MasterVolume returns Polyclav's global output level (0..4, 1 = unity). It
 // is independent of the current patch: the engine's master gain is the
 // selected patch's Volume multiplied by this value.
 func (c *Controls) MasterVolume() float32 {
@@ -590,7 +590,7 @@ func (c *Controls) MasterVolume() float32 {
 }
 
 // SetMasterVolume sets Polyclav's global output level to v (clamped to
-// [0,levelMax]), persists it, re-applies the current patch's effective gain,
+// [0,masterLevelMax]), persists it, re-applies the current patch's effective gain,
 // and publishes a "mastering" change (with a master_volume key) so every
 // surface echoes the new level. Above unity the extra gain drives the brick-
 // wall limiter rather than clipping past it. This is the web slider's
@@ -601,7 +601,7 @@ func (c *Controls) SetMasterVolume(v float32) (float32, error) {
 	if c.st == nil {
 		return 0, errNoPatch
 	}
-	v = clampLevel(v)
+	v = clampMasterLevel(v)
 	c.st.SetMasterVolume(v)
 	c.applyEffectiveVolume()
 	c.publishMasterVolume(v)
@@ -620,7 +620,7 @@ func (c *Controls) AdjustMasterVolume(delta float32) (float32, bool) {
 	if c.st == nil {
 		return 0, false
 	}
-	v := clampLevel(c.st.MasterVolume() + delta)
+	v := clampMasterLevel(c.st.MasterVolume() + delta)
 	c.st.SetMasterVolume(v)
 	c.applyEffectiveVolume()
 	c.publishMasterVolume(v)
@@ -2010,16 +2010,24 @@ func clamp01(v float32) float32 {
 	return clampRange(v, 0, 1)
 }
 
-// levelMax is the top of the two volume knobs, the per-patch Volume and the
-// global Master. 1.0 is unity; 2.0 is +6 dB. The engine gain is their
-// product, so both maxed is +12 dB of makeup gain — plenty of headroom to
-// beat the rest of the system while the brick-wall limiter still holds the
-// ceiling.
+// levelMax bounds the per-patch Volume trim, the balance knob. 1.0 is unity;
+// 2.0 is +6 dB. The engine gain is patch x master.
 const levelMax float32 = 2.0
 
-// clampLevel clamps a volume-knob value to [0, levelMax].
+// masterLevelMax bounds the global Master — wider than the per-patch trim on
+// purpose. It is the loudness knob: after patches are balanced *below* full,
+// the master must still be able to make the board up and drive the limiter,
+// and the limiter (not the knob) is the ceiling. 4.0 is +12 dB.
+const masterLevelMax float32 = 4.0
+
+// clampLevel clamps a per-patch volume trim to [0, levelMax].
 func clampLevel(v float32) float32 {
 	return clampRange(v, 0, levelMax)
+}
+
+// clampMasterLevel clamps the global master to [0, masterLevelMax].
+func clampMasterLevel(v float32) float32 {
+	return clampRange(v, 0, masterLevelMax)
 }
 
 // clampKnob applies the per-field maximum for the shared absolute/delta knob

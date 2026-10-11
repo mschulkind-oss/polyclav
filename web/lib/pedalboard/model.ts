@@ -240,11 +240,12 @@ export const CHAIN: PedalSpec[] = [
  * switching patches keeps the master. Both are live — see
  * lib/pedalboard/wiring.ts (volume, master_volume).
  *
- * 100% is unity and each knob goes to 200% (+6 dB): the headroom is the point
- * — balance patches relative to each other, then make up the whole board's
- * level with the master (both maxed is +12 dB). The gain is applied before the
- * brick-wall limiter, so pushing past 100% gets louder without clipping the
- * output past the Ceiling.
+ * 100% is unity; the per-patch trim runs to 200% (+6 dB) and the master to
+ * 400% (+12 dB). The headroom is the point — balance patches relative to each
+ * other, then make the whole board's level up with the master. The gain is
+ * applied before the brick-wall limiter, so pushing past 100% gets louder
+ * without clipping the output past the Ceiling (the limiter, not the knob, is
+ * the ceiling).
  */
 export const LEVEL_PARAMS: ParamSpec[] = [
   {
@@ -261,7 +262,7 @@ export const LEVEL_PARAMS: ParamSpec[] = [
     label: "Master",
     role: "level",
     min: 0,
-    max: 200,
+    max: 400,
     defaultValue: 80,
     unit: "%",
   },

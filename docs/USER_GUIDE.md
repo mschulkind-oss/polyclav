@@ -50,9 +50,10 @@ panel; see "Web dashboard" below.
     classic layout: knob 1 = patch volume, 2 = reverb wet/dry, 3 = input
     compressor, 4 = drive pedal, 7 = mastering compressor, 8 = Polyclav's
     global master volume
-    (independent of patches). The two volume knobs (1 and 8) go to 200%:
-    100% is unity, and the headroom lets you balance patches to each other
-    and then make the whole board up with the master. Knob 7 shapes the
+    (independent of patches). 100% is unity; the per-patch trim (1) goes to
+    200% for balancing and the master (8) to 400%, so you can balance patches
+    to each other and then make the whole board up — and past — with the
+    master. Knob 7 shapes the
     master bus the same way the input compressor shapes one patch. The
     other pages cover the native synth's
     full voice. Code-complete, **pending hardware verification** — see
@@ -568,19 +569,21 @@ Notes:
 - **MAIN knob 7 is Mstr Comp** — the global mastering compressor amount
   (the web Comp pedal's "Glue"). It is the master-bus counterpart to knob
   3's per-patch input compressor: stored globally, applied to the whole mix
-  on every patch type, and never reset by a patch switch. It is the loudness
-  lever: turning it up levels *and* boosts the mix (auto-makeup), so it can
-  make the board louder than the master knob alone. (Native Drive
+  on every patch type, and never reset by a patch switch. It levels the
+  performance (quiet parts up toward the loud ones) without adding level, so
+  it never pushes the chain into the limiter by itself — loudness is the
+  **Master** knob's job. (Native Drive
   previously lived here; it is still on AMP knob 7.)
 - **MAIN knob 8 is Master** — Polyclav's own output level, stored
   globally (not per patch). The engine's master gain is the selected
   patch's *Volume* (knob 1) multiplied by *Master* (knob 8): knob 1 trims
   one patch, knob 8 turns the whole instrument down without editing any
-  patch, and switching patches never changes it. Both volume knobs go to
-  **200%** (100% = unity), so you can balance patches relative to each
-  other with knob 1 and then make up the whole board with knob 8 — see
-  "Mastering & level matching". It is saved to `state.toml` and survives a
-  restart. It applies on every patch type.
+  patch, and switching patches never changes it. 100% is unity and the
+  master goes to **400%** (+12 dB), so you can balance patches with knob 1
+  and then bring the whole board up — the loudness comes from here, not from
+  the compressor. The limiter engaging as you turn it up is normal and
+  wanted; see "Mastering & level matching". It is saved to `state.toml` and
+  survives a restart. It applies on every patch type.
 - With a **non-native patch** selected, only MAIN's knobs 1–4 (the
   global volume / reverb / comp / pedal) plus 7–8 (mastering comp and
   master) respond; the rest of the synth
@@ -649,7 +652,8 @@ offer the same cards:
   (this patch's trim, MAIN knob 1) and **Master** (Polyclav's global
   level, MAIN knob 8). They multiply — the engine master gain is
   `patch × master` — so switching patches keeps the master and any patch
-  can be trimmed under it. Each runs to 200% (100% = unity), and the gain
+  can be trimmed under it. The trim runs to 200% and the master to 400%
+  (100% = unity), and the gain
   lands before the limiter, so pushing past 100% gets louder without
   clipping past the Ceiling.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
@@ -676,7 +680,7 @@ The page is a thin client over a JSON API you can also drive with curl:
 | `POST /api/patches/{name}/select` | Switch patch by name. |
 | `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` (all fields optional). `volume` is 0..2 (1 = unity); the rest are 0..1. |
 | `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
-| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db` / `master_volume` (`master_volume` is 0..2, 1 = unity). |
+| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db` / `master_volume` (`master_volume` is 0..4, 1 = unity). |
 | `GET /api/config` | Your `config.toml`, verbatim. |
 | `PUT /api/config` | Replace `config.toml` (full TOML text). Validated before write; 422 on a config the daemon would refuse. Restart to apply. |
 | `GET /api/velocity` | The active velocity curve and whether it came from config or a session edit. |
@@ -877,7 +881,7 @@ Workflow for tuning a new patch — ears are the meter:
 A typical real-world set ends up with the grand at `0`, a bright EP at
 `-6`, a DX7 at `+3`, and an analog bass at `-9`.
 
-### Live volume: Patch and Master (and why 200% is the point)
+### Live volume: Patch and Master (and why the master goes to 400%)
 
 `gain_db` is the set-and-forget, per-patch trim. For playing, the two
 live volume knobs are **Patch** (MAIN knob 1, stored per patch) and
@@ -885,21 +889,28 @@ live volume knobs are **Patch** (MAIN knob 1, stored per patch) and
 their product — `patch × master` — applied after the pedals and after the
 mastering compressor, but **before the brick-wall limiter**.
 
-Both knobs run to **200%**, and 100% is unity. That headroom is the whole
-idea: leave each patch's Volume backed off while you balance the patches
-against *each other*, then use Master to bring the whole board up to where
-you want it against everything else on the system. Because the gain lands
-before the limiter, turning past 100% makes polyclav louder (the limiter
-catches the peaks) rather than clipping the output past the Ceiling — so
-you can push it until it's clearly too loud, then back off, without ever
-hearing hard digital clipping. When it is compressing, the Launchkey
-screen says so (`LIMIT 3.4 dB` on the second line) and the loaded patch's
+100% is unity. The per-patch trim runs to **200%** (+6 dB) — enough to lift a
+quiet patch in a balance — and the master to **400%** (+12 dB), because the
+master is the loudness knob. The split is the whole idea: leave each patch's
+Volume backed off while you balance the patches against *each other*, then
+use Master to bring the whole board up to where you want it against
+everything else on the system. Because the gain lands before the limiter,
+turning past 100% makes polyclav louder (the limiter catches the peaks)
+rather than clipping the output past the Ceiling — so you can push it until
+it's clearly too loud, then back off, without ever hearing hard digital
+clipping. When it is compressing, the Launchkey screen says so
+(`LIMIT 3.4 dB` on the second line) and the loaded patch's
 pad turns red — watch that instead of
 guessing, and back the level off if you'd rather not hand the peaks to the
-limiter. If the master knob runs out of loudness, MAIN knob 7 (the
-mastering compressor) is the lever: its auto-makeup makes the mix louder as
-you turn it up, not merely squashed, so it can take you past where the
-master alone can.
+limiter.
+
+If the master is all the way up and you still want more, raise the
+**Patch** trim — the two multiply, so `gain_db` + patch Volume 200% +
+master 400% is the loudest the chain can be while the limiter still holds
+the Ceiling. Nothing above that is louder; it is only more clipped.
+
+The mastering compressor is a different tool: it does not add level (see
+"Mastering chain" below), it reshapes dynamics. Reach for the master first.
 
 `gain_db` and the Live Volume knobs stack: a patch with `gain_db = +6`
 and Volume 100% is already twice as hot as a `gain_db = 0` patch at
@@ -911,27 +922,34 @@ select time, and the Volume knob for on-the-fly balance.
 After the six pedals, every patch goes through its `gain_db` trim, the
 mastering compressor, and the live master gain, before a brick-wall limiter
 sets the output ceiling. The defaults are sensible — most users will never
-touch this block — but it's there if you want to ride the overall dynamic
-feel, and it is the loudness lever when you need polyclav to compete with
-the rest of the system.
+touch this block — but it is there to shape dynamics, and it does **not**
+add level: loudness is the master knob's job.
 
 ```toml
 [mastering]
 comp_amount        = 0.25    # 0..1 mastering compressor: 0 = bypass; turning
-                              # it up lowers the threshold (to -30 dBFS),
-                              # raises the ratio (2:1 -> 10:1) and adds
-                              # auto-makeup. 10 ms attack, 100 ms release.
-                              # 0.25 is gentle glue; 1.0 is a hard leveler
-                              # whose makeup drives the limiter.
+                              # it up lowers the threshold (to -30 dBFS) and
+                              # raises the ratio (2:1 -> 10:1). 2 ms attack,
+                              # 100 ms release. 0.25 is gentle glue; 1.0 is a
+                              # hard leveler.
 limiter_ceiling_db = -0.3    # -12..0 dBFS brick-wall limiter ceiling.
 ```
 
-`comp_amount` is a **loudness control as much as a leveler**: its auto-makeup
-recovers the gain reduction it applies, so every step up makes the mix
-louder (or at least no quieter) rather than trading loudness for squash. At
-1.0 on a typical patch it is worth roughly +10 dB of loudness, all of it
-caught by the limiter — which is why `comp_amount` alone can take you past
-where the master knob can.
+**What `comp_amount` does and does not do.** It levels the performance:
+it measures the recent peak and applies just enough makeup to put that peak
+back where it was, so turning it up lifts the quiet parts toward the loud
+ones without pushing anything new into the limiter. That means:
+
+- It **never clips on its own**, at any setting — 100% with Master at 100%
+is a clean, dense sound.
+- It **does not make the mix louder** in any simple way. A compressor only
+adds loudness by reducing dynamics, so its effect is proportional to how
+much dynamic range you are playing with: a dynamic piano part gains several
+dB, a sustained organ pad gains almost none. If you want more level, turn up
+the **Master** (or the per-patch Volume) — that is what the limiter is
+for. This codebase measured the difference: a wide-velocity phrase moves
+less than 0.5 dB across the whole `comp_amount` range, while the master
+range is worth +12 dB.
 
 The limiter is **always on** as a peak-safety net, even when
 `comp_amount = 0`. It is lookahead-free (zero added latency), with a
