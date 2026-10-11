@@ -586,7 +586,7 @@ func TestAbsoluteSetters(t *testing.T) {
 		{"volume clamps high", (*Controls).SetVolume, "volume",
 			func(a *fakeAudio) float32 { return a.volume },
 			func(a *fakeAudio) int { return a.volumeCalls },
-			func(k state.Knob) float32 { return k.Volume }, 1.7, 1.0},
+			func(k state.Knob) float32 { return k.Volume }, 3.0, levelMax},
 		{"reverb clamps low", (*Controls).SetReverb, "reverb",
 			func(a *fakeAudio) float32 { return a.reverb },
 			func(a *fakeAudio) int { return a.reverbCalls },
@@ -672,7 +672,7 @@ func TestDeltaAdjusters(t *testing.T) {
 		{"drive_pedal from defaults", (*Controls).AdjustDrivePedal, "drive_pedal",
 			state.Defaults(), 0.4, 0.4},
 		{"volume clamps high", (*Controls).AdjustVolume, "volume",
-			state.Knob{Volume: 0.9}, 0.5, 1.0},
+			state.Knob{Volume: 1.9}, 0.5, levelMax},
 		{"reverb clamps low", (*Controls).AdjustReverb, "reverb",
 			state.Knob{Reverb: 0.05}, -0.5, 0.0},
 	}
@@ -3078,11 +3078,13 @@ func TestAdjustMasterVolumeComposesWithPatchVolume(t *testing.T) {
 	if !approxEq(f.audio.volume, 0) {
 		t.Errorf("engine volume at master 0 = %v, want 0", f.audio.volume)
 	}
-	if v, _ := f.c.AdjustMasterVolume(5); !approxEq(v, 1) {
-		t.Errorf("master after big up = %v, want 1", v)
+	// The master knob carries headroom above unity: it tops out at
+	// levelMax (2.0, +6 dB), not 1.0.
+	if v, _ := f.c.AdjustMasterVolume(5); !approxEq(v, levelMax) {
+		t.Errorf("master after big up = %v, want %v", v, levelMax)
 	}
-	if !approxEq(f.audio.volume, 0.5) {
-		t.Errorf("engine volume at master 1 = %v, want patch 0.5", f.audio.volume)
+	if !approxEq(f.audio.volume, 0.5*levelMax) {
+		t.Errorf("engine volume at master %v = %v, want patch 0.5 x master", levelMax, f.audio.volume)
 	}
 }
 
@@ -3156,7 +3158,52 @@ func TestSetMasterVolumeAbsolute(t *testing.T) {
 	if _, err := f.c.SetMasterVolume(2); err != nil {
 		t.Fatalf("SetMasterVolume clamp: %v", err)
 	}
-	if !approxEq(f.c.MasterVolume(), 1) {
-		t.Errorf("master after clamp = %v, want 1", f.c.MasterVolume())
+	if !approxEq(f.c.MasterVolume(), levelMax) {
+		t.Errorf("master after clamp = %v, want %v", f.c.MasterVolume(), levelMax)
+	}
+}
+
+// TestLevelKnobsCarryHeadroom: both volume knobs go above unity — the
+// per-patch Volume so a quiet patch can be balanced up, the global Master so
+// the whole board can be pushed past the other system sources — while every
+// other knob stays normalized 0..1 and the engine gains multiply.
+func TestLevelKnobsCarryHeadroom(t *testing.T) {
+	f := newFixture(t, sfPatch)
+	if err := f.c.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	// Patch volume 1.5 x master 1.0.
+	if v, err := f.c.SetVolume(1.5); err != nil {
+		t.Fatalf("SetVolume: %v", err)
+	} else if !approxEq(v, 1.5) {
+		t.Errorf("SetVolume returned %v, want 1.5", v)
+	}
+	if !approxEq(f.audio.volume, 1.5) {
+		t.Errorf("engine volume = %v, want 1.5", f.audio.volume)
+	}
+
+	// Master 2.0 adds to it: the product (up to +12 dB) reaches the engine.
+	if v, err := f.c.SetMasterVolume(2.0); err != nil {
+		t.Fatalf("SetMasterVolume: %v", err)
+	} else if !approxEq(v, 2.0) {
+		t.Errorf("SetMasterVolume returned %v, want 2.0", v)
+	}
+	if !approxEq(f.audio.volume, 3.0) {
+		t.Errorf("engine volume = %v, want 3.0 (1.5 x 2.0)", f.audio.volume)
+	}
+
+	// Both exceed their range and clamp at levelMax.
+	if v, err := f.c.SetVolume(9); err != nil {
+		t.Fatalf("SetVolume clamp: %v", err)
+	} else if !approxEq(v, levelMax) {
+		t.Errorf("SetVolume clamp = %v, want %v", v, levelMax)
+	}
+
+	// A tonal knob is still capped at 1.0 (clampKnob's per-field maximum).
+	if v, err := f.c.SetReverb(1.5); err != nil {
+		t.Fatalf("SetReverb: %v", err)
+	} else if !approxEq(v, 1.0) {
+		t.Errorf("SetReverb = %v, want 1.0 (headroom is volume-only)", v)
 	}
 }

@@ -891,7 +891,7 @@ func TestParamsPatchOutOfRange(t *testing.T) {
 		t.Fatalf("SelectPatch: %v", err)
 	}
 	for _, body := range []map[string]any{
-		{"volume": 1.5},
+		{"volume": 2.5},
 		{"reverb": -0.1},
 		{"cutoff_pos": 2.0},
 	} {
@@ -900,6 +900,29 @@ func TestParamsPatchOutOfRange(t *testing.T) {
 	}
 	if v := f.audio.get("volume"); v != 1.0 { // still the select-restored default
 		t.Errorf("audio volume must be untouched by rejected patches, got %v", v)
+	}
+}
+
+// The per-patch volume trim carries headroom above unity (0..2), so a quiet
+// patch can be balanced up without editing gain_db; the engine sees
+// Volume*MasterVolume (Master defaults to 1.0 here).
+func TestParamsPatchVolumeAboveUnity(t *testing.T) {
+	f := newFixture(t, nil)
+	if err := f.ctrl.SelectPatch("salamander"); err != nil {
+		t.Fatalf("SelectPatch: %v", err)
+	}
+
+	rec := f.do(t, "PATCH", "/api/params", map[string]any{"volume": 1.5})
+	wantStatus(t, rec, http.StatusOK)
+	applied := decodeBody(t, rec)["applied"].(map[string]any)
+	if v := applied["volume"].(float64); !approxEq(v, 1.5) {
+		t.Errorf("applied.volume: expected 1.5, got %v", v)
+	}
+	if v := f.audio.get("volume"); !approxEq(float64(v), 1.5) {
+		t.Errorf("audio master gain: expected 1.5, got %v", v)
+	}
+	if k := f.st.PatchKnob("salamander"); !approxEq(float64(k.Volume), 1.5) {
+		t.Errorf("state volume: expected 1.5, got %v", k.Volume)
 	}
 }
 
@@ -1542,6 +1565,16 @@ func TestMasteringPatchMasterVolume(t *testing.T) {
 
 	rec = f.do(t, "PATCH", "/api/mastering", `{"master_volume": "loud"}`)
 	wantStatus(t, rec, http.StatusBadRequest)
+
+	// Above unity is accepted and reaches the engine as makeup gain.
+	rec = f.do(t, "PATCH", "/api/mastering", map[string]any{"master_volume": 1.5})
+	wantStatus(t, rec, http.StatusOK)
+	if v := decodeBody(t, rec)["master_volume"].(float64); !approxEq(v, 1.5) {
+		t.Errorf("master_volume above unity: expected 1.5, got %v", v)
+	}
+	if v := f.audio.get("volume"); !approxEq(float64(v), 1.5) {
+		t.Errorf("audio volume at master 1.5: expected 1.5, got %v", v)
+	}
 }
 
 // ---- config ----------------------------------------------------------------

@@ -82,8 +82,8 @@ describe("MASTER_PARAMS", () => {
     const patch = MASTER_PARAMS.find((p) => p.id === "patch.level");
     const level = MASTER_PARAMS.find((p) => p.id === "master.level");
     const ceiling = MASTER_PARAMS.find((p) => p.id === "master.ceiling");
-    expect(patch).toMatchObject({ min: 0, max: 100, defaultValue: 100, unit: "%" });
-    expect(level).toMatchObject({ min: 0, max: 100, defaultValue: 80, unit: "%" });
+    expect(patch).toMatchObject({ min: 0, max: 200, defaultValue: 100, unit: "%" });
+    expect(level).toMatchObject({ min: 0, max: 200, defaultValue: 80, unit: "%" });
     expect(ceiling).toMatchObject({ min: -12, max: 0, defaultValue: -0.3, unit: "dB" });
   });
 });

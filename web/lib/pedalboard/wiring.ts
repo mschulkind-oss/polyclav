@@ -54,7 +54,10 @@ export const PARAM_WIRING: Record<string, ParamWire> = {
   // Master-out card. The two volume stages multiply: Patch is this patch's
   // trim (/api/params volume, MAIN knob 1) and Master is Polyclav's global
   // level (/api/mastering master_volume, MAIN knob 8, independent of
-  // patches). Ceiling is the mastering limiter.
+  // patches). Ceiling is the mastering limiter. Both level display ranges run
+  // to 200% (100% = unity, +6 dB per knob) so the master can make up for
+  // channels balanced below full; pct maps display % straight to the engine
+  // multiplier, so 200% posts 2.0.
   "patch.level": { endpoint: "params", field: "volume", toEngine: pct, fromEngine: unpct },
   "master.level": {
     endpoint: "mastering",

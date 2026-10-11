@@ -65,6 +65,11 @@ const MIN_QUANTUM: u32 = 16;
 /// 48 kHz, the historical polyclav quantum.
 const DEFAULT_QUANTUM: u32 = 128;
 const BACKEND_DISPOSAL_QUEUE_CAPACITY: usize = 256;
+/// Upper bound on the master gain (the folded `Volume * Master`). 8.0 is
+/// +18 dB, matching the per-patch `gain_db` trim's practical range; the live
+/// UI only reaches 2.0 per knob (+12 dB on the product), so this is a sanity
+/// clamp on the C ABI, not a limit the user meets.
+const MAX_MASTER_VOLUME: f32 = 8.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -632,8 +637,15 @@ fn drain_synth_reload_queue_off_rt() {
 }
 
 /// Lock-free DSP parameter struct, read by the audio thread every callback,
-/// written by Go via the C ABI setters. All values are `f32::to_bits` in 0..=1.
+/// written by Go via the C ABI setters. Values are `f32::to_bits`, each with
+/// its own clamp — most knobs are normalized 0..=1, while the gains with
+/// headroom (patch gain, master gain) and the unit-carrying params (delay ms,
+/// ceiling dB) go beyond it. See each setter for the range.
 pub(crate) struct DspParams {
+    /// Master gain (`Volume * Master`, folded by Go). 0.0 mutes; 1.0 is
+    /// unity. Clamped to [0, 8] — up to +18 dB of makeup gain, applied
+    /// before the limiter so more than unity drives the limiter rather
+    /// than clipping downstream.
     master_volume: AtomicU32,
     comp_amount: AtomicU32,
     reverb_mix: AtomicU32,
@@ -692,7 +704,7 @@ pub(crate) struct DspParams {
     /// historic fixed order, so the default render is unchanged. Written
     /// by Go via `polyclav_dsp_set_fx_order`, validated to a permutation
     /// at the boundary and again (defensively) on read. The master tail
-    /// (patch gain → mastering → limiter → master volume) is NOT part of
+    /// (patch gain → mastering → master gain → limiter) is NOT part of
     /// this ordering — it is a fixed stage after the six pedals.
     fx_order: AtomicU32,
     /// Native synth filter cutoff in Hz, written by Go whenever the
@@ -1094,8 +1106,12 @@ impl DspParams {
         self.native_oversample.load(Ordering::Relaxed)
     }
 
+    /// Master gain in [0, 8]. Unlike the normalized knobs this carries
+    /// headroom above unity (up to +18 dB) so the global level can make up
+    /// for channels balanced below full; it is applied before the limiter,
+    /// which stays the final brick wall.
     pub fn set_master_volume(&self, v: f32) {
-        Self::store(&self.master_volume, v);
+        Self::store_clamped(&self.master_volume, v, 0.0, MAX_MASTER_VOLUME);
     }
     pub fn set_comp_amount(&self, v: f32) {
         Self::store(&self.comp_amount, v);
@@ -2216,7 +2232,7 @@ pub extern "C" fn polyclav_dsp_set_tremolo_depth(v: f32) {
 /// A non-permutation is ignored and the previous order kept, mirroring
 /// the "ignore garbage at the boundary" rule of the f32 setters. Only
 /// these six pedals reorder: the master tail (patch gain → mastering →
-/// limiter → master volume) stays a FIXED stage applied after them and
+/// master gain → limiter) stays a FIXED stage applied after them and
 /// never moves.
 #[no_mangle]
 pub extern "C" fn polyclav_dsp_set_fx_order(packed: u32) {
@@ -3193,7 +3209,7 @@ pub(crate) fn drain_midi(user_data: &mut UserData) {
 /// section of six pedals — drive pedal, chorus, tremolo, analog delay,
 /// compressor, reverb — applied in the order configured via
 /// `polyclav_dsp_set_fx_order` (identity by default), followed by a FIXED
-/// master tail (patch gain → mastering → limiter → master volume) that never
+/// master tail (patch gain → mastering → master gain → limiter) that never
 /// reorders. Pure portable buffer math — no OS audio API — so it is shared
 /// verbatim by the PipeWire callback (Linux) and the CoreAudio backend
 /// (macOS), and is exercised directly by the offline render tests.
@@ -3349,9 +3365,12 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         }
     }
 
-    // 3. Fixed master tail — patch gain → mastering → limiter → master
-    // volume, always in this order, never reordered. Read parameters once
-    // per callback.
+    // 3. Fixed master tail — patch gain → mastering → master gain →
+    // limiter, always in this order, never reordered. The master stage sits
+    // BEFORE the limiter so a level above unity drives the limiter (makeup
+    // gain into a brick wall) instead of clipping past it downstream; the
+    // limiter stays the last stage, so its ceiling is still the ceiling no
+    // matter where the master knob is. Read parameters once per callback.
     let master = user_data.dsp_params.master_volume();
     let patch_gain = user_data.dsp_params.patch_gain();
     let mastering_amount = user_data.dsp_params.mastering_amount();
@@ -3379,13 +3398,17 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
     if mastering_amount > 0.0 {
         user_data.mastering.process(samples);
     }
-    // Limiter always runs — it is brick-wall safety, default ceiling -0.3 dBFS.
-    user_data.limiter.process(samples);
+    // Master gain — the global level, applied after the pedals and the
+    // mastering compressor but before the limiter (see the section comment).
+    // Above unity it drives the limiter; at or below unity the limiter sees
+    // the same signal it always did.
     if (master - 1.0).abs() > f32::EPSILON {
         for s in samples.iter_mut() {
             *s *= master;
         }
     }
+    // Limiter always runs — it is brick-wall safety, default ceiling -0.3 dBFS.
+    user_data.limiter.process(samples);
 }
 
 #[cfg(target_os = "linux")]
@@ -4132,6 +4155,97 @@ mod tests {
             mean_abs_diff > 0.01,
             "expected a real waveform-shape difference from the override, \
              got mean_abs_diff={mean_abs_diff:.4}"
+        );
+    }
+
+    /// The master gain carries headroom above unity AND is applied before
+    /// the brick-wall limiter, so +12 dB of makeup gain is caught by the
+    /// limiter instead of clipping past the ceiling. This pins both halves of
+    /// the "master above 100%" contract; under the old post-limiter
+    /// placement the hot render would come back at roughly +12 dBFS.
+    #[test]
+    fn master_gain_above_unity_is_limited_not_clipped() {
+        let p = DspParams::new();
+        // Values above unity are kept, not clamped back to 1.0 ...
+        p.set_master_volume(2.0);
+        assert_eq!(p.master_volume(), 2.0, "master gain clamped below unity");
+        // ... and the sanity clamp at the C-ABI bound still applies.
+        p.set_master_volume(1_000.0);
+        assert_eq!(p.master_volume(), MAX_MASTER_VOLUME);
+
+        let patch_type = std::ffi::CString::new("native").unwrap();
+        let patch_ref = std::ffi::CString::new("minimoog").unwrap();
+        let n_frames: u32 = 48_000; // 1 s
+        let events = [FfiMidiEvent {
+            frame: 0,
+            kind: 0,
+            channel: 0,
+            data1: 60,
+            data2: 127,
+        }];
+        // patch_gain = 8.0 (+18 dB) drives the signal well past the ceiling
+        // no matter what the native synth's own level is, so the limiter is
+        // definitely engaged and the ceiling is the thing under test.
+        let render = |master: f32| -> Vec<f32> {
+            let nan = f32::NAN;
+            let params = FfiChainParams {
+                master_volume: master,
+                comp_amount: nan,
+                reverb_mix: nan,
+                patch_gain: 8.0,
+                mastering_amount: nan,
+                limiter_ceiling_db: nan,
+                drive_pedal_amount: nan,
+                analog_delay_time_ms: nan,
+                analog_delay_feedback: nan,
+                analog_delay_mix: nan,
+                chorus_rate_hz: nan,
+                chorus_depth: nan,
+                chorus_mix: nan,
+                tremolo_rate_hz: nan,
+                tremolo_depth: nan,
+            };
+            let mut buf = vec![0.0f32; n_frames as usize * 2];
+            let rc = unsafe {
+                polyclav_render_offline_events(
+                    patch_type.as_ptr(),
+                    patch_ref.as_ptr(),
+                    std::ptr::null(),
+                    &params as *const FfiChainParams,
+                    events.as_ptr(),
+                    events.len() as u32,
+                    buf.as_mut_ptr(),
+                    n_frames,
+                )
+            };
+            assert_eq!(rc, 0, "render_offline_events returned error {rc}");
+            buf
+        };
+
+        let unity = render(1.0);
+        let hot = render(4.0);
+        assert!(unity.iter().all(|s| s.is_finite()));
+        assert!(hot.iter().all(|s| s.is_finite()));
+
+        let unity_peak = dsp::loudness::measure_peak_dbfs(&unity);
+        let hot_peak = dsp::loudness::measure_peak_dbfs(&hot);
+        // Default ceiling is -0.3 dBFS; allow a little room for the soft
+        // knee. A post-limiter master multiply would land near +12 dBFS.
+        assert!(
+            hot_peak <= 0.5,
+            "+12 dB of master gain escaped the limiter: peak {hot_peak:.2} dBFS \
+             (unity was {unity_peak:.2})"
+        );
+
+        // And the boost is real: more gain into the same limiter means a
+        // denser output, never a quieter one.
+        let rms =
+            |b: &[f32]| -> f32 { (b.iter().map(|s| s * s).sum::<f32>() / b.len() as f32).sqrt() };
+        let unity_rms = rms(&unity);
+        let hot_rms = rms(&hot);
+        assert!(
+            hot_rms > unity_rms * 1.05,
+            "master boost had no effect: rms {unity_rms:.4} -> {hot_rms:.4}"
         );
     }
 

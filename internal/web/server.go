@@ -430,7 +430,13 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 
 // finite01 reports whether v is a finite number in [0,1].
 func finite01(v float64) bool {
-	return v >= 0 && v <= 1 // NaN and +Inf fail the comparison
+	return finiteInRange(v, 0, 1)
+}
+
+// finiteInRange reports whether v is a finite number in [lo,hi] (NaN and
+// infinities fail the comparison).
+func finiteInRange(v, lo, hi float64) bool {
+	return v >= lo && v <= hi
 }
 
 func finite(v float64) bool {
@@ -472,8 +478,13 @@ func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
 		return
 	}
+	// The per-patch volume trim carries headroom above unity (0..2, see
+	// controls.levelMax); every other params field is normalized 0..1.
+	if body.Volume != nil && !finiteInRange(*body.Volume, 0, 2) {
+		writeErr(w, http.StatusBadRequest, "volume must be in [0,2]")
+		return
+	}
 	for name, p := range map[string]*float64{
-		"volume":      body.Volume,
 		"reverb":      body.Reverb,
 		"compressor":  body.Compressor,
 		"drive_pedal": body.DrivePedal,

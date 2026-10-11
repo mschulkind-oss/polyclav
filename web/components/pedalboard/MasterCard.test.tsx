@@ -45,7 +45,7 @@ test("onParamChange makes every mini adjustable and reports edits by id", () => 
   const sliders = screen.getAllByRole("slider");
   expect(sliders.map((s) => s.getAttribute("aria-label"))).toEqual(["Patch", "Master", "Ceiling"]);
   fireEvent.keyDown(screen.getByRole("slider", { name: "Patch" }), { key: "ArrowDown" });
-  expect(onParamChange).toHaveBeenLastCalledWith("patch.level", 99); // 100 - 1/100 of 0–100
+  expect(onParamChange).toHaveBeenLastCalledWith("patch.level", 98); // 100 - 1/100 of 0–200
   fireEvent.keyDown(screen.getByRole("slider", { name: "Master" }), { key: "ArrowUp" });
-  expect(onParamChange).toHaveBeenLastCalledWith("master.level", 81); // 80 + 1/100 of 0–100
+  expect(onParamChange).toHaveBeenLastCalledWith("master.level", 82); // 80 + 1/100 of 0–200
 });

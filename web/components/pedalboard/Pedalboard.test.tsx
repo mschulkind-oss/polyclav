@@ -129,7 +129,7 @@ test("the two volume knobs are live and share the board's value state", () => {
   const params = Array.from(container.querySelectorAll(".pb-bus-pair.pb-r1 .pb-param"));
   const byName = (n: string) =>
     params.find((p) => p.querySelector(".pb-p-name")?.textContent?.includes(n));
-  expect(byName("Master")?.querySelector(".pb-p-val")?.textContent).toBe("81%"); // 80 + 1/100
+  expect(byName("Master")?.querySelector(".pb-p-val")?.textContent).toBe("82%"); // 80 + 1/100 of 0–200
   expect(byName("Patch")?.querySelector(".pb-p-val")?.textContent).toBe("100%");
 });
 

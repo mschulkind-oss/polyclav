@@ -236,9 +236,15 @@ export const CHAIN: PedalSpec[] = [
 /**
  * The two volume stages, in signal order: **Patch** (the per-patch trim, MAIN
  * knob 1) then **Master** (Polyclav's global level, MAIN knob 8). The engine's
- * final gain is their product, so turning either changes loudness while
+ * master gain is their product, so turning either changes loudness while
  * switching patches keeps the master. Both are live — see
  * lib/pedalboard/wiring.ts (volume, master_volume).
+ *
+ * 100% is unity and each knob goes to 200% (+6 dB): the headroom is the point
+ * — balance patches relative to each other, then make up the whole board's
+ * level with the master (both maxed is +12 dB). The gain is applied before the
+ * brick-wall limiter, so pushing past 100% gets louder without clipping the
+ * output past the Ceiling.
  */
 export const LEVEL_PARAMS: ParamSpec[] = [
   {
@@ -246,7 +252,7 @@ export const LEVEL_PARAMS: ParamSpec[] = [
     label: "Patch",
     role: "level",
     min: 0,
-    max: 100,
+    max: 200,
     defaultValue: 100,
     unit: "%",
   },
@@ -255,7 +261,7 @@ export const LEVEL_PARAMS: ParamSpec[] = [
     label: "Master",
     role: "level",
     min: 0,
-    max: 100,
+    max: 200,
     defaultValue: 80,
     unit: "%",
   },

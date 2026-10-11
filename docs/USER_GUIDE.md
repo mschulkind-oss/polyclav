@@ -8,8 +8,8 @@ For the forward-looking feature plan, see `docs/ROADMAP.md`.
 
 `polyclav` is a Linux daemon that turns a MIDI keyboard plus an audio interface
 into a playable digital piano. MIDI in → synthesis (soundfont, native synth, or
-LV2/CLAP plugin) → per-patch gain → user compressor + reverb → mastering
-compressor + brick-wall limiter → master gain → audio out via PipeWire. It is
+LV2/CLAP plugin) → six-pedal FX chain → per-patch gain → mastering
+compressor → master gain → brick-wall limiter → audio out via PipeWire. It is
 designed around a Novation Launchkey 61 MK4 and a Behringer XR18 mixer, but
 works with any MIDI keyboard and any PipeWire-supported audio sink. There is no
 DAW and no recording — keys in, sound out. An optional browser dashboard
@@ -29,7 +29,13 @@ panel; see "Web dashboard" below.
   - native pure-Rust synth (`type = "native"`)
   - LV2 and CLAP plugins (`type = "lv2"` / `type = "clap"`)
 - DSP chain in the audio thread, in order:
-  `synth → drive_pedal → chorus → tremolo → analog_delay → patch_gain → input_comp → reverb → mastering_comp → limiter → master_volume → out`.
+  `synth → drive_pedal → chorus → tremolo → analog_delay → input_comp → reverb → patch_gain → mastering_comp → master_gain → limiter → out`.
+  The first six stages are the reorderable pedals; `patch_gain`,
+  `mastering_comp`, `master_gain` and the `limiter` are a fixed tail.
+  `master_gain` is the per-patch Volume × global Master product (see
+  "Mastering & level matching"), so it sits before the limiter: at or below
+  unity it is a clean trim, above unity it is makeup gain the limiter
+  catches instead of clipping past the ceiling.
   The four pedals (drive, chorus, tremolo, analog delay) default to
   bit-exact bypass; only the drive pedal currently has a Launchkey knob
   (MAIN knob 4) — the other three are implemented and controllable via
@@ -43,7 +49,10 @@ panel; see "Web dashboard" below.
     Scene ▲/▼; the bottom pad row shows the active page. MAIN keeps the
     classic layout: knob 1 = patch volume, 2 = reverb wet/dry, 3 = input
     compressor, 4 = drive pedal, 8 = Polyclav's global master volume
-    (independent of patches). The other pages cover the native synth's
+    (independent of patches). The two volume knobs (1 and 8) go to 200%:
+    100% is unity, and the headroom lets you balance patches to each other
+    and then make the whole board up with the master. The other pages cover
+    the native synth's
     full voice. Code-complete, **pending hardware verification** — see
     "Launchkey knob pages" below.
   - The screen shows the current patch's `display` name, with value
@@ -549,11 +558,14 @@ Notes:
   through earlier releases; cutoff is still one page-flip away on
   **FILTER**'s knob 1.
 - **MAIN knob 8 is Master** — Polyclav's own output level, stored
-  globally (not per patch). The engine's final gain is the selected
+  globally (not per patch). The engine's master gain is the selected
   patch's *Volume* (knob 1) multiplied by *Master* (knob 8): knob 1 trims
   one patch, knob 8 turns the whole instrument down without editing any
-  patch, and switching patches never changes it. It is saved to
-  `state.toml` and survives a restart. It applies on every patch type.
+  patch, and switching patches never changes it. Both volume knobs go to
+  **200%** (100% = unity), so you can balance patches relative to each
+  other with knob 1 and then make up the whole board with knob 8 — see
+  "Mastering & level matching". It is saved to `state.toml` and survives a
+  restart. It applies on every patch type.
 - With a **non-native patch** selected, only MAIN's knobs 1–4 (the
   global volume / reverb / comp / pedal) respond; the rest of the synth
   pages apply to native patches only.
@@ -619,9 +631,11 @@ offer the same cards:
 - **Mastering** — comp amount and limiter ceiling, live. The board's
   **Master-out card** carries both volume stages side by side: **Patch**
   (this patch's trim, MAIN knob 1) and **Master** (Polyclav's global
-  level, MAIN knob 8). They multiply — the engine gain is
+  level, MAIN knob 8). They multiply — the engine master gain is
   `patch × master` — so switching patches keeps the master and any patch
-  can be trimmed under it.
+  can be trimmed under it. Each runs to 200% (100% = unity), and the gain
+  lands before the limiter, so pushing past 100% gets louder without
+  clipping past the Ceiling.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
   (see "Audition mode" below).
 - **Config** — view and edit `config.toml` in the browser. Saving
@@ -644,9 +658,9 @@ The page is a thin client over a JSON API you can also drive with curl:
 | `GET /api/events` | SSE stream — a `snapshot` event on connect, then `params` / `synth` / `patch` / `mastering` / `velocity` / `player` / `device` / `note` change events (`note` carries each played note's raw + remapped velocity for the monitor, throttled to ~30/s). |
 | `GET /api/patches` | The patch list. |
 | `POST /api/patches/{name}/select` | Switch patch by name. |
-| `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` (each 0..1, all fields optional). |
+| `PATCH /api/params` | Set `volume` / `reverb` / `compressor` / `drive_pedal` / `cutoff_pos` (all fields optional). `volume` is 0..2 (1 = unity); the rest are 0..1. |
 | `PATCH /api/synth` | Set native-synth params — see `docs/NATIVE_SYNTH.md` for fields and ranges. |
-| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db` / `master_volume`. |
+| `PATCH /api/mastering` | Set `comp_amount` / `limiter_ceiling_db` / `master_volume` (`master_volume` is 0..2, 1 = unity). |
 | `GET /api/config` | Your `config.toml`, verbatim. |
 | `PUT /api/config` | Replace `config.toml` (full TOML text). Validated before write; 422 on a config the daemon would refuse. Restart to apply. |
 | `GET /api/velocity` | The active velocity curve and whether it came from config or a session edit. |
@@ -830,9 +844,8 @@ DSP path.
 Each `[[patches]]` entry takes an optional `gain_db` (default `0.0`,
 useful range roughly `-24` to `+24`). On every patch select, `polyclav`
 converts it to a linear factor (`10^(gain_db/20)`) and pushes it to the
-audio thread, where it is applied as the **very first stage** of the
-signal chain (before the user compressor on knob 3 ever sees the signal,
-so the compressor behaves the same regardless of which patch is loaded).
+audio thread, where it is applied at the head of the fixed master tail —
+after the six pedals, before the mastering compressor and the limiter.
 
 Workflow for tuning a new patch — ears are the meter:
 
@@ -848,13 +861,35 @@ Workflow for tuning a new patch — ears are the meter:
 A typical real-world set ends up with the grand at `0`, a bright EP at
 `-6`, a DX7 at `+3`, and an analog bass at `-9`.
 
+### Live volume: Patch and Master (and why 200% is the point)
+
+`gain_db` is the set-and-forget, per-patch trim. For playing, the two
+live volume knobs are **Patch** (MAIN knob 1, stored per patch) and
+**Master** (MAIN knob 8, stored globally). The engine's master gain is
+their product — `patch × master` — applied after the pedals and after the
+mastering compressor, but **before the brick-wall limiter**.
+
+Both knobs run to **200%**, and 100% is unity. That headroom is the whole
+idea: leave each patch's Volume backed off while you balance the patches
+against *each other*, then use Master to bring the whole board up to where
+you want it against everything else on the system. Because the gain lands
+before the limiter, turning past 100% makes polyclav louder (the limiter
+catches the peaks) rather than clipping the output past the Ceiling — so
+you can push it until it's clearly too loud, then back off, without ever
+hearing hard digital clipping.
+
+`gain_db` and the Live Volume knobs stack: a patch with `gain_db = +6`
+and Volume 100% is already twice as hot as a `gain_db = 0` patch at
+Volume 100%. Use `gain_db` to normalize patches to a common reference at
+select time, and the Volume knob for on-the-fly balance.
+
 ### Mastering chain (`[mastering]`)
 
-After the user-controllable compressor and reverb, every patch goes
-through a transparent mastering compressor and a brick-wall limiter
-before the master volume knob. The defaults are sensible — most users
-will never touch this block — but it's there if you want to ride the
-overall dynamic feel.
+After the six pedals, every patch goes through its `gain_db` trim, a
+transparent mastering compressor, and the live master gain, before a
+brick-wall limiter sets the output ceiling. The defaults are sensible —
+most users will never touch this block — but it's there if you want to
+ride the overall dynamic feel.
 
 ```toml
 [mastering]

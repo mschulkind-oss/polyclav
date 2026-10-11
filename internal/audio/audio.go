@@ -626,8 +626,12 @@ func SetNativePatch(engine string) error {
 	return nil
 }
 
-// SetMasterVolume in [0.0, 1.0]. Clamped in Rust. Takes effect on the next
-// audio callback (~3 ms).
+// SetMasterVolume sets the engine's master gain (the per-patch Volume times
+// the global Master, folded by internal/controls). 1.0 is unity; values up to
+// 8.0 (+18 dB) are kept, since above unity is makeup gain for the brick-wall
+// limiter rather than an error. Non-finite values are rejected in Rust.
+// Applied before the limiter, so it takes effect on the next audio callback
+// (~3 ms) without clipping past the ceiling.
 func SetMasterVolume(v float32) {
 	C.polyclav_dsp_set_master_volume(C.float(v))
 }

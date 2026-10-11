@@ -203,12 +203,19 @@ void polyclav_midi_cc(uint8_t channel, uint8_t controller, uint8_t value);
 void polyclav_midi_pitch_bend(uint8_t channel, uint16_t bend);
 void polyclav_midi_panic(void);
 
-/* DSP parameter setters. All values clamped to [0.0, 1.0] in Rust. The
- * audio thread reads atomically on each callback; updates are advisory
- * and take effect on the next process. */
+/* DSP parameter setters. Normalized knobs clamp to [0.0, 1.0] in Rust;
+ * patch_gain and master_volume carry headroom above unity, each documented
+ * below. The audio thread reads atomically on each callback; updates are
+ * advisory and take effect on the next process. */
 void polyclav_dsp_set_master_volume(float v);
 void polyclav_dsp_set_compressor(float v);
 void polyclav_dsp_set_reverb(float v);
+
+/* Master gain (Go folds per-patch Volume * global Master into this one
+ * value). Default 1.0 = unity; 0.0 mutes. Clamped to [0.0, 8.0] in Rust.
+ * Applied before the brick-wall limiter, so a value above unity adds makeup
+ * gain the limiter catches instead of clipping past the ceiling. */
+void polyclav_dsp_set_master_volume(float v);
 
 /* Per-patch gain as a linear multiplier. Go converts dB -> linear before
  * pushing. Default 1.0, clamped to [0.0, 8.0] in Rust. */

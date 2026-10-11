@@ -21,7 +21,8 @@ import (
 // Knob holds the user-controllable post-synth DSP values for a patch:
 // the four original knobs (volume/reverb/compressor/drive) plus the
 // chorus/tremolo/analog-delay chain-effect params and per-stage enable
-// flags. Volume/reverb/compressor/mix/depth values are 0..1 linear
+// flags. Volume carries headroom above unity (0..2, see
+// controls.levelMax); reverb/compressor/mix/depth are 0..1 linear
 // (matching audio.SetMasterVolume etc.); the rate/time params carry
 // their engine units (Hz, ms).
 type Knob struct {
@@ -190,11 +191,11 @@ type Snapshot struct {
 	// assignments but never applies them (the web drives each Target param
 	// through the existing setters). See controls.SetMacros.
 	Macros []Macro `toml:"macros,omitempty"`
-	// MasterVolume is Polyclav's GLOBAL output level (0..1), applied on
-	// top of each patch's own Volume: the engine's final gain is
-	// Volume*MasterVolume. Stored globally (not per-patch) so switching
-	// patches never changes it. Absent means 1.0 (full), which is why it
-	// is a pointer — 0 is a real, meaningful setting (muted). See
+	// MasterVolume is Polyclav's GLOBAL output level (0..2, 1 = unity),
+	// multiplied with each patch's own Volume into the engine's master
+	// gain. Stored globally (not per-patch) so switching patches never
+	// changes it. Absent means 1.0 (unity), which is why it is a pointer —
+	// 0 is a real, meaningful setting (muted). See
 	// controls.AdjustMasterVolume.
 	MasterVolume *float32 `toml:"master_volume,omitempty"`
 }
@@ -610,7 +611,7 @@ func (s *Store) SetMacros(m []Macro) error {
 }
 
 // MasterVolume returns Polyclav's global output level, defaulting to 1.0
-// (full) when the user has never set it.
+// (unity) when the user has never set it.
 func (s *Store) MasterVolume() float32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -621,7 +622,7 @@ func (s *Store) MasterVolume() float32 {
 }
 
 // SetMasterVolume stores Polyclav's global output level and schedules a
-// debounced write. Callers clamp to [0,1].
+// debounced write. Callers clamp to [0,2] (controls.levelMax).
 func (s *Store) SetMasterVolume(v float32) {
 	s.mu.Lock()
 	s.snap.MasterVolume = &v

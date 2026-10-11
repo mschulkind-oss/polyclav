@@ -15,7 +15,7 @@ import (
 // taper per docs/ROADMAP.md §2.1 is a future refinement); stepped
 // parameters (bend range, voice mode) move one unit per detent.
 const (
-	stepUnit      float32 = 1.0 / 127 // [0,1] params: full sweep ≈ one rotation
+	stepUnit      float32 = 1.0 / 127 // [0,1] params: full sweep ≈ one rotation (volume knobs reach 2.0: ≈two)
 	stepResonance float32 = 0.0075    // [0,0.95]: same ~127-detent sweep
 	stepEnvTime   float32 = 0.025     // 25 ms per detent (0.1 ms..10 s range)
 	stepGlide     float32 = 0.05      // 50 ms per detent over [0,5] s
