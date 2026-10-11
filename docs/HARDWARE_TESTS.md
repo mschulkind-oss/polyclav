@@ -40,9 +40,11 @@ unit-tested against driver fakes, but has never met the device. Verify:
   master; turn it to 0 for silence. Restart the daemon and confirm the
   level survives (`master_volume` in `state.toml`).
 - MAIN knob 7 is **Mstr Comp**, the global mastering compressor: turning it
-  up audibly levels the whole mix (same result as the web Comp pedal's
-  "Glue"), works on a soundfont patch too, and does not reset when you
-  switch patches. Drive is still on AMP knob 7.
+  up audibly levels *and* boosts the mix (same result as the web Comp
+  pedal's "Glue"), works on a soundfont patch too, and does not reset when you
+  switch patches. At 100% it should be clearly the loudest, most squashed
+  setting — not quieter, and not only more clipped. Drive is still on AMP
+  knob 7.
 - The limiter/clip indicator: play hard with Master at 200% and the
   screen's second line shows `LIMIT x.x dB` and the loaded patch's pad on
   the top row lights red while the brick-wall limiter is compressing; both

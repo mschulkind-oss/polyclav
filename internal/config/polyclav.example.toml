@@ -18,10 +18,13 @@
 # limiter. See docs/USER_GUIDE.md for the full DSP chain order.
 #
 # Optional: if this block is absent, polyclav applies the defaults shown below
-# (comp_amount = 0.5, limiter_ceiling_db = -0.3).
+# (comp_amount = 0.25, limiter_ceiling_db = -0.3).
 
-# Mastering compressor amount (0..1). 0 = bypass; sensible default 0.5.
-comp_amount = 0.5
+# Mastering compressor amount (0..1). 0 = bypass. Turning it up lowers the
+# threshold (-30 dBFS at 1.0), raises the ratio (2:1 -> 10:1) and adds
+# auto-makeup, so it is a loudness control as much as a leveler: 0.25 is
+# gentle glue, 1.0 is a hard leveler that drives the limiter.
+comp_amount = 0.25
 # Brick-wall limiter ceiling in dBFS. Default -0.3 (catches inter-sample
 # peaks while leaving a hair of headroom for D/A reconstruction).
 # Clamped to [-12, 0] in Rust.

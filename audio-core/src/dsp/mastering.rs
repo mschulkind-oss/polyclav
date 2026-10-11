@@ -33,8 +33,15 @@ impl MasteringCompressor {
     pub fn set_amount(&mut self, amount: f32) {
         let amt = amount.clamp(0.0, 1.0);
         self.amount = amt;
+        // More amount lowers the threshold AND raises the ratio: at 0 it is
+        // transparent, at 1 it is a hard leveler (-30 dBFS threshold, 10:1)
+        // that drives the limiter. The auto-makeup recovers the reduction at a
+        // 0 dBFS reference (-threshold * (1 - 1/ratio)), so more amount is
+        // always at least as loud, never quieter while adding clipping — the
+        // bug when makeup under-compensated the threshold drop.
         self.threshold_db = -30.0 * amt;
-        self.makeup_db = -self.threshold_db / 2.0;
+        self.ratio = 2.0 + amt * 8.0;
+        self.makeup_db = -self.threshold_db * (1.0 - 1.0 / self.ratio);
     }
 
     #[allow(dead_code)]
@@ -155,5 +162,39 @@ mod tests {
         let max_out = samples.iter().cloned().fold(0.0_f32, |a, b| a.max(b.abs()));
 
         assert!((max_out - max_in).abs() < 0.05);
+    }
+
+    /// Regression: more amount must never be *quieter*. The old makeup
+    /// (`-threshold/2`) under-compensated the threshold drop, so 100% came out
+    /// quieter than 75% while clipping harder — the "compression all the way
+    /// up loses loudness" report.
+    #[test]
+    fn test_more_amount_is_never_quieter() {
+        const N: usize = 48_000;
+        let mut prev = f32::NEG_INFINITY;
+        let mut prev_amt = 0.0;
+        for step in 0..=10 {
+            let amt = step as f32 / 10.0;
+            let mut comp = MasteringCompressor::new(48_000.0);
+            comp.set_amount(amt);
+
+            // 1 kHz sine at -12 dBFS, long enough for the envelope to settle.
+            let mut buf = vec![0.0f32; N * 2];
+            for i in 0..N {
+                let v = (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin() * 0.25;
+                buf[i * 2] = v;
+                buf[i * 2 + 1] = v;
+            }
+            comp.process(&mut buf);
+
+            let tail = &buf[N..]; // second half: attack settled
+            let rms = (tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32).sqrt();
+            assert!(
+                rms >= prev - 1e-4,
+                "amount {amt} (rms {rms:.5}) is quieter than amount {prev_amt} (rms {prev:.5})"
+            );
+            prev = rms;
+            prev_amt = amt;
+        }
     }
 }

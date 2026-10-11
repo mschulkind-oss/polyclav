@@ -252,7 +252,11 @@ func main() {
 	hub := controls.NewHub()
 	ctl := controls.New(logger, audioBackend{}, registry, stateStore, hub)
 
-	var compAmount float32 = 0.5
+	// Defaults when [mastering] is absent. comp_amount is deliberately
+	// modest: the compressor is a loudness control now (threshold, ratio and
+	// makeup all rise with it), so 0.5 would boot noticeably hotter than the
+	// old gentle-4:1 default.
+	var compAmount float32 = 0.25
 	var limiterCeilingDB float32 = -0.3
 	if cfg.Mastering != nil {
 		compAmount = cfg.Mastering.CompAmount

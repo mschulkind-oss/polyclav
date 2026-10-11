@@ -568,8 +568,9 @@ Notes:
 - **MAIN knob 7 is Mstr Comp** — the global mastering compressor amount
   (the web Comp pedal's "Glue"). It is the master-bus counterpart to knob
   3's per-patch input compressor: stored globally, applied to the whole mix
-  on every patch type, and never reset by a patch switch. Turn it up to
-  level the mix instead of just backing the master down. (Native Drive
+  on every patch type, and never reset by a patch switch. It is the loudness
+  lever: turning it up levels *and* boosts the mix (auto-makeup), so it can
+  make the board louder than the master knob alone. (Native Drive
   previously lived here; it is still on AMP knob 7.)
 - **MAIN knob 8 is Master** — Polyclav's own output level, stored
   globally (not per patch). The engine's master gain is the selected
@@ -895,8 +896,10 @@ hearing hard digital clipping. When it is compressing, the Launchkey
 screen says so (`LIMIT 3.4 dB` on the second line) and the loaded patch's
 pad turns red — watch that instead of
 guessing, and back the level off if you'd rather not hand the peaks to the
-limiter. Past that point, MAIN knob 7 (the mastering compressor) tightens
-the mix without taking the whole level down.
+limiter. If the master knob runs out of loudness, MAIN knob 7 (the
+mastering compressor) is the lever: its auto-makeup makes the mix louder as
+you turn it up, not merely squashed, so it can take you past where the
+master alone can.
 
 `gain_db` and the Live Volume knobs stack: a patch with `gain_db = +6`
 and Volume 100% is already twice as hot as a `gain_db = 0` patch at
@@ -905,19 +908,30 @@ select time, and the Volume knob for on-the-fly balance.
 
 ### Mastering chain (`[mastering]`)
 
-After the six pedals, every patch goes through its `gain_db` trim, a
-transparent mastering compressor, and the live master gain, before a
-brick-wall limiter sets the output ceiling. The defaults are sensible —
-most users will never touch this block — but it's there if you want to
-ride the overall dynamic feel.
+After the six pedals, every patch goes through its `gain_db` trim, the
+mastering compressor, and the live master gain, before a brick-wall limiter
+sets the output ceiling. The defaults are sensible — most users will never
+touch this block — but it's there if you want to ride the overall dynamic
+feel, and it is the loudness lever when you need polyclav to compete with
+the rest of the system.
 
 ```toml
 [mastering]
-comp_amount        = 0.5     # 0..1, transparent leveling compressor (4:1
-                              # soft-knee, 10 ms attack, 100 ms release,
-                              # auto-makeup). 0 = bypass, 1 = max leveling.
+comp_amount        = 0.25    # 0..1 mastering compressor: 0 = bypass; turning
+                              # it up lowers the threshold (to -30 dBFS),
+                              # raises the ratio (2:1 -> 10:1) and adds
+                              # auto-makeup. 10 ms attack, 100 ms release.
+                              # 0.25 is gentle glue; 1.0 is a hard leveler
+                              # whose makeup drives the limiter.
 limiter_ceiling_db = -0.3    # -12..0 dBFS brick-wall limiter ceiling.
 ```
+
+`comp_amount` is a **loudness control as much as a leveler**: its auto-makeup
+recovers the gain reduction it applies, so every step up makes the mix
+louder (or at least no quieter) rather than trading loudness for squash. At
+1.0 on a typical patch it is worth roughly +10 dB of loudness, all of it
+caught by the limiter — which is why `comp_amount` alone can take you past
+where the master knob can.
 
 The limiter is **always on** as a peak-safety net, even when
 `comp_amount = 0`. It is lookahead-free (zero added latency), with a
