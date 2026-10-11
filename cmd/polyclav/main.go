@@ -107,9 +107,10 @@ func main() {
 	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
 	logger := slog.New(handler)
 
-	lock, err := acquireDefaultDaemonLock(daemonLockWait)
+	lock, err := acquireDefaultDaemonLock()
 	if err != nil {
-		logger.Error("acquire daemon singleton", "err", err)
+		logger.Error("refusing to start a second polyclav", "err", err)
+		fmt.Fprintln(os.Stderr, "polyclav:", err)
 		os.Exit(1)
 	}
 	defer lock.Close()

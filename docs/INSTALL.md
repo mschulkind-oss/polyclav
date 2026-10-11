@@ -281,10 +281,15 @@ failure the error goes to stderr (multi-line, human-readable); routine
 operation goes to stdout as structured slog lines.
 
 polyclav protects the host's MIDI/audio devices with a per-user singleton
-lock. If another daemon is already running, a new daemon waits briefly for a
-restart handoff and then exits with `another polyclav is already running`.
-Stop the existing `just dev`, overmind, or manual process before starting a
-second long-running daemon. Offline commands such as `polyclav doctor`,
+lock keyed on your uid — not the working directory — so it also spans
+checkouts/workspaces and a dev build versus an installed one. A daemon holds
+every lock file it can create (under `XDG_RUNTIME_DIR`, the user cache dir,
+and a fixed `/tmp/polyclav-<uid>.lock`), so instances started from different
+environments still collide on whichever path they share. If another daemon
+already holds the lock, a new daemon **exits immediately** with
+`another polyclav is already running`, naming the holding PID and command
+line. Stop the existing `just dev`, overmind, or manual process before
+starting another. Offline commands such as `polyclav doctor`,
 `polyclav midi`, `polyclav render`, `polyclav bootstrap`, and
 `polyclav version` do not take this daemon lock.
 
