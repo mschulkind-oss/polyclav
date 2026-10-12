@@ -933,6 +933,33 @@ func TestNonNativeGating(t *testing.T) {
 	}
 }
 
+// TestSingleLivePageRefusesCycle covers cycle()'s guard for a live set of
+// exactly one page: with nowhere to go, Scene flashes "(native only)" and
+// leaves the cursor put instead of cycling onto itself. The shipped def
+// table never yields a single live page, so the test injects one.
+func TestSingleLivePageRefusesCycle(t *testing.T) {
+	f := newFixture(t)
+	f.pg.defs = []PageDef{{Name: "SOLO"}}
+	f.pg.OnPatchChange("native") // live set = defs = exactly one page
+	f.screen.writes = nil
+
+	f.pg.NextPage()
+	if w := f.screen.last(t); w.line1 != "(native only)" || w.line2 != "SOLO" {
+		t.Errorf("NextPage flash = %q/%q, want (native only)/SOLO", w.line1, w.line2)
+	}
+	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "SOLO" {
+		t.Errorf("NextPage moved cursor to %d %q, want 0 SOLO", idx, name)
+	}
+
+	f.pg.PrevPage()
+	if w := f.screen.last(t); w.line1 != "(native only)" || w.line2 != "SOLO" {
+		t.Errorf("PrevPage flash = %q/%q, want (native only)/SOLO", w.line1, w.line2)
+	}
+	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "SOLO" {
+		t.Errorf("PrevPage moved cursor to %d %q, want 0 SOLO", idx, name)
+	}
+}
+
 // TestPadIndicators pins the page-indicator painting: active page
 // bright, others dim, row 1 only, columns 6-7 and the patch row (0)
 // untouched.

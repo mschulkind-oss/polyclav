@@ -854,9 +854,10 @@ func main() {
 		}
 	}
 
-	// The web level meter is a ~30 Hz visualization, not a control: a
-	// non-blocking gate drops extras so it can never back-pressure the 20 ms
-	// poll loop (the velocity monitor's noteGate is the precedent).
+	// The web level meter is a ~25 Hz visualization (a 33 ms gate on the 20 ms
+	// poll loop admits one frame per ~40 ms tick), not a control: a
+	// non-blocking gate drops extras so it can never back-pressure the poll
+	// loop (the velocity monitor's noteGate is the precedent).
 	levelsGate := newRateGate(33 * time.Millisecond)
 
 	go func() {
@@ -919,13 +920,7 @@ func main() {
 				}
 				pollLimiter(time.Now())
 				if levelsGate() {
-					m := audio.GetMetrics()
-					hub.Publish(controls.Change{Type: "levels", Data: map[string]any{
-						"comp_min_gain_milli":    int(m.MasteringMinGainMilli),
-						"comp_in_peak_milli":     int(m.MasteringInPeakMilli),
-						"comp_out_peak_milli":    int(m.MasteringOutPeakMilli),
-						"limiter_min_gain_milli": int(m.LimiterMinGainMilli),
-					}})
+					hub.Publish(levelsChange(audio.GetMetrics()))
 				}
 			}
 		}
@@ -1163,6 +1158,18 @@ func dispatchTransport(pg *pages.Pages, b driver.TransportButton) {
 	case driver.TransportPlay:
 		pg.TogglePlay()
 	}
+}
+
+// levelsChange builds the SSE payload for the throttled web level meter
+// from the engine's latest metrics: one integer milli-value per key (0 =
+// no callback yet, 1000 = unity gain / 0 dBFS).
+func levelsChange(m audio.Metrics) controls.Change {
+	return controls.Change{Type: "levels", Data: map[string]any{
+		"comp_min_gain_milli":    int(m.MasteringMinGainMilli),
+		"comp_in_peak_milli":     int(m.MasteringInPeakMilli),
+		"comp_out_peak_milli":    int(m.MasteringOutPeakMilli),
+		"limiter_min_gain_milli": int(m.LimiterMinGainMilli),
+	}}
 }
 
 // newRateGate returns a non-blocking rate limiter: each call reports

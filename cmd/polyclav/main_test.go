@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mschulkind-oss/polyclav/internal/audio"
 	"github.com/mschulkind-oss/polyclav/internal/config"
 	"github.com/mschulkind-oss/polyclav/internal/controls"
 	"github.com/mschulkind-oss/polyclav/internal/controls/pages"
@@ -40,6 +41,40 @@ func TestNewRateGate(t *testing.T) {
 	}
 	if gate() {
 		t.Fatal("the pass must re-arm the gate")
+	}
+}
+
+// TestLevelsChangePinsSSEPayload pins the web level meter's SSE payload:
+// the levels event and its four integer milli-value keys, each carrying
+// the matching field from the engine's metrics.
+func TestLevelsChangePinsSSEPayload(t *testing.T) {
+	ch := levelsChange(audio.Metrics{
+		MasteringMinGainMilli: 1234,
+		MasteringInPeakMilli:  4321,
+		MasteringOutPeakMilli: 876,
+		LimiterMinGainMilli:   999,
+	})
+	if ch.Type != "levels" {
+		t.Fatalf("Type = %q, want levels", ch.Type)
+	}
+	want := map[string]int{
+		"comp_min_gain_milli":    1234,
+		"comp_in_peak_milli":     4321,
+		"comp_out_peak_milli":    876,
+		"limiter_min_gain_milli": 999,
+	}
+	if len(ch.Data) != len(want) {
+		t.Fatalf("Data has %d keys, want %d: %v", len(ch.Data), len(want), ch.Data)
+	}
+	for key, wantVal := range want {
+		got, ok := ch.Data[key]
+		if !ok {
+			t.Errorf("Data missing key %q", key)
+			continue
+		}
+		if val, ok := got.(int); !ok || val != wantVal {
+			t.Errorf("Data[%q] = %#v, want int %d", key, got, wantVal)
+		}
 	}
 }
 
