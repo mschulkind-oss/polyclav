@@ -390,8 +390,8 @@ The MK4 has dedicated `Scene Up / Scene Down` and `Track Left / Track
 Right` transport buttons. None are currently bound to anything in
 polyclav (the transport row is reserved). Proposal:
 
-- **Track Left / Track Right**: previous / next knob page. (Five pages →
-  cycles MIX → FILTER → AMP → LFO → MOD → MIX → ...)
+- **Track Left / Track Right**: previous / next knob page. (Six pages →
+  cycles MAIN → MSTR → OSC → FILTER → AMP → LFO/MOD → MAIN → ...)
 - **Scene Up / Scene Down**: octave shift for the keyboard (a Minimoog
   comfort — currently no octave control besides the keyboard's own +/–).
 - **Stop**: panic / all-notes-off (matches Minimoog tradition).
@@ -704,7 +704,7 @@ Knob page 1 (MIX) fully wired. Saved/restored from `state.toml`.
 
 ### Phase 3 — Filter / Amp / LFO pages, polyphony, modulation
 
-**Goal**: All 5 knob pages live. 4-voice poly mode (toggleable per
+**Goal**: All 6 knob pages live. 4-voice poly mode (toggleable per
 patch). Working LFO with 3 destinations. Glide.
 
 **Deliverables**:
@@ -714,7 +714,7 @@ patch). Working LFO with 3 destinations. Glide.
 - Tempo-sync LFO using Play-as-tap-tempo ([§2.5](#25-transport-buttons--assignment-table-concrete)).
 - Glide / portamento on per-voice frequency slew.
 - 3 additional factory patches: "Mother-32 lead", "Matriarch pad", "Taurus bass-native".
-- **Tests**: voice-stealing under > 4 simultaneous keys. LFO sync stability. Hardware test: all 5 pages reachable, all knobs do something audible.
+- **Tests**: voice-stealing under > 4 simultaneous keys. LFO sync stability. Hardware test: all 6 pages reachable, all knobs do something audible.
 
 ### Phase 4 — Polish + page 5 (MOD)
 

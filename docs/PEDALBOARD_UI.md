@@ -290,7 +290,7 @@ category/page browser:
 **Prerequisite: build `docs/LAUNCHKEY_NAVIGATION.md`'s Categories ×
 Pages as specced there** (Track ←/→ = category, Scene ↑/↓ = page
 within category, skip-unavailable-and-wrap, 800 ms banners, pad row 1
-cols 0–4 as per-category page indicators). This doc adds the concrete
+cols 0–5 as per-category page indicators). This doc adds the concrete
 FX page dictation it deliberately left open (its Open Question 5) and
 one new category. Category ring:
 
@@ -312,7 +312,7 @@ consistency. Generated from the registry, not hand-written slots.
 | 3 TREM | Rate | Depth | — | — |
 | 4 DELAY | Time | Feedback | Mix | — (future: feedback-loop tone) |
 
-Four pages fits the 5-LED indicator cap with a slot to spare.
+Four pages fits the 6-LED indicator cap with room to spare.
 Alternative considered and rejected: packing chorus+tremolo onto one
 MOD-FX page (5 knobs) — saves a page we don't need to save, breaks
 the page-label ≡ pedal-name discovery property, and leaves no growth
@@ -351,10 +351,10 @@ One page, 8 knobs = the 8 web-assigned slots.
 
 ### What stays untouched
 
-Top pad row = patch select; bottom row cols 5–7 reserved for OSC
+Top pad row = patch select; bottom row cols 6–7 reserved for OSC
 bindings; faders stay XR18/unused (Open Question 4); transport map
 unchanged except Track ←/→ coming alive as category switch; VOICE
-category = today's five pages verbatim, native-gated as today.
+category = today's six pages verbatim, native-gated as today.
 
 ## Piece 5 — persistence
 
@@ -439,7 +439,7 @@ later is mechanical.
 ### 3. Pad stomp switches in the FX category?
 
 Pedalboard metaphor says pads should stomp pedals. But bottom-row
-cols 0–4 are page indicators, 5–7 are reserved for OSC bindings, and
+cols 0–5 are page indicators, 6–7 are reserved for OSC bindings, and
 the top row is patch select — a stomp row would overload existing
 semantics (e.g. "pressing the active page's indicator toggles that
 pedal's enable").

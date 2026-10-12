@@ -225,9 +225,9 @@ The Launchkey has a performance MIDI port and a DAW control port. Polyclav
 supports DAW pads, Plugin encoders in relative output, and Volume faders;
 by default it restores these layouts after user changes. The top eight pads
 select patches (with bank navigation); bottom pads indicate host knob pages.
-The current page state machine has five native-synth pages but restricts
-non-native patches to MAIN: **plugin pages are not built**. The keyboard
-can present eight encoders, nine faders and buttons, 16 RGB pads and two
+The current page state machine has six native-synth pages but restricts
+non-native patches to MAIN and MSTR: **plugin pages are not built**. The
+keyboard can present eight encoders, nine faders and buttons, 16 RGB pads and two
 ASCII display lines of up to 16 bytes, with a current host popup lasting
 800 ms. Those are surface capacities, not instrument parameters. Its
 button/pad reports, colored feedback and layout restoration have been

@@ -854,10 +854,11 @@ func main() {
 		}
 	}
 
-	// The web level meter is a ~25 Hz visualization (a 33 ms gate on the 20 ms
-	// poll loop admits one frame per ~40 ms tick), not a control: a
-	// non-blocking gate drops extras so it can never back-pressure the poll
-	// loop (the velocity monitor's noteGate is the precedent).
+	// The web level meter is a ~25 Hz visualization, not a control: a 20 ms
+	// ticker drives the poll loop, and a non-blocking 33 ms gate admits one
+	// frame every ~40 ms (the gate stretches the 20 ms tick to a ~40 ms
+	// effective period). Dropping extras keeps it from ever back-pressuring
+	// the loop (the velocity monitor's noteGate is the precedent).
 	levelsGate := newRateGate(33 * time.Millisecond)
 
 	go func() {

@@ -218,19 +218,19 @@ without trying to prematurely generalize the category concept into
    removing it would be a second disruptive muscle-memory change in
    close succession to the first one.**
 
-3. **Pad-row real estate if a category ever needs more than 5 pages**
+3. **Pad-row real estate if a category ever needs more than 6 pages**
    (the organ engine, once built, plausibly could). Does it (a) accept
-   indicators stop being 1:1 with pages beyond 5, relying on the
+   indicators stop being 1:1 with pages beyond 6, relying on the
    screen's "Page N/M" text for orientation past that point, or (b)
-   reclaim columns 5–7 (currently reserved for user OSC/mixer
-   bindings)? **Lean: (a) — don't touch the columns 5-7 reservation
+   reclaim columns 6–7 (currently reserved for user OSC/mixer
+   bindings)? **Lean: (a) — don't touch the columns 6-7 reservation
    without a much stronger reason; the screen already gives exact
    orientation regardless of how many LEDs are lit.**
 
 4. **Should Shift + a page-indicator pad jump directly to that page**
    (bypassing sequential Scene cycling)? A real quality-of-life idea
    once a category's page count grows. **Lean: defer to a v2 — Scene
-   cycling within a small category (2-5 pages) is already fast enough
+   cycling within a small category (2-6 pages) is already fast enough
    that direct-jump isn't worth the added complexity yet.**
 
 5. **Exact page-2/3+ contents for FX and MIX beyond what's listed

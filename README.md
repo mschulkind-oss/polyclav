@@ -61,10 +61,11 @@ over SysEx.
   bit-exact bypass) but not yet reachable from a Launchkey knob, REST
   field, or per-patch persistence — see `docs/VISION.md` §1b–1d. See
   also `docs/OPEN_SOUND_ENGINES.md`.
-- **Launchkey knob pages** — five pages (MAIN / OSC / FILTER / AMP /
+- **Launchkey knob pages** — six pages (MAIN / MSTR / OSC / FILTER / AMP /
   LFO/MOD) on Scene ▲/▼ put the whole native-synth voice on the 8
-  encoders, with page indicators on the bottom pad row. Code-complete,
-  pending hardware verification (`docs/HARDWARE_TESTS.md`).
+  encoders, with page indicators on the bottom pad row; MSTR collects the
+  mastering section and, like MAIN, stays live on every patch type.
+  Code-complete, pending hardware verification (`docs/HARDWARE_TESTS.md`).
 - **Web dashboard** — an embedded, localhost-only web UI (`[web]` in the
   config, on by default, `127.0.0.1:8666`): a Next.js app (static
   export embedded in the binary — `go build` needs no Node) with patch

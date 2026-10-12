@@ -155,9 +155,9 @@ The Launchkey example has eight relative encoders, nine absolute faders and
 buttons, 16 RGB pads, and a two-line ASCII display capped at 16 bytes per
 line. Polyclav keeps DAW pads, Plugin encoders and Volume faders as the
 supported hardware layout. Top-row pads select patches; bottom-row pads
-currently indicate five native-synth pages. CLAP patches have only the MAIN
-encoder page today. Organ's current faders and Leslie behavior are explicit
-patch opt-ins; a piano or Reed patch must not inherit them. The current
+currently indicate six native-synth pages. CLAP patches have the MAIN
+and MSTR encoder pages today. Organ's current faders and Leslie behavior
+are explicit patch opt-ins; a piano or Reed patch must not inherit them. The current
 screen uses short parameter/status popups and restores the patch name after
 800 ms. [Organ behavior](./USER_GUIDE.md#launchkey-organ-drawbars) and the
 [device test plan](./HARDWARE_TESTS.md) distinguish code from physical
