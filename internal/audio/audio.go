@@ -404,6 +404,16 @@ type Metrics struct {
 	// limiter is compressing, 0 = no callback yet. Drives the clip/limit
 	// indicator.
 	LimiterMinGainMilli uint32
+	// MasteringMinGainMilli is the minimum net linear gain of the mastering
+	// compressor over the most recent audio callback, in thousandths. It may
+	// exceed 1000 when the makeup lifts the signal; 0 = no callback yet.
+	MasteringMinGainMilli uint32
+	// MasteringInPeakMilli is the mastering compressor's input peak |x| over
+	// the most recent audio callback, in thousandths (1000 = 0 dBFS).
+	MasteringInPeakMilli uint32
+	// MasteringOutPeakMilli is the mastering compressor's output peak over the
+	// most recent audio callback, in thousandths (1000 = 0 dBFS).
+	MasteringOutPeakMilli uint32
 }
 
 func GetMetrics() Metrics {
@@ -426,6 +436,9 @@ func GetMetrics() Metrics {
 		LastFrames:                   uint32(cm.last_frames),
 		MaxFrames:                    uint32(cm.max_frames),
 		LimiterMinGainMilli:          uint32(cm.limiter_min_gain_milli),
+		MasteringMinGainMilli:        uint32(cm.mastering_min_gain_milli),
+		MasteringInPeakMilli:         uint32(cm.mastering_in_peak_milli),
+		MasteringOutPeakMilli:        uint32(cm.mastering_out_peak_milli),
 	}
 }
 

@@ -48,6 +48,16 @@ typedef struct {
      * thousandths (0..=1000). 1000 = no reduction; lower = the limiter is
      * compressing. 0 = no callback yet. Drives the clip/limit indicator. */
     uint32_t limiter_min_gain_milli;
+    /* Minimum net linear gain of the mastering compressor over the callback,
+     * times 1000. May exceed 1000 when the makeup lifts the signal; 0 = none
+     * yet. */
+    uint32_t mastering_min_gain_milli;
+    /* Input peak |x| of the mastering compressor over the callback, times
+     * 1000 (1000 = 0 dBFS). */
+    uint32_t mastering_in_peak_milli;
+    /* Output peak of the mastering compressor over the callback, times 1000
+     * (1000 = 0 dBFS). */
+    uint32_t mastering_out_peak_milli;
 } PolyclavAudioMetrics;
 
 void polyclav_audio_get_metrics(PolyclavAudioMetrics *out);

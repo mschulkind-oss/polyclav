@@ -200,6 +200,18 @@ export interface NoteEvent {
   note?: number;
 }
 
+/**
+ * "levels": ~30 Hz mastering/limiter level meter. Every field is a linear
+ * value times 1000: comp_min_gain_milli may exceed 1000 when the makeup
+ * lifts; the peak fields read 1000 at 0 dBFS.
+ */
+export interface LevelsEvent {
+  comp_min_gain_milli: number;
+  comp_in_peak_milli: number;
+  comp_out_peak_milli: number;
+  limiter_min_gain_milli: number;
+}
+
 /** "device": hub deltas are {device, state}; snapshots use {launchkey, xr18}. */
 export interface DeviceEvent {
   device?: string;

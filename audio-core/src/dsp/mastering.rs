@@ -71,6 +71,15 @@ pub struct MasteringCompressor {
     /// reduction a signal *at the ceiling* would receive, minus `headroom_db`.
     /// Tied to the threshold, not the signal.
     makeup_db: f32,
+    /// Worst-case (minimum) net linear gain applied during the most recent
+    /// `process` call — 1.0 is unity, and it may exceed 1.0 when the makeup
+    /// lifts a signal. Read by the web level meter.
+    block_min_gain: f32,
+    /// Largest input peak (linear) seen during the most recent `process` call.
+    block_max_in_peak: f32,
+    /// Largest output peak (linear, after gain) seen during the most recent
+    /// `process` call.
+    block_max_out_peak: f32,
 }
 
 impl MasteringCompressor {
@@ -91,6 +100,9 @@ impl MasteringCompressor {
             knee_db: 0.0,
             ceiling_db: DEFAULT_CEILING_DB,
             makeup_db: 0.0,
+            block_min_gain: 1.0,
+            block_max_in_peak: 0.0,
+            block_max_out_peak: 0.0,
         };
         comp.recompute();
         comp
@@ -177,7 +189,35 @@ impl MasteringCompressor {
         self.amount
     }
 
+    /// Minimum net linear gain applied during the last `process` call. 1.0 =
+    /// unity; below 1.0 the compressor is reducing, above 1.0 the makeup is
+    /// lifting. Read once per callback by the web level meter.
+    pub fn block_min_gain(&self) -> f32 {
+        self.block_min_gain
+    }
+
+    /// Largest input peak (linear) seen during the last `process` call.
+    pub fn block_max_in_peak(&self) -> f32 {
+        self.block_max_in_peak
+    }
+
+    /// Largest output peak (linear, after gain) seen during the last `process`
+    /// call.
+    pub fn block_max_out_peak(&self) -> f32 {
+        self.block_max_out_peak
+    }
+
+    /// Reset the per-block stats to idle (unity gain, no signal). The bypass
+    /// path calls this so a block the compressor skipped reports idle rather
+    /// than the previous block's values.
+    pub fn reset_block(&mut self) {
+        self.block_min_gain = 1.0;
+        self.block_max_in_peak = 0.0;
+        self.block_max_out_peak = 0.0;
+    }
+
     pub fn process(&mut self, samples: &mut [f32]) {
+        self.reset_block();
         let threshold_db = self.threshold_db;
         let knee_half = self.knee_db / 2.0;
         let slope = 1.0 - 1.0 / self.ratio;
@@ -212,6 +252,17 @@ impl MasteringCompressor {
 
             chunk[0] *= lin_gain;
             chunk[1] *= lin_gain;
+
+            if lin_gain < self.block_min_gain {
+                self.block_min_gain = lin_gain;
+            }
+            if peak > self.block_max_in_peak {
+                self.block_max_in_peak = peak;
+            }
+            let out_peak = chunk[0].abs().max(chunk[1].abs());
+            if out_peak > self.block_max_out_peak {
+                self.block_max_out_peak = out_peak;
+            }
         }
     }
 }
@@ -302,6 +353,78 @@ mod tests {
         comp.process(&mut samples);
         let max_out = samples.iter().cloned().fold(0.0_f32, |a, b| a.max(b.abs()));
         assert!((max_out - max_in).abs() < 0.05);
+    }
+
+    /// Block min gain reports reduction and restarts each block: silence stays
+    /// at unity, a loud burst drives it below unity, and the next block resets
+    /// to unity before tracking again.
+    #[test]
+    fn test_block_min_gain_reports_reduction() {
+        let mut comp = MasteringCompressor::new(RATE);
+        comp.set_amount(1.0);
+
+        let mut quiet = vec![0.0f32; 256];
+        comp.process(&mut quiet);
+        assert_eq!(comp.block_min_gain(), 1.0);
+
+        let mut loud = vec![4.0f32; 256];
+        comp.process(&mut loud);
+        let min_gain = comp.block_min_gain();
+        assert!(
+            min_gain > 0.0 && min_gain < 1.0,
+            "expected a reduction below unity, got {min_gain}"
+        );
+
+        // The next quiet block does not jump back to unity: the compressor is
+        // still releasing, so the block minimum is the gain it entered with.
+        comp.process(&mut quiet);
+        assert!(comp.block_min_gain() < 1.0);
+
+        // Once the release has settled, a quiet block reports unity again (the
+        // reset at the top clears the previous minimum). The 100 ms release
+        // needs a long tail, hence 250 ms blocks.
+        let mut settle = vec![0.0f32; 24_000]; // 250 ms
+        comp.process(&mut settle);
+        comp.process(&mut settle);
+        assert!(
+            comp.block_min_gain() > 0.999,
+            "expected full recovery, got {}",
+            comp.block_min_gain()
+        );
+    }
+
+    /// Max in/out peak track the block's extremes. With amount 0 the compressor
+    /// is transparent, so both peaks equal the input peak.
+    #[test]
+    fn test_block_peaks_track_input_and_output() {
+        let mut comp = MasteringCompressor::new(RATE);
+        comp.set_amount(0.0);
+
+        let mut buf = vec![0.5f32; 256];
+        comp.process(&mut buf);
+        assert!((comp.block_max_in_peak() - 0.5).abs() < 1e-6);
+        assert!((comp.block_max_out_peak() - 0.5).abs() < 1e-6);
+
+        let mut quiet = vec![0.0f32; 256];
+        comp.process(&mut quiet);
+        assert_eq!(comp.block_max_in_peak(), 0.0);
+        assert_eq!(comp.block_max_out_peak(), 0.0);
+    }
+
+    /// reset_block restores the idle state without running a block — the bypass
+    /// path uses it so a skipped compressor reports idle, not stale stats.
+    #[test]
+    fn test_reset_block_restores_idle_stats() {
+        let mut comp = MasteringCompressor::new(RATE);
+        comp.set_amount(1.0);
+        let mut loud = vec![4.0f32; 256];
+        comp.process(&mut loud);
+        assert!(comp.block_min_gain() < 1.0);
+
+        comp.reset_block();
+        assert_eq!(comp.block_min_gain(), 1.0);
+        assert_eq!(comp.block_max_in_peak(), 0.0);
+        assert_eq!(comp.block_max_out_peak(), 0.0);
     }
 
     /// The threshold starts at the ceiling and comes down with the amount, so

@@ -127,6 +127,26 @@ auto-reconnects in every browser for free.
 | `PUT /api/config` *(phase C)* | Validated TOML write-back; response says whether a restart is needed |
 | `GET/PUT /api/velocity` *(phase C)* | Velocity curve — see `docs/VELOCITY_CURVES.md` |
 
+### SSE events
+
+The hub forwards each `controls.Change` as `event: <Type>` with its `Data` as
+the JSON payload. Alongside the state deltas (`patch`, `params`, `mastering`,
+`note`, …), the daemon publishes a throttled `levels` event feeding the web
+level meter:
+
+| Event | Cadence | Data keys |
+|---|---|---|
+| `levels` | ~30 Hz | `comp_min_gain_milli`, `comp_in_peak_milli`, `comp_out_peak_milli`, `limiter_min_gain_milli` |
+
+Every field is a linear value multiplied by 1000. `limiter_min_gain_milli` and
+`comp_min_gain_milli` are worst-case gains (`1000` = unity / no reduction);
+`comp_min_gain_milli` may exceed `1000` when the mastering makeup lifts the
+signal. `comp_in_peak_milli` / `comp_out_peak_milli` are the mastering
+compressor's input and output peaks (`1000` = 0 dBFS); all four are `0` when
+no callback has run yet. The event is throttled by a non-blocking gate in the
+daemon's 20 ms poll loop (extras dropped, never queued), so it can never
+back-pressure audio — consumers must treat dropped frames as normal.
+
 ## The real work: a controls layer
 
 The daemon's param-changing logic currently lives in closures inside

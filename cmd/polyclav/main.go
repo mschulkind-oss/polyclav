@@ -854,6 +854,11 @@ func main() {
 		}
 	}
 
+	// The web level meter is a ~30 Hz visualization, not a control: a
+	// non-blocking gate drops extras so it can never back-pressure the 20 ms
+	// poll loop (the velocity monitor's noteGate is the precedent).
+	levelsGate := newRateGate(33 * time.Millisecond)
+
 	go func() {
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
@@ -913,6 +918,15 @@ func main() {
 					hub.Publish(controls.Change{Type: "plugin-param", Data: map[string]any{"clap_id": ev.ClapID, "value": ev.Value, "kind": ev.Kind}})
 				}
 				pollLimiter(time.Now())
+				if levelsGate() {
+					m := audio.GetMetrics()
+					hub.Publish(controls.Change{Type: "levels", Data: map[string]any{
+						"comp_min_gain_milli":    int(m.MasteringMinGainMilli),
+						"comp_in_peak_milli":     int(m.MasteringInPeakMilli),
+						"comp_out_peak_milli":    int(m.MasteringOutPeakMilli),
+						"limiter_min_gain_milli": int(m.LimiterMinGainMilli),
+					}})
+				}
 			}
 		}
 	}()

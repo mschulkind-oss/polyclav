@@ -95,6 +95,16 @@ pub struct PolyclavAudioMetrics {
     /// compressing. 0 means "no callback yet". Drives the clip/limit
     /// indicator.
     pub limiter_min_gain_milli: u32,
+    /// Minimum net linear gain of the mastering compressor over the most
+    /// recent audio callback, in thousandths. May exceed 1000 when the makeup
+    /// lifts the signal; 0 means "no callback yet".
+    pub mastering_min_gain_milli: u32,
+    /// Input peak |x| of the mastering compressor over the most recent audio
+    /// callback, in thousandths (1000 = 0 dBFS).
+    pub mastering_in_peak_milli: u32,
+    /// Output peak of the mastering compressor over the most recent audio
+    /// callback, in thousandths (1000 = 0 dBFS).
+    pub mastering_out_peak_milli: u32,
 }
 
 #[repr(C)]
@@ -246,6 +256,9 @@ struct AudioMetricsAtomics {
     last_frames: AtomicU32,
     max_frames: AtomicU32,
     limiter_min_gain_milli: AtomicU32,
+    mastering_min_gain_milli: AtomicU32,
+    mastering_in_peak_milli: AtomicU32,
+    mastering_out_peak_milli: AtomicU32,
 }
 
 static AUDIO_METRICS: OnceLock<AudioMetricsAtomics> = OnceLock::new();
@@ -296,6 +309,32 @@ pub(crate) fn record_limiter_gain(gain: f32) {
     audio_metrics()
         .limiter_min_gain_milli
         .store(limiter_gain_milli(gain), Ordering::Relaxed);
+}
+
+/// Quantize a mastering level to thousandths for the metrics struct. Unlike
+/// the limiter gain, the net compressor gain may exceed 1.0 (the makeup lifts
+/// the signal), so the clamp is the C ABI's +18 dB sanity bound rather than
+/// 0..=1. A non-finite value stores 0, meaning "unknown".
+fn mastering_metric_milli(value: f32) -> u32 {
+    if value.is_finite() {
+        (value.clamp(0.0, 8.0) * 1000.0).round() as u32
+    } else {
+        0
+    }
+}
+
+/// Record the mastering compressor's per-block levels (min net gain, input
+/// peak, output peak) for this callback, as thousandths, for the web level
+/// meter. Called from the realtime callbacks only — offline renders must not
+/// touch the shared metrics.
+pub(crate) fn record_mastering_metrics(min_gain: f32, in_peak: f32, out_peak: f32) {
+    let m = audio_metrics();
+    m.mastering_min_gain_milli
+        .store(mastering_metric_milli(min_gain), Ordering::Relaxed);
+    m.mastering_in_peak_milli
+        .store(mastering_metric_milli(in_peak), Ordering::Relaxed);
+    m.mastering_out_peak_milli
+        .store(mastering_metric_milli(out_peak), Ordering::Relaxed);
 }
 
 #[cfg(target_os = "linux")]
@@ -1405,6 +1444,19 @@ impl UserData {
     pub(crate) fn limiter_min_gain(&self) -> f32 {
         self.limiter.block_min_gain()
     }
+
+    /// Mastering-compressor block stats of the last `render_block`: minimum
+    /// net linear gain (may exceed 1.0 when the makeup lifts), and the max
+    /// input / output peaks (linear). A bypassed block reports idle
+    /// (1.0 / 0.0 / 0.0). The realtime callbacks read these after rendering to
+    /// feed the web level meter.
+    pub(crate) fn mastering_block_stats(&self) -> (f32, f32, f32) {
+        (
+            self.mastering.block_min_gain(),
+            self.mastering.block_max_in_peak(),
+            self.mastering.block_max_out_peak(),
+        )
+    }
 }
 
 static STATE: OnceLock<Mutex<Option<State>>> = OnceLock::new();
@@ -1563,6 +1615,9 @@ pub unsafe extern "C" fn polyclav_audio_get_metrics(out: *mut PolyclavAudioMetri
             last_frames: m.last_frames.load(Ordering::Relaxed),
             max_frames: m.max_frames.load(Ordering::Relaxed),
             limiter_min_gain_milli: m.limiter_min_gain_milli.load(Ordering::Relaxed),
+            mastering_min_gain_milli: m.mastering_min_gain_milli.load(Ordering::Relaxed),
+            mastering_in_peak_milli: m.mastering_in_peak_milli.load(Ordering::Relaxed),
+            mastering_out_peak_milli: m.mastering_out_peak_milli.load(Ordering::Relaxed),
         };
     }
 }
@@ -1587,6 +1642,9 @@ pub extern "C" fn polyclav_audio_reset_metrics() {
     m.last_frames.store(0, Ordering::Relaxed);
     m.max_frames.store(0, Ordering::Relaxed);
     m.limiter_min_gain_milli.store(0, Ordering::Relaxed);
+    m.mastering_min_gain_milli.store(0, Ordering::Relaxed);
+    m.mastering_in_peak_milli.store(0, Ordering::Relaxed);
+    m.mastering_out_peak_milli.store(0, Ordering::Relaxed);
 }
 
 /// Reload the soundfont set by `polyclav_audio_set_soundfont`. Loads on a
@@ -3603,6 +3661,9 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
     }
     if mastering_amount > 0.0 {
         user_data.mastering.process(samples);
+    } else {
+        // Bypassed: report idle block stats to the level meter, not stale ones.
+        user_data.mastering.reset_block();
     }
     // Limiter always runs — the fallback brick wall, default ceiling -0.3 dBFS.
     user_data.limiter.process(samples);
@@ -3647,6 +3708,8 @@ fn process_audio(stream: &pw::stream::Stream, user_data: &mut UserData) {
             unsafe { std::slice::from_raw_parts_mut(data.data.cast::<f32>(), n_frames * 2) };
         render_block(user_data, samples);
         record_limiter_gain(user_data.limiter_min_gain());
+        let (min_gain, in_peak, out_peak) = user_data.mastering_block_stats();
+        record_mastering_metrics(min_gain, in_peak, out_peak);
     }
 
     if !data.chunk.is_null() {
@@ -3771,6 +3834,22 @@ mod tests {
         assert_eq!(limiter_gain_milli(-1.0), 0); // clamped
         assert_eq!(limiter_gain_milli(f32::NAN), 0);
         assert_eq!(limiter_gain_milli(f32::INFINITY), 0);
+    }
+
+    /// The mastering metric's quantization (the level meter's input): unlike
+    /// the limiter gain, gains above 1.0 are kept (the makeup lifts), clamped
+    /// to the +18 dB C-ABI bound; a non-finite value maps to 0 ("unknown").
+    /// Pure — no shared state, so no cross-test race.
+    #[test]
+    fn mastering_metric_milli_quantizes() {
+        assert_eq!(mastering_metric_milli(1.0), 1000);
+        assert_eq!(mastering_metric_milli(0.25), 250);
+        assert_eq!(mastering_metric_milli(2.0), 2000); // makeup can exceed unity
+        assert_eq!(mastering_metric_milli(8.0), 8000);
+        assert_eq!(mastering_metric_milli(9.0), 8000); // clamped
+        assert_eq!(mastering_metric_milli(-1.0), 0); // clamped
+        assert_eq!(mastering_metric_milli(f32::NAN), 0);
+        assert_eq!(mastering_metric_milli(f32::INFINITY), 0);
     }
 
     #[test]

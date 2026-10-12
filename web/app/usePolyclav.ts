@@ -21,6 +21,7 @@ import type {
   Clip,
   DeviceEvent,
   Devices,
+  LevelsEvent,
   Macro,
   MacrosEvent,
   MasteringEvent,
@@ -229,6 +230,8 @@ export interface Polyclav {
   clips: Clip[] | null;
   /** SSE "note" sink registration for the velocity monitor. */
   noteSink: React.RefObject<((n: NoteEvent) => void) | null>;
+  /** SSE "levels" sink registration for the level meter (~30 Hz). */
+  levelsSink: React.RefObject<((e: LevelsEvent) => void) | null>;
   selectPatch: (name: string) => void;
   /** Turn a board/master knob (display units, model param id). */
   setParam: (paramId: string, value: number) => void;
@@ -258,6 +261,7 @@ export function usePolyclav(): Polyclav {
   const clipsRequested = useRef(false);
   const [, force] = useReducer((n: number) => n + 1, 0);
   const noteSink = useRef<((n: NoteEvent) => void) | null>(null);
+  const levelsSink = useRef<((e: LevelsEvent) => void) | null>(null);
 
   // Latest-state refs for the send/guard machinery (avoid stale closures).
   const enabledRef = useRef(state.enabled);
@@ -457,6 +461,7 @@ export function usePolyclav(): Polyclav {
       const n = d as NoteEvent;
       if (typeof n.in === "number" && typeof n.out === "number") noteSink.current?.(n);
     },
+    levels: (d) => levelsSink.current?.(d as LevelsEvent),
     device: (d) => dispatch({ t: "device", d: d as DeviceEvent }),
   });
 
@@ -572,6 +577,7 @@ export function usePolyclav(): Polyclav {
     state,
     clips: clipsRef.current,
     noteSink,
+    levelsSink,
     selectPatch,
     setParam,
     togglePedal,
