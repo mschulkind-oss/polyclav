@@ -1902,6 +1902,20 @@ type MasteringCharacterOpts struct {
 	ReleaseMs  *float32
 }
 
+// MasteringCharacterField names one field of MasteringCharacter so a
+// relative adjuster can nudge exactly one without re-sending the rest.
+type MasteringCharacterField uint8
+
+// The mastering character fields the MSTR page's knobs address, in the
+// order they sit on that page's knobs 2-6.
+const (
+	MasteringRatio MasteringCharacterField = iota
+	MasteringRange
+	MasteringHeadroom
+	MasteringAttack
+	MasteringRelease
+)
+
 // DefaultMasteringCharacter is the engine default, kept in sync with
 // dsp/mastering.rs's defaults.
 func DefaultMasteringCharacter() MasteringCharacter {
@@ -1979,15 +1993,16 @@ func (c *Controls) applyMasteringCharacter(ch MasteringCharacter) {
 	c.audio.SetMasteringReleaseMs(ch.ReleaseMs)
 }
 
-// SetMasteringCharacter applies the non-nil character params, clamps them
-// to the engine ranges, and publishes a "mastering" change carrying only
-// the keys that moved. Returns the resulting (clamped) character.
-func (c *Controls) SetMasteringCharacter(o MasteringCharacterOpts) MasteringCharacter {
-	c.applyMu.Lock()
-	defer c.applyMu.Unlock()
+// setMasteringCharacterLocked applies the non-nil fields of o to the
+// cached character, clamps them, records each moved field in data under
+// its published key, and pushes the result to the engine. Callers MUST
+// hold applyMu (it drives the engine and mutates the cache); the mu
+// write lock is taken internally. It is the shared body of the absolute
+// SetMasteringCharacter and the relative AdjustMasteringCharacter so
+// neither re-enters applyMu (which would deadlock).
+func (c *Controls) setMasteringCharacterLocked(o MasteringCharacterOpts, data map[string]any) MasteringCharacter {
 	c.mu.Lock()
 	ch := c.masteringCharacter
-	data := make(map[string]any, 5)
 	if o.Ratio != nil {
 		ch.Ratio = clampRange(*o.Ratio, minMasteringRatio, maxMasteringRatio)
 		data["mastering_ratio"] = ch.Ratio
@@ -2011,6 +2026,17 @@ func (c *Controls) SetMasteringCharacter(o MasteringCharacterOpts) MasteringChar
 	c.masteringCharacter = ch
 	c.mu.Unlock()
 	c.applyMasteringCharacter(ch)
+	return ch
+}
+
+// SetMasteringCharacter applies the non-nil character params, clamps them
+// to the engine ranges, and publishes a "mastering" change carrying only
+// the keys that moved. Returns the resulting (clamped) character.
+func (c *Controls) SetMasteringCharacter(o MasteringCharacterOpts) MasteringCharacter {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	data := make(map[string]any, 5)
+	ch := c.setMasteringCharacterLocked(o, data)
 	if len(data) > 0 {
 		c.hub.Publish(Change{Type: "mastering", Data: data})
 	}
@@ -2043,6 +2069,64 @@ func (c *Controls) AdjustMasteringComp(delta float32) (float32, bool) {
 	c.mu.Unlock()
 	c.audio.SetMasteringCompressor(v)
 	c.hub.Publish(Change{Type: "mastering", Data: map[string]any{"comp_amount": v}})
+	return v, true
+}
+
+// AdjustMasteringCharacter nudges one mastering-compressor character
+// field by delta and applies it. It is the MSTR page's knob path
+// (knobs 2-6): like the compressor amount and Master, the character is
+// global, so it works on every patch type and never resets on a patch
+// switch. delta clamps to that field's engine range, the cache and the
+// engine agree, and exactly one key is published. It reuses the locked
+// body rather than calling SetMasteringCharacter (which would deadlock
+// on applyMu).
+func (c *Controls) AdjustMasteringCharacter(f MasteringCharacterField, delta float32) (float32, bool) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.mu.Lock()
+	ch := c.masteringCharacter
+	c.mu.Unlock()
+	var opt MasteringCharacterOpts
+	var value float32
+	switch f {
+	case MasteringRatio:
+		v := clampRange(ch.Ratio+delta, minMasteringRatio, maxMasteringRatio)
+		opt.Ratio, value = &v, v
+	case MasteringRange:
+		v := clampRange(ch.RangeDB+delta, 0, maxMasteringRangeDB)
+		opt.RangeDB, value = &v, v
+	case MasteringHeadroom:
+		v := clampRange(ch.HeadroomDB+delta, 0, maxMasteringHeadroomDB)
+		opt.HeadroomDB, value = &v, v
+	case MasteringAttack:
+		v := clampRange(ch.AttackMs+delta, minMasteringAttackMs, maxMasteringAttackMs)
+		opt.AttackMs, value = &v, v
+	case MasteringRelease:
+		v := clampRange(ch.ReleaseMs+delta, minMasteringReleaseMs, maxMasteringReleaseMs)
+		opt.ReleaseMs, value = &v, v
+	default:
+		return 0, false
+	}
+	data := make(map[string]any, 1)
+	c.setMasteringCharacterLocked(opt, data)
+	c.hub.Publish(Change{Type: "mastering", Data: data})
+	return value, true
+}
+
+// AdjustLimiterCeiling nudges the master limiter ceiling by delta
+// (clamped to [-12, 0] dB) and applies it. It is the MSTR page's knob 7
+// and, like the rest of the mastering section, global — it works on
+// every patch type. Publishes a "mastering" change carrying only
+// limiter_ceiling_db.
+func (c *Controls) AdjustLimiterCeiling(delta float32) (float32, bool) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.mu.Lock()
+	v := clampRange(c.limiterCeilingDB+delta, minLimiterCeilingDB, maxLimiterCeilingDB)
+	c.limiterCeilingDB = v
+	c.mu.Unlock()
+	c.audio.SetLimiterCeilingDB(v)
+	c.hub.Publish(Change{Type: "mastering", Data: map[string]any{"limiter_ceiling_db": v}})
 	return v, true
 }
 

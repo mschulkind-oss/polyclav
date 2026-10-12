@@ -562,16 +562,16 @@ func TestDispatchTransport(t *testing.T) {
 	pg.AttachPlayer(plr)
 
 	dispatchTransport(pg, driver.TransportSceneDown)
-	if idx, name := pg.CurrentPage(); idx != 1 || name != "OSC" {
-		t.Fatalf("SceneDown: page %d %q, want 1 OSC", idx, name)
+	if idx, name := pg.CurrentPage(); idx != 1 || name != "MSTR" {
+		t.Fatalf("SceneDown: page %d %q, want 1 MSTR", idx, name)
 	}
 	dispatchTransport(pg, driver.TransportSceneUp)
 	if idx, _ := pg.CurrentPage(); idx != 0 {
 		t.Fatalf("SceneUp: page %d, want 0", idx)
 	}
 	dispatchTransport(pg, driver.TransportSceneUp) // wraps to the last page
-	if idx, name := pg.CurrentPage(); idx != 4 || name != "LFO/MOD" {
-		t.Fatalf("SceneUp wrap: page %d %q, want 4 LFO/MOD", idx, name)
+	if idx, name := pg.CurrentPage(); idx != 5 || name != "LFO/MOD" {
+		t.Fatalf("SceneUp wrap: page %d %q, want 5 LFO/MOD", idx, name)
 	}
 
 	dispatchTransport(pg, driver.TransportPlay)
@@ -587,11 +587,23 @@ func TestDispatchTransport(t *testing.T) {
 	} {
 		dispatchTransport(pg, b)
 	}
-	if idx, _ := pg.CurrentPage(); idx != 4 {
+	if idx, _ := pg.CurrentPage(); idx != 5 {
 		t.Errorf("unbound buttons moved the page to %d", idx)
 	}
 	if plr.toggles != 1 {
 		t.Errorf("unbound buttons toggled the player (%d)", plr.toggles)
+	}
+
+	// Off the native engine Scene cycles the two always-live pages,
+	// MAIN and MSTR, wrapping at two.
+	pg.OnPatchChange("soundfont")
+	dispatchTransport(pg, driver.TransportSceneDown)
+	if idx, name := pg.CurrentPage(); idx != 1 || name != "MSTR" {
+		t.Fatalf("SceneDown soundfont: page %d %q, want 1 MSTR", idx, name)
+	}
+	dispatchTransport(pg, driver.TransportSceneDown) // wraps to MAIN
+	if idx, name := pg.CurrentPage(); idx != 0 || name != "MAIN" {
+		t.Fatalf("SceneDown wrap soundfont: page %d %q, want 0 MAIN", idx, name)
 	}
 }
 

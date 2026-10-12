@@ -46,7 +46,7 @@ panel; see "Web dashboard" below.
   [tremolo](./VISION.md#1d-tremolo-pedal)).
 - Launchkey live control surface:
   - Top-row pads select patches; the lit pad tracks the current patch.
-  - Five knob pages (MAIN / OSC / FILTER / AMP / LFO/MOD) switched with
+  - Six knob pages (MAIN / MSTR / OSC / FILTER / AMP / LFO/MOD) switched with
     Scene ▲/▼; the bottom pad row shows the active page. MAIN keeps the
     classic layout: knob 1 = patch volume, 2 = reverb wet/dry, 3 = input
     compressor, 4 = drive pedal, 7 = mastering compressor, 8 = Polyclav's
@@ -244,11 +244,12 @@ the TOML in the browser (validated on save; restart to apply).
 
 ### Tour 5 — the same tour on the Launchkey *(pending hardware verification)*
 
-Everything in tours 1–2 maps to the five knob pages: **Scene ▼** to the
+Everything in tours 1–2 maps to the six knob pages: **Scene ▼** to the
 OSC page for the mixer knobs (osc levels/detunes, noise, pulse width),
 FILTER for cutoff/resonance/env, AMP for the envelope and velocity
 routing, LFO/MOD for the LFO, bend range, and voice mode (knob 7 steps
-mono→retrig→poly). The bottom pad row shows which page you're on; the
+mono→retrig→poly), and MSTR right after MAIN for the mastering chain. The
+bottom pad row shows which page you're on; the
 screen pops each value as you turn. Layouts in "Launchkey knob pages"
 below.
 
@@ -538,12 +539,12 @@ binary) before starting another one.
 > been run yet. Until it passes, treat the web dashboard as the
 > reference control surface.
 
-The 8 encoders drive the native synth through five pages. **Scene ▲**
+The 8 encoders drive the native synth through six pages. **Scene ▲**
 goes to the previous page, **Scene ▼** to the next; the page name
 flashes on the screen and the **bottom pad row lights the active page**
-(pads 1–5 as indicators). The bottom row is split: columns 0–4 (notes
-112–116) are reserved for these page indicators, while columns 5–7
-(notes 117–119) stay free for your own `[[osc.mixer.bindings]]` — the
+(pads 1–6 as indicators). The bottom row is split: columns 0–5 (notes
+112–117) are reserved for these page indicators, while columns 6–7
+(notes 118–119) stay free for your own `[[osc.mixer.bindings]]` — the
 example config's mute pads live there. Turning a knob pops the
 parameter name and value on the screen for 800 ms, then the patch name
 returns.
@@ -554,11 +555,12 @@ list — the curated pages plus a CLAP plugin's own parameters — see
 
 | # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
 |---|------|--------|--------|--------|--------|--------|--------|--------|--------|
-| 1 | **MAIN** | Volume | Reverb | Comp | Pedal | Resonance | Glide | Drive | Master |
-| 2 | **OSC** | Osc1 lvl | Osc1 detune | Osc2 lvl | Osc2 detune | Osc3 lvl | Osc3 detune | Noise | Pulse width |
-| 3 | **FILTER** | Cutoff | Resonance | Env amount | F.Attack | F.Decay | F.Sustain | F.Release | Kbd track |
-| 4 | **AMP** | A.Attack | A.Decay | A.Sustain | A.Release | Vel→Amp | Vel→Cutoff | Drive | — |
-| 5 | **LFO/MOD** | LFO rate | LFO→Pitch | LFO→Cutoff | LFO→Amp | Bend range | Glide | Voice mode | — |
+| 1 | **MAIN** | Volume | Reverb | Comp | Pedal | Resonance | Glide | Mstr Comp | Master |
+| 2 | **MSTR** | Mstr Comp | Mstr Ratio | Mstr Range | Mstr Headroom | Mstr Atk | Mstr Rel | Ceiling | — |
+| 3 | **OSC** | Osc1 lvl | Osc1 detune | Osc2 lvl | Osc2 detune | Osc3 lvl | Osc3 detune | Noise | Pulse width |
+| 4 | **FILTER** | Cutoff | Resonance | Env amount | F.Attack | F.Decay | F.Sustain | F.Release | Kbd track |
+| 5 | **AMP** | A.Attack | A.Decay | A.Sustain | A.Release | Vel→Amp | Vel→Cutoff | Drive | — |
+| 6 | **LFO/MOD** | LFO rate | LFO→Pitch | LFO→Cutoff | LFO→Amp | Bend range | Glide | Voice mode | — |
 
 Notes:
 
@@ -586,10 +588,17 @@ Notes:
   compressor harder; the limiter catches the peaks. See "Mastering & level
   matching". It is saved to `state.toml` and survives a restart. It applies
   on every patch type.
-- With a **non-native patch** selected, only MAIN's knobs 1–4 (the
-  global volume / reverb / comp / pedal) plus 7–8 (mastering comp and
-  master) respond; the rest of the synth
+- With a **non-native patch** selected, MAIN's knobs 1–4 (the global
+  volume / reverb / comp / pedal) plus 7–8 (mastering comp and master)
+  respond, and the whole **MSTR** page stays live; the rest of the synth
   pages apply to native patches only.
+- The **MSTR page** (page 2, immediately after MAIN) gathers the whole
+  mastering section: the compressor amount (the same value as MAIN knob
+  7), its character (ratio, threshold range, makeup headroom, attack,
+  release), and the limiter Ceiling. Like MAIN it is **live on every
+  patch type** — the master bus exists whatever the engine — so it is
+  the page to reach for the full mastering chain on a soundfont or
+  plugin patch.
 - **Voice mode** (LFO/MOD knob 7) steps mono_legato → mono_retrig →
   poly, one detent per step.
 - **Play** on the transport row toggles the audition player's last-used
@@ -620,7 +629,7 @@ straight to the live plugin and are saved with the patch's CLAP state when
 you switch patches or quit — the same as the organ faders.
 
 There is no plugin parameter list for a soundfont or LV2 patch (they
-expose none), and for a native patch the five curated pages already *are*
+expose none), and for a native patch the six curated pages already *are*
 the instrument's parameters, so **encoder ▲/▼** pages the same list as
 Scene ▲/▼ there.
 

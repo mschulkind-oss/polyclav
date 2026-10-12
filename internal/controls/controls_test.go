@@ -1114,6 +1114,160 @@ func TestAdjustMasteringComp(t *testing.T) {
 	}
 }
 
+// TestAdjustMasteringCharacter: the MSTR page's character knobs (2-6).
+// Each field moves by its delta, clamps at that field's engine bound, the
+// cache and the engine agree, and exactly one "mastering" key is
+// published. It is global like AdjustMasteringComp, so it applies with no
+// patch selected, and it composes with the absolute setter.
+func TestAdjustMasteringCharacter(t *testing.T) {
+	fields := []struct {
+		name     string
+		field    MasteringCharacterField
+		key      string
+		delta    float32
+		want     float32 // default + delta, post-clamp
+		lo, hi   float32
+		cache    func(MasteringCharacter) float32
+		audioVal func(*fakeAudio) float32
+	}{
+		{
+			name: "ratio", field: MasteringRatio, key: "mastering_ratio",
+			delta: 0.5, want: 8.5, lo: 1, hi: 20,
+			cache:    func(c MasteringCharacter) float32 { return c.Ratio },
+			audioVal: func(a *fakeAudio) float32 { return a.masteringRatio },
+		},
+		{
+			name: "range", field: MasteringRange, key: "mastering_range_db",
+			delta: 0.5, want: 30.5, lo: 0, hi: 48,
+			cache:    func(c MasteringCharacter) float32 { return c.RangeDB },
+			audioVal: func(a *fakeAudio) float32 { return a.masteringRangeDB },
+		},
+		{
+			name: "headroom", field: MasteringHeadroom, key: "mastering_headroom_db",
+			delta: 0.25, want: 2.25, lo: 0, hi: 24,
+			cache:    func(c MasteringCharacter) float32 { return c.HeadroomDB },
+			audioVal: func(a *fakeAudio) float32 { return a.masteringHeadroomDB },
+		},
+		{
+			name: "attack", field: MasteringAttack, key: "mastering_attack_ms",
+			delta: 1, want: 3, lo: 0.1, hi: 200,
+			cache:    func(c MasteringCharacter) float32 { return c.AttackMs },
+			audioVal: func(a *fakeAudio) float32 { return a.masteringAttackMs },
+		},
+		{
+			name: "release", field: MasteringRelease, key: "mastering_release_ms",
+			delta: 10, want: 110, lo: 1, hi: 2000,
+			cache:    func(c MasteringCharacter) float32 { return c.ReleaseMs },
+			audioVal: func(a *fakeAudio) float32 { return a.masteringReleaseMs },
+		},
+	}
+	for _, tc := range fields {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t) // nothing selected: mastery is global
+			f.c.InitMasteringCharacter(DefaultMasteringCharacter())
+			for len(f.ch) > 0 {
+				<-f.ch
+			}
+
+			got, ok := f.c.AdjustMasteringCharacter(tc.field, tc.delta)
+			if !ok {
+				t.Fatalf("AdjustMasteringCharacter(%s) ok=false", tc.name)
+			}
+			if !approxEq(got, tc.want) {
+				t.Errorf("returned %v, want %v", got, tc.want)
+			}
+			ch := recvChange(t, f.ch)
+			if ch.Type != "mastering" {
+				t.Errorf("change type = %q, want mastering", ch.Type)
+			}
+			if len(ch.Data) != 1 {
+				t.Errorf("published %d keys, want exactly 1: %v", len(ch.Data), ch.Data)
+			}
+			if gotKey, _ := ch.Data[tc.key].(float32); !approxEq(gotKey, tc.want) {
+				t.Errorf("change %s = %v, want %v", tc.key, ch.Data[tc.key], tc.want)
+			}
+			if cached := tc.cache(f.c.MasteringCharacter()); !approxEq(cached, tc.want) {
+				t.Errorf("cache = %v, want %v", cached, tc.want)
+			}
+			if engine := tc.audioVal(f.audio); !approxEq(engine, tc.want) {
+				t.Errorf("engine = %v, want %v", engine, tc.want)
+			}
+
+			// Clamps at the top and the bottom of the field's engine range.
+			if v, _ := f.c.AdjustMasteringCharacter(tc.field, 1e6); !approxEq(v, tc.hi) {
+				t.Errorf("clamp up = %v, want %v", v, tc.hi)
+			}
+			if v, _ := f.c.AdjustMasteringCharacter(tc.field, -1e6); !approxEq(v, tc.lo) {
+				t.Errorf("clamp down = %v, want %v", v, tc.lo)
+			}
+		})
+	}
+
+	f := newFixture(t)
+	f.c.InitMasteringCharacter(DefaultMasteringCharacter())
+	for len(f.ch) > 0 {
+		<-f.ch
+	}
+	// Compose with the absolute setter: after a relative tick, a web-style
+	// absolute write of a DIFFERENT field must leave the ticked field intact.
+	if v, _ := f.c.AdjustMasteringCharacter(MasteringRatio, 1); !approxEq(v, 9) {
+		t.Fatalf("ratio tick = %v, want 9", v)
+	}
+	for len(f.ch) > 0 {
+		<-f.ch
+	}
+	rangeDB := float32(40)
+	f.c.SetMasteringCharacter(MasteringCharacterOpts{RangeDB: &rangeDB})
+	composed := f.c.MasteringCharacter()
+	if !approxEq(composed.Ratio, 9) || !approxEq(composed.RangeDB, 40) {
+		t.Errorf("composed character = %+v, want ratio 9 and range 40", composed)
+	}
+}
+
+// TestAdjustLimiterCeiling: the MSTR page's knob 7 (no relative-ceiling
+// test existed before). The ceiling clamps to [-12, 0] dB, drives the
+// engine, and publishes exactly one limiter_ceiling_db key. Global like the
+// rest of the mastering section.
+func TestAdjustLimiterCeiling(t *testing.T) {
+	f := newFixture(t)
+	f.c.InitMastering(0.25, -0.3)
+	for len(f.ch) > 0 {
+		<-f.ch
+	}
+
+	v, ok := f.c.AdjustLimiterCeiling(-0.25)
+	if !ok {
+		t.Fatal("AdjustLimiterCeiling ok=false")
+	}
+	if !approxEq(v, -0.55) {
+		t.Errorf("ceiling = %v, want -0.55", v)
+	}
+	if !approxEq(f.audio.limiterCeilingDB, -0.55) {
+		t.Errorf("engine ceiling = %v, want -0.55", f.audio.limiterCeilingDB)
+	}
+	if _, ceiling := f.c.Mastering(); !approxEq(ceiling, -0.55) {
+		t.Errorf("cached ceiling = %v, want -0.55", ceiling)
+	}
+	ch := recvChange(t, f.ch)
+	if ch.Type != "mastering" {
+		t.Errorf("change type = %q, want mastering", ch.Type)
+	}
+	if len(ch.Data) != 1 {
+		t.Errorf("published %d keys, want exactly 1: %v", len(ch.Data), ch.Data)
+	}
+	if got, _ := ch.Data["limiter_ceiling_db"].(float32); !approxEq(got, -0.55) {
+		t.Errorf("change limiter_ceiling_db = %v, want -0.55", ch.Data["limiter_ceiling_db"])
+	}
+
+	// Clamps at both ends rather than exceeding the engine range.
+	if v, _ := f.c.AdjustLimiterCeiling(5); !approxEq(v, 0) {
+		t.Errorf("ceiling after big up = %v, want 0", v)
+	}
+	if v, _ := f.c.AdjustLimiterCeiling(-100); !approxEq(v, -12) {
+		t.Errorf("ceiling after big down = %v, want -12", v)
+	}
+}
+
 func TestSetMasteringClampsToEngineRanges(t *testing.T) {
 	f := newFixture(t)
 

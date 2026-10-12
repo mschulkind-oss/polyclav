@@ -8,7 +8,8 @@
 > tracking, glide, optional 2× oversampling, and **8-voice polyphony**
 > with runtime-switchable voice modes. The [§2](#2-launchkey-native-ux) Launchkey knob-page UX is
 > code-complete (`internal/controls/pages`) pending hardware verification
-> (`docs/HARDWARE_TESTS.md`), and the [§3](#3-patch-persistence-schema) per-patch persistence model is
+> (`docs/HARDWARE_TESTS.md`) — six pages now: MAIN / MSTR / OSC / FILTER /
+> AMP / LFO-MOD — and the [§3](#3-patch-persistence-schema) per-patch persistence model is
 > live as `state.toml`'s `[patches.<name>.synth]` tables. Read this doc
 > as the **design record** — the rationale behind what shipped, [§5](#5-open-questions--decisions-deferred)'s
 > open questions, and Appendix A's DSP crate survey — not as a plan for
@@ -53,7 +54,7 @@ as the next build threads, and points at this doc's `engine = "<name>"`
 dispatch seam ([§5](#5-open-questions--decisions-deferred)) as where a new native instrument engine plugs in.
 `docs/LAUNCHKEY_NAVIGATION.md` landed even later (2026-07-13) as a
 proposal (not yet built) for scaling `internal/controls/pages` past its
-current flat 5-page ceiling — a Category × Page model. Track ←/→ now
+current flat 6-page ceiling — a Category × Page model. Track ←/→ now
 select patch banks, so that proposal's button assignment needs revision
 before implementation.
 

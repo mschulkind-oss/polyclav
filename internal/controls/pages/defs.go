@@ -15,15 +15,21 @@ import (
 // taper per docs/ROADMAP.md §2.1 is a future refinement); stepped
 // parameters (bend range, voice mode) move one unit per detent.
 const (
-	stepUnit      float32 = 1.0 / 127 // [0,1] params: full sweep ≈ one rotation (volume knobs reach 2.0: ≈two)
-	stepResonance float32 = 0.0075    // [0,0.95]: same ~127-detent sweep
-	stepEnvTime   float32 = 0.025     // 25 ms per detent (0.1 ms..10 s range)
-	stepGlide     float32 = 0.05      // 50 ms per detent over [0,5] s
-	stepDetune    float32 = 1         // 1 cent per detent (±100 c)
-	stepLFORate   float32 = 0.1       // 0.1 Hz per detent (0.05..20 Hz)
-	stepLFOPitch  float32 = 1         // 1 cent per detent (0..100 c)
-	stepLFOCutoff float32 = 0.02      // 1/50 octave per detent (0..2 oct)
-	stepInteger   float32 = 1         // bend-range semitones / voice-mode cycling
+	stepUnit              float32 = 1.0 / 127 // [0,1] params: full sweep ≈ one rotation (volume knobs reach 2.0: ≈two)
+	stepResonance         float32 = 0.0075    // [0,0.95]: same ~127-detent sweep
+	stepEnvTime           float32 = 0.025     // 25 ms per detent (0.1 ms..10 s range)
+	stepGlide             float32 = 0.05      // 50 ms per detent over [0,5] s
+	stepDetune            float32 = 1         // 1 cent per detent (±100 c)
+	stepLFORate           float32 = 0.1       // 0.1 Hz per detent (0.05..20 Hz)
+	stepLFOPitch          float32 = 1         // 1 cent per detent (0..100 c)
+	stepLFOCutoff         float32 = 0.02      // 1/50 octave per detent (0..2 oct)
+	stepInteger           float32 = 1         // bend-range semitones / voice-mode cycling
+	stepMasteringRatio    float32 = 0.2       // ratio per detent (1..20)
+	stepMasteringRange    float32 = 0.5       // threshold range dB per detent (0..48)
+	stepMasteringHeadroom float32 = 0.25      // makeup headroom dB per detent (0..24)
+	stepMasteringAttack   float32 = 1         // attack ms per detent (0.1..200)
+	stepMasteringRelease  float32 = 10        // release ms per detent (1..2000)
+	stepLimiterCeiling    float32 = 0.25      // limiter ceiling dB per detent (-12..0)
 )
 
 // pageDefs is the knob-page table — docs/ROADMAP.md §2.1 adapted to the
@@ -31,11 +37,11 @@ const (
 // controls layer, per-patch auto-persistence, and the web UI; the
 // deviations, each with its reason:
 //
-//   - Page set is MAIN / OSC / FILTER / AMP / LFO/MOD instead of §2.1's
-//     MIX / FILTER / AMP / LFO / MOD. Page 1 (MAIN) keeps knobs 1–3 as
-//     shipped (Volume / Reverb / Comp) so muscle memory survives the
-//     upgrade — this also settles §2.1's open question and §5's locked
-//     decision (the global volume/reverb/comp stay reachable from
+//   - Page set is MAIN / MSTR / OSC / FILTER / AMP / LFO/MOD instead of
+//     §2.1's MIX / FILTER / AMP / LFO / MOD. Page 1 (MAIN) keeps knobs
+//     1–3 as shipped (Volume / Reverb / Comp) so muscle memory survives
+//     the upgrade — this also settles §2.1's open question and §5's
+//     locked decision (the global volume/reverb/comp stay reachable from
 //     inside the synth UI) by making them page 1 rather than a trailing
 //     sixth page.
 //   - MAIN knob 4 was Cutoff through Phase 2; as of the drive-pedal
@@ -49,6 +55,12 @@ const (
 //     section (7–8) is the two master-bus dynamics controls — the
 //     limiter-adjacent "Glue" the web Comp pedal exposes — and they
 //     work on every patch type rather than only native ones.
+//   - A sixth page, MSTR (AlwaysLive, index 1 right after MAIN),
+//     gathers the whole mastering section: the compressor amount (the
+//     same value as MAIN knob 7), the compressor character (ratio /
+//     threshold range / makeup headroom / attack / release), and the
+//     limiter Ceiling. Like MAIN it keeps working on every patch type,
+//     so the master bus is fully reachable off the native engine too.
 //   - §2.1's MIX page content (osc levels/detunes, noise, drive) lands
 //     on page 2 (OSC), plus the shipped shared Pulse Width; per-osc
 //     waveform/octave selection has no knob shape (it's a selector, not
@@ -74,15 +86,17 @@ const (
 //     (debounced), so there is nothing to arm — see the transport table
 //     in cmd/polyclav.
 //
-// Non-native patches: only page 0 is live, and on it only the slots
-// that route through the always-available knob setters (Volume, Reverb,
-// Comp, Pedal — slots 1–4 — plus the global mastering compressor on 7
-// and Master on 8). The rest return ok=false from their controls setters
-// (ErrNoNativePatch) and show nothing.
+// Non-native patches: the live pages are the two AlwaysLive defs, MAIN
+// and MSTR. On MAIN only the slots that route through the
+// always-available knob setters respond (Volume, Reverb, Comp, Pedal —
+// slots 1–4 — plus the global mastering compressor on 7 and Master on
+// 8); the rest return ok=false from their controls setters
+// (ErrNoNativePatch) and show nothing. The other pages are native-only.
 func pageDefs() []PageDef {
 	return []PageDef{
 		{
-			Name: "MAIN",
+			Name:       "MAIN",
+			AlwaysLive: true,
 			Slots: [8]Slot{
 				{Label: "Volume", Step: stepUnit, Adjust: adjVolume},
 				{Label: "Reverb", Step: stepUnit, Adjust: adjReverb},
@@ -92,6 +106,20 @@ func pageDefs() []PageDef {
 				{Label: "Glide", Step: stepGlide, Adjust: adjGlide()},
 				{Label: "Mstr Comp", Step: stepUnit, Adjust: adjMasteringComp},
 				{Label: "Master", Step: stepUnit, Adjust: adjMasterVolume},
+			},
+		},
+		{
+			Name:       "MSTR",
+			AlwaysLive: true,
+			Slots: [8]Slot{
+				{Label: "Mstr Comp", Step: stepUnit, Adjust: adjMasteringComp},
+				{Label: "Mstr Ratio", Step: stepMasteringRatio, Adjust: adjMasteringChar(controls.MasteringRatio)},
+				{Label: "Mstr Range", Step: stepMasteringRange, Adjust: adjMasteringChar(controls.MasteringRange)},
+				{Label: "Mstr Headroom", Step: stepMasteringHeadroom, Adjust: adjMasteringChar(controls.MasteringHeadroom)},
+				{Label: "Mstr Atk", Step: stepMasteringAttack, Adjust: adjMasteringChar(controls.MasteringAttack)},
+				{Label: "Mstr Rel", Step: stepMasteringRelease, Adjust: adjMasteringChar(controls.MasteringRelease)},
+				{Label: "Ceiling", Step: stepLimiterCeiling, Adjust: adjLimiterCeiling},
+				{}, // unbound
 			},
 		},
 		{
@@ -294,6 +322,38 @@ func adjMasteringComp(ctl *controls.Controls, delta float32) (string, bool) {
 	return formatPercent(v), true
 }
 
+// adjMasteringChar moves one mastering-compressor character field — the
+// MSTR page's knobs 2–6. Global like the rest of the mastering section,
+// so it applies on every patch type and never resets on a patch switch.
+// The display follows the field: ratio as "8.0:1", the times in ms, the
+// two dB spans as dB.
+func adjMasteringChar(f controls.MasteringCharacterField) AdjustFunc {
+	return func(ctl *controls.Controls, delta float32) (string, bool) {
+		v, ok := ctl.AdjustMasteringCharacter(f, delta)
+		if !ok {
+			return "", false
+		}
+		switch f {
+		case controls.MasteringRatio:
+			return formatMasteringRatio(v), true
+		case controls.MasteringAttack, controls.MasteringRelease:
+			return formatMs(v), true
+		default:
+			return formatDB(v), true
+		}
+	}
+}
+
+// adjLimiterCeiling moves the master limiter's brick-wall ceiling — MSTR
+// knob 7. Global like the rest of the mastering section.
+func adjLimiterCeiling(ctl *controls.Controls, delta float32) (string, bool) {
+	v, ok := ctl.AdjustLimiterCeiling(delta)
+	if !ok {
+		return "", false
+	}
+	return formatDB(v), true
+}
+
 // adjCutoff keeps the shipped semantics: the 0..1 knob position lives in
 // controls (log-taper to Hz there); ok=false off native patches.
 func adjCutoff(ctl *controls.Controls, delta float32) (string, bool) {
@@ -461,6 +521,21 @@ func adjVoiceMode(ctl *controls.Controls, delta float32) (string, bool) {
 
 func formatPercent(v float32) string {
 	return fmt.Sprintf("%d%%", int(v*100+0.5))
+}
+
+// formatDB renders a mastering dB value ("30.0 dB", "-0.3 dB").
+func formatDB(v float32) string {
+	return fmt.Sprintf("%.1f dB", v)
+}
+
+// formatMs renders a mastering character time in whole milliseconds.
+func formatMs(v float32) string {
+	return fmt.Sprintf("%.0f ms", v)
+}
+
+// formatMasteringRatio renders a mastering compressor ratio ("8.0:1").
+func formatMasteringRatio(v float32) string {
+	return fmt.Sprintf("%.1f:1", v)
 }
 
 // formatHz matches the pre-pages cutoff rendering: kHz with one decimal

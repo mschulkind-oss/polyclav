@@ -951,7 +951,7 @@ type hwmapJSON struct {
 func (s *Server) handleHwmap(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, hwmapJSON{
 		Pages:     pages.HardwareMap(),
-		Pads:      "Top row: patch select (8 pads). Bottom row cols 1–5: current knob-page indicator.",
+		Pads:      "Top row: patch select (8 pads). Bottom row cols 1–6: current knob-page indicator.",
 		Transport: "Play: audition play/stop. Page ◂ ▸: previous / next knob page.",
 		Note:      "Categories × Pages navigation (docs/LAUNCHKEY_NAVIGATION.md) is proposed but not yet built; this reflects the current fixed page layout.",
 	})

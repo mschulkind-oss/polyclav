@@ -1,5 +1,5 @@
 // Package pages implements the Launchkey knob-page state machine
-// (docs/ROADMAP.md §2): five named pages of eight knob slots each,
+// (docs/ROADMAP.md §2): six named pages of eight knob slots each,
 // mapping relative-encoder ticks onto internal/controls setters, with
 // screen feedback and a pad row of page indicators.
 //
@@ -62,25 +62,28 @@ type Slot struct {
 }
 
 // PageDef is one knob page: the name flashed on page switch and the
-// eight encoder slots, index 0 = physical knob 1.
+// eight encoder slots, index 0 = physical knob 1. AlwaysLive marks a
+// page that stays reachable off the native engine (the backend-agnostic
+// globals) — everything else is native-only.
 type PageDef struct {
-	Name  string
-	Slots [8]Slot
+	Name       string
+	Slots      [8]Slot
+	AlwaysLive bool
 }
 
 // PageIndicatorRow is the pad row used for page indicators: row 1, the
 // bottom row in the driver's DAW layout (notes 112–119). Row 0 (top,
 // notes 96–103) stays the patch selector exactly as before — pages never
-// touches it. Columns 0..len(pages)-1 light up; columns 5..7 are left
-// unpainted for future per-page state pads (docs/ROADMAP.md §2.4).
+// touches it. Columns 0..pageIndicatorCols-1 light up; columns 6–7 are
+// left unpainted for future per-page state pads (docs/ROADMAP.md §2.4).
 const PageIndicatorRow = 1
 
 // pageIndicatorCols is the number of bottom-row pads reserved for page
-// indicators (columns 0–4, notes 112–116). Columns 5–7 (notes 117–119)
+// indicators (columns 0–5, notes 112–117). Columns 6–7 (notes 118–119)
 // stay free for the user's own OSC/mixer bindings, so the generic
 // parameter browser shows at most this many page indicators and relies on
 // the screen's "n/M" beyond that.
-const pageIndicatorCols = 5
+const pageIndicatorCols = 6
 
 // Page-indicator palette (docs/ROADMAP.md §2.4 names no exact indices
 // for page indicators, so these are picked from the named Components
@@ -156,10 +159,11 @@ func (p *Pages) HandleKnob(index int, delta int8) {
 }
 
 // NextPage advances to the next page (wrapping), flashes the page name,
-// and repaints the indicators. While a non-native patch is selected only
-// page 0 (MAIN) is live: the switch is refused and the screen shows
-// "(native only)" instead (docs/ROADMAP.md §2.2 adapted — the synth
-// pages drive parameters that do not exist off the native engine).
+// and repaints the indicators. On a non-native patch the live set is
+// MAIN plus the always-live MSTR page; a configuration with a single
+// live page is refused with a "(native only)" flash
+// (docs/ROADMAP.md §2.2 adapted — the remaining pages drive parameters
+// that do not exist off the native engine).
 func (p *Pages) NextPage() { p.cycle(1) }
 
 // PrevPage is NextPage's other direction.
@@ -167,27 +171,29 @@ func (p *Pages) PrevPage() { p.cycle(-1) }
 
 func (p *Pages) cycle(dir int) {
 	p.mu.Lock()
-	if !p.native {
+	live := p.liveDefsLocked()
+	if len(live) <= 1 {
+		// A single live page has nowhere to cycle: refuse and flash why.
 		name := p.defs[0].Name
 		p.mu.Unlock()
 		_ = p.screen.SetDisplayText("(native only)", name)
 		return
 	}
-	n := len(p.defs)
+	n := len(live)
 	p.page = (p.page + dir + n) % n
 	page := p.page
 	p.paintPadsLocked()
 	p.mu.Unlock()
-	_ = p.screen.SetDisplayText(p.defs[page].Name, fmt.Sprintf("Page %d/%d", page+1, n))
+	_ = p.screen.SetDisplayText(live[page].Name, fmt.Sprintf("Page %d/%d", page+1, n))
 }
 
 // NextParamPage advances the encoder-bank cursor one page through the
-// full browser list and flashes the new page. The list is the curated host
-// pages first (MAIN for a non-native patch, MAIN/OSC/FILTER/AMP/LFO-MOD
-// for the native engine), then the active instrument's own parameters, 8
-// per page. These are the two buttons beside the encoders, so unlike
-// Scene ↑/↓ they reach the instrument parameters a plugin or engine
-// exposes beyond the host's curated assignments.
+// full browser list and flashes the new page. The list is the curated
+// host pages first (MAIN and the always-live MSTR page for a non-native
+// patch, all six for the native engine), then the active instrument's
+// own parameters, 8 per page. These are the two buttons beside the
+// encoders, so unlike Scene ↑/↓ they reach the instrument parameters a
+// plugin or engine exposes beyond the host's curated assignments.
 func (p *Pages) NextParamPage() { p.stepBrowser(1) }
 
 // PrevParamPage is NextParamPage's other direction.
@@ -209,27 +215,37 @@ func (p *Pages) stepBrowser(dir int) {
 // pages after them. Callers hold p.mu because it reads the live parameter
 // list, which may change under it as a backend republishes.
 func (p *Pages) slotAtLocked(page, idx int) (Slot, bool) {
-	host := p.hostPageCountLocked()
-	if page < host {
-		if p.native {
-			return p.defs[page].Slots[idx], true
-		}
-		return p.defs[0].Slots[idx], true
+	live := p.liveDefsLocked()
+	if page < len(live) {
+		return live[page].Slots[idx], true
 	}
 	params := p.paramListLocked()
-	i := (page-host)*8 + idx
+	i := (page-len(live))*8 + idx
 	if i < 0 || i >= len(params) {
 		return Slot{}, false
 	}
 	return Slot{Label: params[i].Label, Step: params[i].Step, Adjust: params[i].Adjust}, true
 }
 
+// liveDefsLocked is the page set live for the current patch type: every
+// def on the native engine, and only the AlwaysLive defs (MAIN and MSTR,
+// the backend-agnostic globals) off it. Callers hold p.mu.
+func (p *Pages) liveDefsLocked() []PageDef {
+	if p.native {
+		return p.defs
+	}
+	live := make([]PageDef, 0, len(p.defs))
+	for _, d := range p.defs {
+		if d.AlwaysLive {
+			live = append(live, d)
+		}
+	}
+	return live
+}
+
 // hostPageCountLocked is how many curated pages the browser starts with.
 func (p *Pages) hostPageCountLocked() int {
-	if p.native {
-		return len(p.defs)
-	}
-	return 1
+	return len(p.liveDefsLocked())
 }
 
 func (p *Pages) paramListLocked() []Param {
@@ -250,12 +266,9 @@ func (p *Pages) pageCountLocked() int {
 // browserTitleLocked names the page for CurrentPage and the browser flash:
 // the curated page's own name, or PARAMS for an instrument-owned page.
 func (p *Pages) browserTitleLocked(page int) string {
-	host := p.hostPageCountLocked()
-	if page < host {
-		if p.native {
-			return p.defs[page].Name
-		}
-		return p.defs[0].Name
+	live := p.liveDefsLocked()
+	if page < len(live) {
+		return live[page].Name
 	}
 	return "PARAMS"
 }
@@ -263,15 +276,11 @@ func (p *Pages) browserTitleLocked(page int) string {
 // browserFlashLocked is the two-line screen popup for a browser page:
 // page name / position (position is within that page's own group).
 func (p *Pages) browserFlashLocked(page int) (string, string) {
-	host := p.hostPageCountLocked()
-	if page < host {
-		name := p.defs[0].Name
-		if p.native {
-			name = p.defs[page].Name
-		}
-		return name, fmt.Sprintf("Page %d/%d", page+1, host)
+	live := p.liveDefsLocked()
+	if page < len(live) {
+		return live[page].Name, fmt.Sprintf("Page %d/%d", page+1, len(live))
 	}
-	pp := page - host
+	pp := page - len(live)
 	n := p.paramPageCountLocked()
 	return "PARAMS", fmt.Sprintf("%d/%d", pp+1, n)
 }
@@ -285,7 +294,7 @@ func (p *Pages) CurrentPage() (index int, name string) {
 
 // OnPatchChange re-clamps page availability for the new patch type and
 // refreshes the indicators. Leaving the native engine snaps back to page
-// 0 (only MAIN is meaningful there); native→native switches keep the
+// 0 (MAIN, the first always-live page); native→native switches keep the
 // page (per-patch page persistence — ROADMAP §3.1's `page` field — is
 // deferred with the rest of that schema).
 func (p *Pages) OnPatchChange(patchType string) {
@@ -320,14 +329,14 @@ func (p *Pages) RefreshPads() {
 // The PadWriter therefore must not call back into Pages (the reconciler
 // adapter in cmd/polyclav does not).
 func (p *Pages) paintPadsLocked() {
-	host := p.hostPageCountLocked()
-	if p.page >= host {
+	live := p.liveDefsLocked()
+	if p.page >= len(live) {
 		// A generic parameter page: columns 0..N-1 show the position
 		// inside the instrument's own parameters. Only the reserved
 		// indicator columns are painted; beyond that the screen's "n/M"
 		// carries the orientation.
 		n := p.paramPageCountLocked()
-		pp := p.page - host
+		pp := p.page - len(live)
 		for col := 0; col < pageIndicatorCols; col++ {
 			c := padPageUnavailable
 			if col < n {
@@ -340,15 +349,15 @@ func (p *Pages) paintPadsLocked() {
 		}
 		return
 	}
-	for i := range p.defs {
-		c := padPageAvailable
-		if !p.native && i != 0 {
-			c = padPageUnavailable
+	for col := 0; col < pageIndicatorCols; col++ {
+		c := padPageUnavailable
+		if col < len(live) {
+			c = padPageAvailable
 		}
-		if i == p.page {
+		if col == p.page {
 			c = padPageActive
 		}
-		_ = p.pads.SetPadColor(PageIndicatorRow, i, c)
+		_ = p.pads.SetPadColor(PageIndicatorRow, col, c)
 	}
 }
 

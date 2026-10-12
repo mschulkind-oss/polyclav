@@ -2083,8 +2083,8 @@ func TestHwmapGet(t *testing.T) {
 	wantStatus(t, rec, http.StatusOK)
 	m := decodeBody(t, rec)
 	ps, ok := m["pages"].([]any)
-	if !ok || len(ps) != 5 {
-		t.Fatalf("hwmap pages: expected 5, got %v", m["pages"])
+	if !ok || len(ps) != 6 {
+		t.Fatalf("hwmap pages: expected 6, got %v", m["pages"])
 	}
 	first := ps[0].(map[string]any)
 	if first["name"] != "MAIN" {
@@ -2093,6 +2093,9 @@ func TestHwmapGet(t *testing.T) {
 	knobs, ok := first["knobs"].([]any)
 	if !ok || len(knobs) != 8 || knobs[0] != "Volume" {
 		t.Errorf("hwmap MAIN knobs: unexpected %v", first["knobs"])
+	}
+	if second := ps[1].(map[string]any); second["name"] != "MSTR" {
+		t.Errorf("hwmap pages[1].name = %v, want MSTR", second["name"])
 	}
 	if m["pads"] == "" || m["transport"] == "" {
 		t.Errorf("hwmap missing pads/transport lines: %v", m)

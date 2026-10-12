@@ -473,8 +473,60 @@ func TestKnobRoutingAllPages(t *testing.T) {
 				}
 			}},
 
+		// ---- Page 2 MSTR ----
+		{name: "MSTR comp", page: 1, knob: 1, ticks: 1, wantLabel: "Mstr Comp", wantDisplay: "1%",
+			wantCall: "SetMasteringCompressor",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.masteringComp, 1.0/127) {
+					t.Errorf("mastering comp = %v", a.masteringComp)
+				}
+			}},
+		{name: "MSTR ratio", page: 1, knob: 2, ticks: 1, wantLabel: "Mstr Ratio", wantDisplay: "8.2:1",
+			wantCall: "SetMasteringRatio",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.masteringRatio, 8.2) {
+					t.Errorf("mastering ratio = %v", a.masteringRatio)
+				}
+			}},
+		{name: "MSTR range", page: 1, knob: 3, ticks: 1, wantLabel: "Mstr Range", wantDisplay: "30.5 dB",
+			wantCall: "SetMasteringRangeDB",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.masteringRangeDB, 30.5) {
+					t.Errorf("mastering range = %v", a.masteringRangeDB)
+				}
+			}},
+		{name: "MSTR headroom", page: 1, knob: 4, ticks: 2, wantLabel: "Mstr Headroom", wantDisplay: "2.5 dB",
+			wantCall: "SetMasteringHeadroomDB",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.masteringHeadroomDB, 2.5) {
+					t.Errorf("mastering headroom = %v", a.masteringHeadroomDB)
+				}
+			}},
+		{name: "MSTR attack", page: 1, knob: 5, ticks: 1, wantLabel: "Mstr Atk", wantDisplay: "3 ms",
+			wantCall: "SetMasteringAttackMs",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.masteringAttackMs, 3) {
+					t.Errorf("mastering attack = %v", a.masteringAttackMs)
+				}
+			}},
+		{name: "MSTR release", page: 1, knob: 6, ticks: 1, wantLabel: "Mstr Rel", wantDisplay: "110 ms",
+			wantCall: "SetMasteringReleaseMs",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.masteringReleaseMs, 110) {
+					t.Errorf("mastering release = %v", a.masteringReleaseMs)
+				}
+			}},
+		{name: "MSTR ceiling", page: 1, knob: 7, ticks: -1, wantLabel: "Ceiling", wantDisplay: "-0.6 dB",
+			wantCall: "SetLimiterCeilingDB",
+			check: func(t *testing.T, a *fakeAudio) {
+				if !approxEq(a.limiterDB, -0.55) {
+					t.Errorf("limiter ceiling = %v", a.limiterDB)
+				}
+			}},
+		{name: "MSTR knob 8 unbound", page: 1, knob: 8, ticks: 1},
+
 		// ---- Page 2 OSC ----
-		{name: "OSC osc1 level", page: 1, knob: 1, ticks: -1, wantLabel: "Osc1 Level", wantDisplay: "99%",
+		{name: "OSC osc1 level", page: 2, knob: 1, ticks: -1, wantLabel: "Osc1 Level", wantDisplay: "99%",
 			wantCall: "SetNativeOsc",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.oscIdx != 0 || a.oscWave != "saw" || a.oscOctave != 0 ||
@@ -482,49 +534,49 @@ func TestKnobRoutingAllPages(t *testing.T) {
 					t.Errorf("osc = %+v", *a)
 				}
 			}},
-		{name: "OSC osc1 detune", page: 1, knob: 2, ticks: 1, wantLabel: "Osc1 Detune", wantDisplay: "+1 c",
+		{name: "OSC osc1 detune", page: 2, knob: 2, ticks: 1, wantLabel: "Osc1 Detune", wantDisplay: "+1 c",
 			wantCall: "SetNativeOsc",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.oscIdx != 0 || !approxEq(a.oscDetune, 1) || !approxEq(a.oscLevel, 1) {
 					t.Errorf("osc idx=%d detune=%v level=%v", a.oscIdx, a.oscDetune, a.oscLevel)
 				}
 			}},
-		{name: "OSC osc2 level", page: 1, knob: 3, ticks: 1, wantLabel: "Osc2 Level", wantDisplay: "1%",
+		{name: "OSC osc2 level", page: 2, knob: 3, ticks: 1, wantLabel: "Osc2 Level", wantDisplay: "1%",
 			wantCall: "SetNativeOsc",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.oscIdx != 1 || !approxEq(a.oscLevel, 1.0/127) || !approxEq(a.oscDetune, -7) {
 					t.Errorf("osc idx=%d level=%v detune=%v", a.oscIdx, a.oscLevel, a.oscDetune)
 				}
 			}},
-		{name: "OSC osc2 detune", page: 1, knob: 4, ticks: 1, wantLabel: "Osc2 Detune", wantDisplay: "-6 c",
+		{name: "OSC osc2 detune", page: 2, knob: 4, ticks: 1, wantLabel: "Osc2 Detune", wantDisplay: "-6 c",
 			wantCall: "SetNativeOsc",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.oscIdx != 1 || !approxEq(a.oscDetune, -6) {
 					t.Errorf("osc idx=%d detune=%v", a.oscIdx, a.oscDetune)
 				}
 			}},
-		{name: "OSC osc3 level", page: 1, knob: 5, ticks: 1, wantLabel: "Osc3 Level", wantDisplay: "1%",
+		{name: "OSC osc3 level", page: 2, knob: 5, ticks: 1, wantLabel: "Osc3 Level", wantDisplay: "1%",
 			wantCall: "SetNativeOsc",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.oscIdx != 2 || a.oscOctave != -1 || !approxEq(a.oscLevel, 1.0/127) {
 					t.Errorf("osc idx=%d oct=%d level=%v", a.oscIdx, a.oscOctave, a.oscLevel)
 				}
 			}},
-		{name: "OSC osc3 detune", page: 1, knob: 6, ticks: 1, wantLabel: "Osc3 Detune", wantDisplay: "+6 c",
+		{name: "OSC osc3 detune", page: 2, knob: 6, ticks: 1, wantLabel: "Osc3 Detune", wantDisplay: "+6 c",
 			wantCall: "SetNativeOsc",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.oscIdx != 2 || !approxEq(a.oscDetune, 6) {
 					t.Errorf("osc idx=%d detune=%v", a.oscIdx, a.oscDetune)
 				}
 			}},
-		{name: "OSC noise", page: 1, knob: 7, ticks: 1, wantLabel: "Noise", wantDisplay: "1%",
+		{name: "OSC noise", page: 2, knob: 7, ticks: 1, wantLabel: "Noise", wantDisplay: "1%",
 			wantCall: "SetNativeNoise",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.noise, 1.0/127) {
 					t.Errorf("noise = %v", a.noise)
 				}
 			}},
-		{name: "OSC pulse width", page: 1, knob: 8, ticks: 1, wantLabel: "Pulse Width", wantDisplay: "26%",
+		{name: "OSC pulse width", page: 2, knob: 8, ticks: 1, wantLabel: "Pulse Width", wantDisplay: "26%",
 			wantCall: "SetNativePulseWidth",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.pulseWidth, 0.25+1.0/127) {
@@ -533,12 +585,12 @@ func TestKnobRoutingAllPages(t *testing.T) {
 			}},
 
 		// ---- Page 3 FILTER ----
-		{name: "FILTER cutoff", page: 2, knob: 1, ticks: 1, wantLabel: "Cutoff",
+		{name: "FILTER cutoff", page: 3, knob: 1, ticks: 1, wantLabel: "Cutoff",
 			wantDisplayF: func(a *fakeAudio) string { return formatHz(a.cutoffHz) },
 			wantCall:     "SetNativeCutoffHz"},
-		{name: "FILTER resonance", page: 2, knob: 2, ticks: 1, wantLabel: "Resonance", wantDisplay: "31%",
+		{name: "FILTER resonance", page: 3, knob: 2, ticks: 1, wantLabel: "Resonance", wantDisplay: "31%",
 			wantCall: "SetNativeResonance"},
-		{name: "FILTER env amount", page: 2, knob: 3, ticks: 1, wantLabel: "Env Amount", wantDisplay: "1%",
+		{name: "FILTER env amount", page: 3, knob: 3, ticks: 1, wantLabel: "Env Amount", wantDisplay: "1%",
 			wantCall: "SetNativeFilterEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.feAmt, 1.0/127) || !approxEq(a.feA, 0.005) ||
@@ -546,35 +598,35 @@ func TestKnobRoutingAllPages(t *testing.T) {
 					t.Errorf("filter env = %v %v %v %v amt %v", a.feA, a.feD, a.feS, a.feR, a.feAmt)
 				}
 			}},
-		{name: "FILTER attack", page: 2, knob: 4, ticks: 1, wantLabel: "F.Attack", wantDisplay: "30 ms",
+		{name: "FILTER attack", page: 3, knob: 4, ticks: 1, wantLabel: "F.Attack", wantDisplay: "30 ms",
 			wantCall: "SetNativeFilterEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.feA, 0.03) {
 					t.Errorf("feA = %v", a.feA)
 				}
 			}},
-		{name: "FILTER decay", page: 2, knob: 5, ticks: 1, wantLabel: "F.Decay", wantDisplay: "625 ms",
+		{name: "FILTER decay", page: 3, knob: 5, ticks: 1, wantLabel: "F.Decay", wantDisplay: "625 ms",
 			wantCall: "SetNativeFilterEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.feD, 0.625) {
 					t.Errorf("feD = %v", a.feD)
 				}
 			}},
-		{name: "FILTER sustain", page: 2, knob: 6, ticks: 1, wantLabel: "F.Sustain", wantDisplay: "41%",
+		{name: "FILTER sustain", page: 3, knob: 6, ticks: 1, wantLabel: "F.Sustain", wantDisplay: "41%",
 			wantCall: "SetNativeFilterEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.feS, 0.4+1.0/127) {
 					t.Errorf("feS = %v", a.feS)
 				}
 			}},
-		{name: "FILTER release", page: 2, knob: 7, ticks: 1, wantLabel: "F.Release", wantDisplay: "625 ms",
+		{name: "FILTER release", page: 3, knob: 7, ticks: 1, wantLabel: "F.Release", wantDisplay: "625 ms",
 			wantCall: "SetNativeFilterEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.feR, 0.625) {
 					t.Errorf("feR = %v", a.feR)
 				}
 			}},
-		{name: "FILTER kbd track", page: 2, knob: 8, ticks: 1, wantLabel: "Kbd Track", wantDisplay: "1%",
+		{name: "FILTER kbd track", page: 3, knob: 8, ticks: 1, wantLabel: "Kbd Track", wantDisplay: "1%",
 			wantCall: "SetNativeKbdTrack",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.kbdTrack, 1.0/127) {
@@ -583,7 +635,7 @@ func TestKnobRoutingAllPages(t *testing.T) {
 			}},
 
 		// ---- Page 4 AMP ----
-		{name: "AMP attack", page: 3, knob: 1, ticks: 1, wantLabel: "A.Attack", wantDisplay: "30 ms",
+		{name: "AMP attack", page: 4, knob: 1, ticks: 1, wantLabel: "A.Attack", wantDisplay: "30 ms",
 			wantCall: "SetNativeAmpEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.aeA, 0.03) || !approxEq(a.aeD, 0.2) ||
@@ -591,96 +643,101 @@ func TestKnobRoutingAllPages(t *testing.T) {
 					t.Errorf("amp env = %v %v %v %v", a.aeA, a.aeD, a.aeS, a.aeR)
 				}
 			}},
-		{name: "AMP decay", page: 3, knob: 2, ticks: 1, wantLabel: "A.Decay", wantDisplay: "225 ms",
+		{name: "AMP decay", page: 4, knob: 2, ticks: 1, wantLabel: "A.Decay", wantDisplay: "225 ms",
 			wantCall: "SetNativeAmpEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.aeD, 0.225) {
 					t.Errorf("aeD = %v", a.aeD)
 				}
 			}},
-		{name: "AMP sustain", page: 3, knob: 3, ticks: 1, wantLabel: "A.Sustain", wantDisplay: "71%",
+		{name: "AMP sustain", page: 4, knob: 3, ticks: 1, wantLabel: "A.Sustain", wantDisplay: "71%",
 			wantCall: "SetNativeAmpEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.aeS, 0.7+1.0/127) {
 					t.Errorf("aeS = %v", a.aeS)
 				}
 			}},
-		{name: "AMP release", page: 3, knob: 4, ticks: 1, wantLabel: "A.Release", wantDisplay: "425 ms",
+		{name: "AMP release", page: 4, knob: 4, ticks: 1, wantLabel: "A.Release", wantDisplay: "425 ms",
 			wantCall: "SetNativeAmpEnv",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.aeR, 0.425) {
 					t.Errorf("aeR = %v", a.aeR)
 				}
 			}},
-		{name: "AMP vel to amp", page: 3, knob: 5, ticks: -1, wantLabel: "Vel>Amp", wantDisplay: "99%",
+		{name: "AMP vel to amp", page: 4, knob: 5, ticks: -1, wantLabel: "Vel>Amp", wantDisplay: "99%",
 			wantCall: "SetNativeVelRouting",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.velToAmp, 1-1.0/127) || !approxEq(a.velToCutoff, 0) {
 					t.Errorf("vel = %v/%v", a.velToCutoff, a.velToAmp)
 				}
 			}},
-		{name: "AMP vel to cutoff", page: 3, knob: 6, ticks: 1, wantLabel: "Vel>Cutoff", wantDisplay: "1%",
+		{name: "AMP vel to cutoff", page: 4, knob: 6, ticks: 1, wantLabel: "Vel>Cutoff", wantDisplay: "1%",
 			wantCall: "SetNativeVelRouting",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.velToCutoff, 1.0/127) || !approxEq(a.velToAmp, 1) {
 					t.Errorf("vel = %v/%v", a.velToCutoff, a.velToAmp)
 				}
 			}},
-		{name: "AMP drive", page: 3, knob: 7, ticks: 1, wantLabel: "Drive", wantDisplay: "1%",
+		{name: "AMP drive", page: 4, knob: 7, ticks: 1, wantLabel: "Drive", wantDisplay: "1%",
 			wantCall: "SetNativeDrive"},
-		{name: "AMP knob 8 unbound", page: 3, knob: 8, ticks: 1},
+		{name: "AMP knob 8 unbound", page: 4, knob: 8, ticks: 1},
 
 		// ---- Page 5 LFO/MOD ----
-		{name: "LFO rate", page: 4, knob: 1, ticks: 1, wantLabel: "LFO Rate", wantDisplay: "5.1 Hz",
+		{name: "LFO rate", page: 5, knob: 1, ticks: 1, wantLabel: "LFO Rate", wantDisplay: "5.1 Hz",
 			wantCall: "SetNativeLFO",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.lfoWave != "triangle" || !approxEq(a.lfoRate, 5.1) {
 					t.Errorf("lfo = %q %v", a.lfoWave, a.lfoRate)
 				}
 			}},
-		{name: "LFO to pitch", page: 4, knob: 2, ticks: 1, wantLabel: "LFO>Pitch", wantDisplay: "1 c",
+		{name: "LFO to pitch", page: 5, knob: 2, ticks: 1, wantLabel: "LFO>Pitch", wantDisplay: "1 c",
 			wantCall: "SetNativeLFO",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.lfoPitch, 1) {
 					t.Errorf("lfoPitch = %v", a.lfoPitch)
 				}
 			}},
-		{name: "LFO to cutoff", page: 4, knob: 3, ticks: 1, wantLabel: "LFO>Cutoff", wantDisplay: "0.02 oct",
+		{name: "LFO to cutoff", page: 5, knob: 3, ticks: 1, wantLabel: "LFO>Cutoff", wantDisplay: "0.02 oct",
 			wantCall: "SetNativeLFO",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.lfoCutoff, 0.02) {
 					t.Errorf("lfoCutoff = %v", a.lfoCutoff)
 				}
 			}},
-		{name: "LFO to amp", page: 4, knob: 4, ticks: 1, wantLabel: "LFO>Amp", wantDisplay: "1%",
+		{name: "LFO to amp", page: 5, knob: 4, ticks: 1, wantLabel: "LFO>Amp", wantDisplay: "1%",
 			wantCall: "SetNativeLFO",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.lfoAmp, 1.0/127) {
 					t.Errorf("lfoAmp = %v", a.lfoAmp)
 				}
 			}},
-		{name: "LFO bend range", page: 4, knob: 5, ticks: 1, wantLabel: "Bend Range", wantDisplay: "3 st",
+		{name: "LFO bend range", page: 5, knob: 5, ticks: 1, wantLabel: "Bend Range", wantDisplay: "3 st",
 			wantCall: "SetNativeBendRange",
 			check: func(t *testing.T, a *fakeAudio) {
 				if !approxEq(a.bendRange, 3) {
 					t.Errorf("bendRange = %v", a.bendRange)
 				}
 			}},
-		{name: "LFO glide", page: 4, knob: 6, ticks: 1, wantLabel: "Glide", wantDisplay: "50 ms",
+		{name: "LFO glide", page: 5, knob: 6, ticks: 1, wantLabel: "Glide", wantDisplay: "50 ms",
 			wantCall: "SetNativeGlide"},
-		{name: "LFO voice mode", page: 4, knob: 7, ticks: 1, wantLabel: "Voice Mode", wantDisplay: "Mono Retrig",
+		{name: "LFO voice mode", page: 5, knob: 7, ticks: 1, wantLabel: "Voice Mode", wantDisplay: "Mono Retrig",
 			wantCall: "SetNativeVoiceMode",
 			check: func(t *testing.T, a *fakeAudio) {
 				if a.voiceMode != "mono_retrig" {
 					t.Errorf("voiceMode = %q", a.voiceMode)
 				}
 			}},
-		{name: "LFO knob 8 unbound", page: 4, knob: 8, ticks: 1},
+		{name: "LFO knob 8 unbound", page: 5, knob: 8, ticks: 1},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := newNativeFixture(t)
+			// Mirror the app boot: the mastering character and ceiling are
+			// seeded before any knob tick, so the MSTR steps move from the
+			// engine defaults rather than the zero cache.
+			f.ctl.InitMasteringCharacter(controls.DefaultMasteringCharacter())
+			f.ctl.InitMastering(0, -0.3)
 			for i := 0; i < c.page; i++ {
 				f.pg.NextPage()
 			}
@@ -727,11 +784,12 @@ func TestKnobRoutingAllPages(t *testing.T) {
 func TestPageCyclingOrderAndWraparound(t *testing.T) {
 	f := newNativeFixture(t)
 	wantForward := []struct{ name, flash string }{
-		{"OSC", "Page 2/5"},
-		{"FILTER", "Page 3/5"},
-		{"AMP", "Page 4/5"},
-		{"LFO/MOD", "Page 5/5"},
-		{"MAIN", "Page 1/5"}, // wrap
+		{"MSTR", "Page 2/6"},
+		{"OSC", "Page 3/6"},
+		{"FILTER", "Page 4/6"},
+		{"AMP", "Page 5/6"},
+		{"LFO/MOD", "Page 6/6"},
+		{"MAIN", "Page 1/6"}, // wrap
 	}
 	for i, want := range wantForward {
 		f.pg.NextPage()
@@ -745,14 +803,15 @@ func TestPageCyclingOrderAndWraparound(t *testing.T) {
 	}
 	// Back around the other way: MAIN → LFO/MOD (wrap).
 	f.pg.PrevPage()
-	if idx, name := f.pg.CurrentPage(); idx != 4 || name != "LFO/MOD" {
-		t.Fatalf("PrevPage wrap: on %d %q, want 4 LFO/MOD", idx, name)
+	if idx, name := f.pg.CurrentPage(); idx != 5 || name != "LFO/MOD" {
+		t.Fatalf("PrevPage wrap: on %d %q, want 5 LFO/MOD", idx, name)
 	}
 }
 
-// TestNonNativeGating: with a soundfont patch only page 0 is live, page
-// switches are refused with a "(native only)" flash, knobs 1-4 still
-// work, and every native-only slot is inert.
+// TestNonNativeGating: with a soundfont patch the live pages are the two
+// always-live defs, MAIN and MSTR, so Scene cycles between them with no
+// refusal flash. MAIN's native-only slots stay inert while its global
+// slots and every MSTR knob respond.
 func TestNonNativeGating(t *testing.T) {
 	f := newFixture(t, nativePatch, sfPatch)
 	if err := f.ctl.SelectPatch("piano"); err != nil {
@@ -762,17 +821,28 @@ func TestNonNativeGating(t *testing.T) {
 	f.audio.reset()
 	f.screen.writes = nil
 
+	// Scene cycles MAIN <-> MSTR; the live set is two pages.
 	f.pg.NextPage()
+	if idx, name := f.pg.CurrentPage(); idx != 1 || name != "MSTR" {
+		t.Fatalf("NextPage on soundfont moved to %d %q, want 1 MSTR", idx, name)
+	}
+	if w := f.screen.last(t); w.line1 != "MSTR" || w.line2 != "Page 2/2" {
+		t.Errorf("MSTR switch screen = %q/%q, want MSTR/Page 2/2", w.line1, w.line2)
+	}
+	f.pg.NextPage() // wraps back to MAIN
 	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "MAIN" {
-		t.Fatalf("NextPage on soundfont moved to %d %q", idx, name)
+		t.Fatalf("NextPage wrap on soundfont = %d %q, want 0 MAIN", idx, name)
 	}
-	w := f.screen.last(t)
-	if w.line1 != "(native only)" {
-		t.Errorf("blocked switch screen line1 = %q, want %q", w.line1, "(native only)")
+	if w := f.screen.last(t); w.line1 != "MAIN" || w.line2 != "Page 1/2" {
+		t.Errorf("MAIN wrap screen = %q/%q, want MAIN/Page 1/2", w.line1, w.line2)
 	}
-	f.pg.PrevPage()
-	if idx, _ := f.pg.CurrentPage(); idx != 0 {
-		t.Fatalf("PrevPage on soundfont moved to %d", idx)
+	f.pg.PrevPage() // back to MSTR
+	if idx, name := f.pg.CurrentPage(); idx != 1 || name != "MSTR" {
+		t.Fatalf("PrevPage on soundfont = %d %q, want 1 MSTR", idx, name)
+	}
+	f.pg.PrevPage() // and home to MAIN
+	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "MAIN" {
+		t.Fatalf("PrevPage on soundfont = %d %q, want 0 MAIN", idx, name)
 	}
 
 	// Knobs 1-4 (global volume/reverb/comp/pedal) stay live.
@@ -831,16 +901,46 @@ func TestNonNativeGating(t *testing.T) {
 	if w := f.screen.last(t); w.line1 != "Master" {
 		t.Errorf("screen line1 = %q, want Master", w.line1)
 	}
+
+	// The MSTR page is fully live off native: the comp amount and the
+	// limiter ceiling both respond.
+	f.pg.NextPage() // MSTR
+	f.audio.reset()
+	f.screen.writes = nil
+	f.pg.HandleKnob(1, 1)
+	if f.audio.calls["SetMasteringCompressor"] != 1 {
+		t.Errorf("MSTR comp knob dead on soundfont: %v", f.audio.calls)
+	}
+	if w := f.screen.last(t); w.line1 != "Mstr Comp" {
+		t.Errorf("screen line1 = %q, want Mstr Comp", w.line1)
+	}
+	f.audio.reset()
+	f.screen.writes = nil
+	f.pg.HandleKnob(7, 1)
+	if f.audio.calls["SetLimiterCeilingDB"] != 1 {
+		t.Errorf("MSTR ceiling knob dead on soundfont: %v", f.audio.calls)
+	}
+	if w := f.screen.last(t); w.line1 != "Ceiling" {
+		t.Errorf("screen line1 = %q, want Ceiling", w.line1)
+	}
+
+	// MSTR knob 8 is unbound: fully inert.
+	f.audio.reset()
+	f.screen.writes = nil
+	f.pg.HandleKnob(8, 1)
+	if len(f.audio.calls) != 0 || len(f.screen.writes) != 0 {
+		t.Errorf("MSTR knob 8 not inert: calls=%v writes=%+v", f.audio.calls, f.screen.writes)
+	}
 }
 
 // TestPadIndicators pins the page-indicator painting: active page
-// bright, others dim, row 1 only, columns 5-7 and the patch row (0)
+// bright, others dim, row 1 only, columns 6-7 and the patch row (0)
 // untouched.
 func TestPadIndicators(t *testing.T) {
 	f := newNativeFixture(t)
 	f.pg.RefreshPads()
 
-	for col := 0; col < 5; col++ {
+	for col := 0; col < 6; col++ {
 		want := padPageAvailable
 		if col == 0 {
 			want = padPageActive
@@ -849,9 +949,9 @@ func TestPadIndicators(t *testing.T) {
 			t.Errorf("pad (1,%d) = %d, want %d", col, got, want)
 		}
 	}
-	for col := 5; col <= 7; col++ {
+	for col := 6; col <= 7; col++ {
 		if _, ok := f.pads.colors[padKey{PageIndicatorRow, col}]; ok {
-			t.Errorf("pad (1,%d) painted; columns 5-7 are reserved", col)
+			t.Errorf("pad (1,%d) painted; columns 6-7 are reserved", col)
 		}
 	}
 	for col := 0; col <= 7; col++ {
@@ -870,13 +970,14 @@ func TestPadIndicators(t *testing.T) {
 	}
 }
 
-// TestOnPatchChangeRefresh: leaving the native engine snaps to page 0
-// and darkens pages 2-5; returning re-lights them (page stays 0 — page
-// persistence per patch is deferred, ROADMAP §3.1).
+// TestOnPatchChangeRefresh: leaving the native engine snaps to page 0;
+// the pads then show the two live pages (MAIN active, MSTR available)
+// with the native-only pages dark. Returning re-lights all six (page
+// stays 0 — page persistence per patch is deferred, ROADMAP §3.1).
 func TestOnPatchChangeRefresh(t *testing.T) {
 	f := newNativeFixture(t)
 	f.pg.NextPage()
-	f.pg.NextPage() // FILTER
+	f.pg.NextPage() // OSC
 	if idx, _ := f.pg.CurrentPage(); idx != 2 {
 		t.Fatalf("setup: page %d, want 2", idx)
 	}
@@ -888,7 +989,10 @@ func TestOnPatchChangeRefresh(t *testing.T) {
 	if got := f.pads.colors[padKey{PageIndicatorRow, 0}]; got != padPageActive {
 		t.Errorf("pad (1,0) = %d, want active", got)
 	}
-	for col := 1; col < 5; col++ {
+	if got := f.pads.colors[padKey{PageIndicatorRow, 1}]; got != padPageAvailable {
+		t.Errorf("pad (1,1) = %d, want available %d", got, padPageAvailable)
+	}
+	for col := 2; col < 6; col++ {
 		if got := f.pads.colors[padKey{PageIndicatorRow, col}]; got != padPageUnavailable {
 			t.Errorf("pad (1,%d) = %d, want unavailable %d", col, got, padPageUnavailable)
 		}
@@ -898,7 +1002,7 @@ func TestOnPatchChangeRefresh(t *testing.T) {
 	if idx, _ := f.pg.CurrentPage(); idx != 0 {
 		t.Fatalf("after native re-select: page %d, want 0", idx)
 	}
-	for col := 1; col < 5; col++ {
+	for col := 1; col < 6; col++ {
 		if got := f.pads.colors[padKey{PageIndicatorRow, col}]; got != padPageAvailable {
 			t.Errorf("pad (1,%d) = %d, want available %d", col, got, padPageAvailable)
 		}
@@ -940,7 +1044,7 @@ func TestTogglePlay(t *testing.T) {
 // and moves one state per detent regardless of tick magnitude.
 func TestVoiceModeCycleWraps(t *testing.T) {
 	f := newNativeFixture(t)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		f.pg.NextPage()
 	} // LFO/MOD
 
@@ -973,13 +1077,19 @@ func TestHandleKnobBounds(t *testing.T) {
 	}
 }
 
-// TestPageDefsShape sanity-checks the table: 5 pages of 8 slots, every
+// TestPageDefsShape sanity-checks the table: 6 pages of 8 slots, every
 // bound slot has a step and a label that fits the 16-char display, and
 // unbound slots are fully zero.
 func TestPageDefsShape(t *testing.T) {
 	defs := pageDefs()
-	if len(defs) != 5 {
-		t.Fatalf("pages = %d, want 5", len(defs))
+	if len(defs) != 6 {
+		t.Fatalf("pages = %d, want 6", len(defs))
+	}
+	if defs[1].Name != "MSTR" || !defs[1].AlwaysLive {
+		t.Errorf("page index 1 = %q alwaysLive=%v, want MSTR/true", defs[1].Name, defs[1].AlwaysLive)
+	}
+	if defs[0].Name != "MAIN" || !defs[0].AlwaysLive {
+		t.Errorf("page index 0 = %q alwaysLive=%v, want MAIN/true", defs[0].Name, defs[0].AlwaysLive)
 	}
 	for pi, page := range defs {
 		if page.Name == "" || len(page.Name) > 16 {
@@ -1033,6 +1143,7 @@ func TestKnobPersistsSynthBlock(t *testing.T) {
 // writer lock.
 func TestKnobComposesWithConcurrentMergeSynth(t *testing.T) {
 	f := newNativeFixture(t)
+	f.pg.NextPage()
 	f.pg.NextPage() // OSC page: knob 1 = Osc1 Level, knob 2 = Osc1 Detune
 
 	entered := make(chan struct{})
@@ -1122,7 +1233,10 @@ func TestCycleRepaintCannotRevertPatchGating(t *testing.T) {
 	if got := f.pads.colors[padKey{PageIndicatorRow, 0}]; got != padPageActive {
 		t.Errorf("pad (1,0) = %d, want active %d", got, padPageActive)
 	}
-	for col := 1; col < 5; col++ {
+	if got := f.pads.colors[padKey{PageIndicatorRow, 1}]; got != padPageAvailable {
+		t.Errorf("pad (1,1) = %d, want available %d", got, padPageAvailable)
+	}
+	for col := 2; col < 6; col++ {
 		if got := f.pads.colors[padKey{PageIndicatorRow, col}]; got != padPageUnavailable {
 			t.Errorf("pad (1,%d) = %d, want unavailable %d", col, got, padPageUnavailable)
 		}
@@ -1159,8 +1273,8 @@ func newFakeParamSource(labels ...string) *fakeParamSource {
 func (s *fakeParamSource) Params() []Param { return s.params }
 
 // TestParamBrowserPagesHostThenInstrument pins the browser order: the
-// curated host pages come first (MAIN only for a non-native patch), the
-// instrument's own parameters follow 8 per page, and the encoder-bank
+// curated host pages come first (MAIN and MSTR for a non-native patch),
+// the instrument's own parameters follow 8 per page, and the encoder-bank
 // buttons wrap around the whole list.
 func TestParamBrowserPagesHostThenInstrument(t *testing.T) {
 	f := newFixture(t, nativePatch, sfPatch)
@@ -1181,9 +1295,10 @@ func TestParamBrowserPagesHostThenInstrument(t *testing.T) {
 		name  string
 		flash string
 	}{
-		{1, "PARAMS", "1/2"},
-		{2, "PARAMS", "2/2"},
-		{0, "MAIN", "Page 1/1"}, // wrap
+		{1, "MSTR", "Page 2/2"},
+		{2, "PARAMS", "1/2"},
+		{3, "PARAMS", "2/2"},
+		{0, "MAIN", "Page 1/2"}, // wrap
 	}
 	for _, w := range want {
 		f.pg.NextParamPage()
@@ -1197,8 +1312,8 @@ func TestParamBrowserPagesHostThenInstrument(t *testing.T) {
 	}
 
 	f.pg.PrevParamPage()
-	if idx, name := f.pg.CurrentPage(); idx != 2 || name != "PARAMS" {
-		t.Fatalf("PrevParamPage wrap: page = %d %q, want 2 PARAMS", idx, name)
+	if idx, name := f.pg.CurrentPage(); idx != 3 || name != "PARAMS" {
+		t.Fatalf("PrevParamPage wrap: page = %d %q, want 3 PARAMS", idx, name)
 	}
 
 	// Knob 1 on the last parameter page drives the ninth parameter; the
@@ -1221,25 +1336,32 @@ func TestParamBrowserPagesHostThenInstrument(t *testing.T) {
 }
 
 // TestParamBrowserWithoutParamsIsCurated: a patch whose backend exposes no
-// parameters has a browser that is exactly the curated pages, so the
-// encoder-bank buttons behave like Scene paging (and refuse off native).
+// parameters has a browser that is exactly the curated host pages, so the
+// encoder-bank buttons behave like Scene paging.
 func TestParamBrowserWithoutParamsIsCurated(t *testing.T) {
 	f := newNativeFixture(t)
 	f.pg.NextParamPage()
-	if idx, name := f.pg.CurrentPage(); idx != 1 || name != "OSC" {
-		t.Fatalf("NextParamPage native = %d %q, want 1 OSC", idx, name)
+	if idx, name := f.pg.CurrentPage(); idx != 1 || name != "MSTR" {
+		t.Fatalf("NextParamPage native = %d %q, want 1 MSTR", idx, name)
 	}
-	if got := f.screen.last(t); got.line1 != "OSC" || got.line2 != "Page 2/5" {
-		t.Errorf("flash = %q/%q, want OSC/Page 2/5", got.line1, got.line2)
+	if got := f.screen.last(t); got.line1 != "MSTR" || got.line2 != "Page 2/6" {
+		t.Errorf("flash = %q/%q, want MSTR/Page 2/6", got.line1, got.line2)
 	}
 
-	// Non-native with no params: MAIN is the only page, so the switch is a
-	// (visible) no-op rather than a crash.
+	// Non-native with no params: the browser is the two always-live pages,
+	// so the next page is MSTR and the one after wraps to MAIN.
 	f2 := newFixture(t, sfPatch)
 	f2.pg.OnPatchChange("soundfont")
 	f2.pg.NextParamPage()
+	if idx, name := f2.pg.CurrentPage(); idx != 1 || name != "MSTR" {
+		t.Fatalf("NextParamPage soundfont = %d %q, want 1 MSTR", idx, name)
+	}
+	if got := f2.screen.last(t); got.line1 != "MSTR" || got.line2 != "Page 2/2" {
+		t.Errorf("flash = %q/%q, want MSTR/Page 2/2", got.line1, got.line2)
+	}
+	f2.pg.NextParamPage()
 	if idx, name := f2.pg.CurrentPage(); idx != 0 || name != "MAIN" {
-		t.Fatalf("NextParamPage soundfont = %d %q, want 0 MAIN", idx, name)
+		t.Fatalf("NextParamPage wrap soundfont = %d %q, want 0 MAIN", idx, name)
 	}
 }
 
@@ -1249,9 +1371,10 @@ func TestParamBrowserClampsOnPatchChange(t *testing.T) {
 	f := newFixture(t, nativePatch, sfPatch)
 	f.pg.AttachParams(newFakeParamSource("p1", "p2"))
 	f.pg.OnPatchChange("clap")
-	f.pg.NextParamPage()
-	if idx, _ := f.pg.CurrentPage(); idx != 1 {
-		t.Fatalf("page = %d, want 1 (parameter page)", idx)
+	f.pg.NextParamPage() // MSTR host page
+	f.pg.NextParamPage() // the single parameter page
+	if idx, _ := f.pg.CurrentPage(); idx != 2 {
+		t.Fatalf("page = %d, want 2 (parameter page)", idx)
 	}
 	f.pg.OnPatchChange("native")
 	if idx, name := f.pg.CurrentPage(); idx != 0 || name != "MAIN" {
@@ -1265,7 +1388,8 @@ func TestParamBrowserPads(t *testing.T) {
 	f := newFixture(t, sfPatch)
 	f.pg.AttachParams(newFakeParamSource("a", "b", "c"))
 	f.pg.OnPatchChange("clap")
-	f.pg.NextParamPage() // page 1, parameter page 0 of 1
+	f.pg.NextParamPage() // MSTR host page
+	f.pg.NextParamPage() // page 2, parameter page 0 of 1
 	if got := f.pads.colors[padKey{PageIndicatorRow, 0}]; got != padPageActive {
 		t.Errorf("pad (1,0) = %d, want active %d", got, padPageActive)
 	}
