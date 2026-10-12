@@ -340,8 +340,10 @@ in `internal/launchkey/driver/`):
 
 ### 2.1 Knob pages — the central concept
 
-8 encoders, ~30 synth parameters → we need pages. Five pages cover the
-classic Minimoog control set comfortably:
+8 encoders, ~30 synth parameters → we need pages. Six pages cover the
+classic Minimoog control set comfortably (the shipped set — MAIN / MSTR /
+OSC / FILTER / AMP / LFO-MOD — is the authoritative layout in
+`docs/USER_GUIDE.md`):
 
 | # | Page | Knob 1 | Knob 2 | Knob 3 | Knob 4 | Knob 5 | Knob 6 | Knob 7 | Knob 8 |
 |---|---|---|---|---|---|---|---|---|---|

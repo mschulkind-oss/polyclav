@@ -267,9 +267,9 @@ port = 10024
 # and the XR18 will receive `1` again — XR18 doesn't toggle by itself.
 # (Real toggle is on the v1 roadmap; for now treat as "tap to mute".)
 #
-# NOTE: the daemon reserves the bottom row's first five pads (columns
-# 0-4, notes 112-116) as knob-page indicator LEDs — see "Launchkey knob
-# pages" in docs/USER_GUIDE.md. Bind only columns 5-7 (notes 117-119),
+# NOTE: the daemon reserves the bottom row's first six pads (columns
+# 0-5, notes 112-117) as knob-page indicator LEDs — see "Launchkey knob
+# pages" in docs/USER_GUIDE.md. Bind only columns 6-7 (notes 118-119),
 # or a pad will both mute a mixer channel AND light as a page indicator.
 # [[osc.mixer.bindings]]
 # source_kind = "note"

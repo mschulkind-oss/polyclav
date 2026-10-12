@@ -22,14 +22,14 @@ it any time after a rebuild or before a release.
 The paged-knob UX ([ROADMAP §2](./ROADMAP.md#2-launchkey-native-ux), adapted) is code-complete and
 unit-tested against driver fakes, but has never met the device. Verify:
 
-- Scene ↑/↓ cycle the 5 pages (MAIN → OSC → FILTER → AMP → LFO/MOD,
-  wrapping) on a native patch; the page name flashes on the screen and
-  reverts to the patch name after ~800 ms.
-- Bottom-row pads 1-5 indicate pages: active page orange, others dim
+- Scene ↑/↓ cycle the 6 pages (MAIN → MSTR → OSC → FILTER → AMP →
+  LFO/MOD, wrapping) on a native patch; the page name flashes on the
+  screen and reverts to the patch name after ~800 ms.
+- Bottom-row pads 1-6 indicate pages: active page orange, others dim
   white. The indicator follows Scene presses and survives a device
   power-cycle/reconnect.
-- On a soundfont patch, Scene ↑/↓ flash "(native only)" and stay on
-  MAIN; bottom-row pads 2-5 go dark.
+- On a soundfont patch, Scene ↑/↓ cycle MAIN ↔ MSTR (both pages are
+  live on every patch type); bottom-row pads 3-6 go dark.
 - Knob 1 on each page sounds right on a native patch: MAIN=volume,
   OSC=osc1 level, FILTER=cutoff, AMP=amp attack, LFO/MOD=LFO rate
   (audible vibrato/wah once LFO>Pitch or LFO>Cutoff is raised).
@@ -72,12 +72,12 @@ With a CLAP patch selected, the two buttons beside the encoders
 curated pages into the plugin's own parameters. Verify:
 
 - With a CLAP patch loaded and its parameter list published, press
-  **encoder ▼** once: the screen flashes `MAIN` / `Page 1/1` first (only
-  the host-allocated MAIN page exists for a non-native patch), then on
+  **encoder ▼** once: the screen flashes `MAIN` / `Page 1/2` first (the
+  host pages reachable for a non-native patch are MAIN and MSTR), then on
   the next press flashes `PARAMS` / `1/N`. Press **encoder ▲** to walk
   back, wrapping at both ends.
 - The bottom-row indicator pads mark the parameter page position while
-  a `PARAMS` page is showing (columns 0–4 only; columns 5–7 stay
+  a `PARAMS` page is showing (columns 0–5 only; columns 6–7 stay
   dark so user mixer pads are not touched).
 - Turn an encoder on a `PARAMS` page: the screen shows the plugin's
   parameter name (module-prefixed when the name repeats across modules)
@@ -85,8 +85,8 @@ curated pages into the plugin's own parameters. Verify:
   patch switch (saved with the CLAP state). A stepped parameter moves one
   unit per detent; a wide continuous one sweeps in about one rotation.
 - With a soundfont, LV2 or native patch, **encoder ▼** stays on the
-  curated pages (native: the same five as Scene; others: MAIN only) — no
-  crash, no phantom parameter page.
+  curated pages (native: the same six as Scene; others: MAIN and MSTR) —
+  no crash, no phantom parameter page.
 - Names and values are legible on the two 16-byte lines (long plugin
   names truncate rather than wrap).
 

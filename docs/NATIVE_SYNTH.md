@@ -229,7 +229,7 @@ LFO/MOD knob 7) — the default is honest-to-Minimoog mono.
 
 Three control surfaces reach the synth today:
 
-- **The Launchkey knob pages** — five pages (MAIN / OSC / FILTER / AMP /
+- **The Launchkey knob pages** — six pages (MAIN / MSTR / OSC / FILTER / AMP /
   LFO/MOD) switched with Scene ▲/▼, covering nearly the whole table
   above; the bottom pad row shows which page is active and the screen
   pops each value as you turn. Code-complete but **pending hardware

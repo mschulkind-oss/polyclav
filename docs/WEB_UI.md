@@ -136,7 +136,7 @@ level meter:
 
 | Event | Cadence | Data keys |
 |---|---|---|
-| `levels` | ~30 Hz | `comp_min_gain_milli`, `comp_in_peak_milli`, `comp_out_peak_milli`, `limiter_min_gain_milli` |
+| `levels` | ~25 Hz | `comp_min_gain_milli`, `comp_in_peak_milli`, `comp_out_peak_milli`, `limiter_min_gain_milli` |
 
 Every field is a linear value multiplied by 1000. `limiter_min_gain_milli` and
 `comp_min_gain_milli` are worst-case gains (`1000` = unity / no reduction);

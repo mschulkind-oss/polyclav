@@ -10,9 +10,9 @@
 
 ## The problem
 
-`internal/controls/pages` is a **flat list** of five `PageDef`s (MAIN /
-OSC / FILTER / AMP / LFO-MOD), cycled by Scene ↑/↓, with pad row 1
-(columns 0–4) showing one indicator LED per page
+`internal/controls/pages` is a **flat list** of six `PageDef`s (MAIN /
+MSTR / OSC / FILTER / AMP / LFO-MOD), cycled by Scene ↑/↓, with pad row 1
+(columns 0–5) showing one indicator LED per page
 (`pages.go`'s `PageIndicatorRow`). This has a real, near-term ceiling,
 not a hypothetical one:
 
@@ -20,11 +20,11 @@ not a hypothetical one:
   / Drive / unbound — 8 of 8 knobs assigned. The drive pedal already
   used the one flexibility MAIN had (reassigning Cutoff, still
   reachable on FILTER).
-- **Pad indicators cap at 5 without a redesign.** `pages.go`'s own doc
-  comment: *"Columns 0..len(pages)-1 light up; columns 5..7 are left
-  unpainted for future per-page state pads."* Columns 5–7 are already
+- **Pad indicators cap at 6 without a redesign.** `pages.go`'s own doc
+  comment: *"Columns 0..pageIndicatorCols-1 light up; columns 6–7 are left
+  unpainted for future per-page state pads."* Columns 6–7 are already
   spoken for (`docs/CONFIGURABILITY.md`'s OSC/mixer bindings). Page
-  count is effectively capped at 5 today.
+  count is effectively capped at 6 today.
 - **More is coming, not less.** The delay pedal needs a page for 3
   params right now. `docs/VISION.md`'s roadmap already names an amp
   emulation (thread 1) and a tonewheel organ engine (thread 2) —
@@ -70,10 +70,10 @@ the same 800 ms popup mechanism `NextPage`/`PrevPage` already use for
 
 ### 1. VOICE — unchanged
 
-Today's MAIN / OSC / FILTER / AMP / LFO-MOD, verbatim. Native-synth
+Today's MAIN / MSTR / OSC / FILTER / AMP / LFO-MOD, verbatim. Native-synth
 only, same gating as today (a non-native patch can't reach it). This
 is `categoryDefs()`'s first entry wrapping the existing `pageDefs()`
-output with zero changes to any of its five pages — the whole point is
+output with zero changes to any of its six pages — the whole point is
 that VOICE users notice nothing different except that Track ←/→ now
 does something (it was inert before).
 
