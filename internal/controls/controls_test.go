@@ -43,6 +43,10 @@ type fakeAudio struct {
 	delayMix                         float32
 	cutoffHz                         float32
 	masteringComp, limiterCeilingDB  float32
+	masteringRatio, masteringRangeDB float32
+	masteringHeadroomDB              float32
+	masteringAttackMs                float32
+	masteringReleaseMs               float32
 	resonance, noise, glide          float32
 	feA, feD, feS, feR, feAmt        float32
 	aeA, aeD, aeS, aeR               float32
@@ -176,6 +180,36 @@ func (f *fakeAudio) SetLimiterCeilingDB(v float32) {
 	defer f.mu.Unlock()
 	f.limiterCeilingDB = v
 	f.limiterCalls++
+}
+
+func (f *fakeAudio) SetMasteringRatio(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringRatio = v
+}
+
+func (f *fakeAudio) SetMasteringRangeDB(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringRangeDB = v
+}
+
+func (f *fakeAudio) SetMasteringHeadroomDB(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringHeadroomDB = v
+}
+
+func (f *fakeAudio) SetMasteringAttackMs(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringAttackMs = v
+}
+
+func (f *fakeAudio) SetMasteringReleaseMs(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringReleaseMs = v
 }
 
 func (f *fakeAudio) SetNativeResonance(v float32) {

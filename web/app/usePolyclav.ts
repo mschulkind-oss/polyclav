@@ -135,6 +135,15 @@ function reducer(state: PolyclavState, a: Action): PolyclavState {
       if (typeof p.mastering_comp === "number") mastering.comp_amount = p.mastering_comp;
       if (typeof p.limiter_ceiling_db === "number")
         mastering.limiter_ceiling_db = p.limiter_ceiling_db;
+      if (typeof p.mastering_ratio === "number") mastering.mastering_ratio = p.mastering_ratio;
+      if (typeof p.mastering_range_db === "number")
+        mastering.mastering_range_db = p.mastering_range_db;
+      if (typeof p.mastering_headroom_db === "number")
+        mastering.mastering_headroom_db = p.mastering_headroom_db;
+      if (typeof p.mastering_attack_ms === "number")
+        mastering.mastering_attack_ms = p.mastering_attack_ms;
+      if (typeof p.mastering_release_ms === "number")
+        mastering.mastering_release_ms = p.mastering_release_ms;
       if (typeof p.master_volume === "number") mastering.master_volume = p.master_volume;
       let chainValues = foldBackend(state.chainValues, "params", params, a.skip);
       chainValues = foldBackend(chainValues, "mastering", mastering, a.skip);

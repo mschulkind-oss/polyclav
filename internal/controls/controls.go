@@ -42,6 +42,13 @@ type Audio interface {
 	SetNativeCutoffHz(float32)
 	SetMasteringCompressor(float32)
 	SetLimiterCeilingDB(float32)
+	// Mastering compressor character (ratio, threshold range, makeup
+	// headroom, attack/release ms). Live; seeded from config.
+	SetMasteringRatio(float32)
+	SetMasteringRangeDB(float32)
+	SetMasteringHeadroomDB(float32)
+	SetMasteringAttackMs(float32)
+	SetMasteringReleaseMs(float32)
 	SetNativeResonance(v float32)
 	SetNativeFilterEnv(a, d, s, r, amount float32)
 	SetNativeOsc(idx int, wave string, octave int, detuneCents, level float32) error
@@ -487,6 +494,9 @@ type Controls struct {
 	cutoffPos        float32
 	masteringComp    float32
 	limiterCeilingDB float32
+	// masteringCharacter caches the live character params (see
+	// MasteringCharacter); the engine atomics are write-only from here.
+	masteringCharacter MasteringCharacter
 	// synth caches the native-synth params of the CURRENT patch. The
 	// per-patch persistence contract (ROADMAP §3): every synth mutation
 	// writes the whole resulting block to the state store for the
@@ -1859,6 +1869,55 @@ const (
 	maxLimiterCeilingDB = 0
 )
 
+// Mastering compressor character ranges, mirroring the Rust clamps in
+// dsp/mastering.rs.
+const (
+	minMasteringRatio      = 1
+	maxMasteringRatio      = 20
+	maxMasteringRangeDB    = 48
+	maxMasteringHeadroomDB = 24
+	minMasteringAttackMs   = 0.1
+	maxMasteringAttackMs   = 200
+	minMasteringReleaseMs  = 1
+	maxMasteringReleaseMs  = 2000
+)
+
+// MasteringCharacter is the resolved mastering-compressor character.
+// Zero value is invalid; use DefaultMasteringCharacter.
+type MasteringCharacter struct {
+	Ratio      float32
+	RangeDB    float32
+	HeadroomDB float32
+	AttackMs   float32
+	ReleaseMs  float32
+}
+
+// MasteringCharacterOpts are optional character params. A nil field is
+// left unchanged, matching the web PATCH body's optional keys.
+type MasteringCharacterOpts struct {
+	Ratio      *float32
+	RangeDB    *float32
+	HeadroomDB *float32
+	AttackMs   *float32
+	ReleaseMs  *float32
+}
+
+// DefaultMasteringCharacter is the engine default, kept in sync with
+// dsp/mastering.rs's defaults.
+func DefaultMasteringCharacter() MasteringCharacter {
+	return MasteringCharacter{Ratio: 8, RangeDB: 30, HeadroomDB: 2, AttackMs: 2, ReleaseMs: 100}
+}
+
+func clampMasteringCharacter(ch MasteringCharacter) MasteringCharacter {
+	return MasteringCharacter{
+		Ratio:      clampRange(ch.Ratio, minMasteringRatio, maxMasteringRatio),
+		RangeDB:    clampRange(ch.RangeDB, 0, maxMasteringRangeDB),
+		HeadroomDB: clampRange(ch.HeadroomDB, 0, maxMasteringHeadroomDB),
+		AttackMs:   clampRange(ch.AttackMs, minMasteringAttackMs, maxMasteringAttackMs),
+		ReleaseMs:  clampRange(ch.ReleaseMs, minMasteringReleaseMs, maxMasteringReleaseMs),
+	}
+}
+
 // SetMastering applies mastering params to the engine and caches them
 // for status reads. Values clamp to the engine's ranges (comp amount to
 // [0, 1], limiter ceiling to [-12, 0] dB). Either pointer may be nil,
@@ -1902,6 +1961,72 @@ func (c *Controls) Mastering() (comp, ceiling float32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.masteringComp, c.limiterCeilingDB
+}
+
+// MasteringCharacter returns the cached character params (last
+// InitMasteringCharacter/SetMasteringCharacter values).
+func (c *Controls) MasteringCharacter() MasteringCharacter {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.masteringCharacter
+}
+
+func (c *Controls) applyMasteringCharacter(ch MasteringCharacter) {
+	c.audio.SetMasteringRatio(ch.Ratio)
+	c.audio.SetMasteringRangeDB(ch.RangeDB)
+	c.audio.SetMasteringHeadroomDB(ch.HeadroomDB)
+	c.audio.SetMasteringAttackMs(ch.AttackMs)
+	c.audio.SetMasteringReleaseMs(ch.ReleaseMs)
+}
+
+// SetMasteringCharacter applies the non-nil character params, clamps them
+// to the engine ranges, and publishes a "mastering" change carrying only
+// the keys that moved. Returns the resulting (clamped) character.
+func (c *Controls) SetMasteringCharacter(o MasteringCharacterOpts) MasteringCharacter {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	c.mu.Lock()
+	ch := c.masteringCharacter
+	data := make(map[string]any, 5)
+	if o.Ratio != nil {
+		ch.Ratio = clampRange(*o.Ratio, minMasteringRatio, maxMasteringRatio)
+		data["mastering_ratio"] = ch.Ratio
+	}
+	if o.RangeDB != nil {
+		ch.RangeDB = clampRange(*o.RangeDB, 0, maxMasteringRangeDB)
+		data["mastering_range_db"] = ch.RangeDB
+	}
+	if o.HeadroomDB != nil {
+		ch.HeadroomDB = clampRange(*o.HeadroomDB, 0, maxMasteringHeadroomDB)
+		data["mastering_headroom_db"] = ch.HeadroomDB
+	}
+	if o.AttackMs != nil {
+		ch.AttackMs = clampRange(*o.AttackMs, minMasteringAttackMs, maxMasteringAttackMs)
+		data["mastering_attack_ms"] = ch.AttackMs
+	}
+	if o.ReleaseMs != nil {
+		ch.ReleaseMs = clampRange(*o.ReleaseMs, minMasteringReleaseMs, maxMasteringReleaseMs)
+		data["mastering_release_ms"] = ch.ReleaseMs
+	}
+	c.masteringCharacter = ch
+	c.mu.Unlock()
+	c.applyMasteringCharacter(ch)
+	if len(data) > 0 {
+		c.hub.Publish(Change{Type: "mastering", Data: data})
+	}
+	return ch
+}
+
+// InitMasteringCharacter is the startup seed for the character params:
+// apply the config-file values and cache them WITHOUT publishing.
+func (c *Controls) InitMasteringCharacter(ch MasteringCharacter) {
+	c.applyMu.Lock()
+	defer c.applyMu.Unlock()
+	ch = clampMasteringCharacter(ch)
+	c.mu.Lock()
+	c.masteringCharacter = ch
+	c.mu.Unlock()
+	c.applyMasteringCharacter(ch)
 }
 
 // AdjustMasteringComp nudges the global mastering compressor amount by delta
@@ -1982,6 +2107,7 @@ type ParamsSnapshot struct {
 	CutoffPos, CutoffHz                    float32
 	MasterVolume                           float32
 	MasteringComp, LimiterCeilingDB        float32
+	MasteringCharacter                     MasteringCharacter
 	VelocityCurve                          string
 	Synth                                  SynthSnapshot
 }
@@ -2001,6 +2127,7 @@ func (c *Controls) Snapshot() ParamsSnapshot {
 	s.CutoffPos, s.CutoffHz = c.CutoffState()
 	s.MasterVolume = c.MasterVolume()
 	s.MasteringComp, s.LimiterCeilingDB = c.Mastering()
+	s.MasteringCharacter = c.MasteringCharacter()
 	s.VelocityCurve = c.VelocityLabel()
 	s.Synth = c.Synth()
 	return s

@@ -29,13 +29,14 @@ panel; see "Web dashboard" below.
   - native pure-Rust synth (`type = "native"`)
   - LV2 and CLAP plugins (`type = "lv2"` / `type = "clap"`)
 - DSP chain in the audio thread, in order:
-  `synth → drive_pedal → chorus → tremolo → analog_delay → input_comp → reverb → patch_gain → mastering_comp → master_gain → limiter → out`.
+  `synth → drive_pedal → chorus → tremolo → analog_delay → input_comp → reverb → patch_gain → master_gain → mastering_comp → limiter → out`.
   The first six stages are the reorderable pedals; `patch_gain`,
-  `mastering_comp`, `master_gain` and the `limiter` are a fixed tail.
+  `master_gain`, `mastering_comp` and the `limiter` are a fixed tail.
   `master_gain` is the per-patch Volume × global Master product (see
-  "Mastering & level matching"), so it sits before the limiter: at or below
-  unity it is a clean trim, above unity it is makeup gain the limiter
-  catches instead of clipping past the ceiling.
+  "Mastering & level matching"); it is the mastering compressor's input gain,
+  so it sits before the compressor and before the limiter: at or below unity
+  it is a clean trim, above unity it drives the compressor harder and the
+  limiter catches the peaks instead of clipping past the ceiling.
   The four pedals (drive, chorus, tremolo, analog delay) default to
   bit-exact bypass; only the drive pedal currently has a Launchkey knob
   (MAIN knob 4) — the other three are implemented and controllable via
@@ -569,21 +570,22 @@ Notes:
 - **MAIN knob 7 is Mstr Comp** — the global mastering compressor amount
   (the web Comp pedal's "Glue"). It is the master-bus counterpart to knob
   3's per-patch input compressor: stored globally, applied to the whole mix
-  on every patch type, and never reset by a patch switch. It levels the
-  performance (quiet parts up toward the loud ones) without adding level, so
-  it never pushes the chain into the limiter by itself — loudness is the
-  **Master** knob's job. (Native Drive
-  previously lived here; it is still on AMP knob 7.)
+  on every patch type, and never reset by a patch switch. It sets how far
+  below the limiter Ceiling the squash begins — at 0 there is no compression;
+  turning it up drops the threshold and squashes the mix into the headroom
+  under the Ceiling, lifting the body with it. It drives the peak to within
+  `headroom_db` of the Ceiling; past that the limiter is the fallback. (Native
+  Drive previously lived here; it is still on AMP knob 7.)
 - **MAIN knob 8 is Master** — Polyclav's own output level, stored
   globally (not per patch). The engine's master gain is the selected
   patch's *Volume* (knob 1) multiplied by *Master* (knob 8): knob 1 trims
   one patch, knob 8 turns the whole instrument down without editing any
   patch, and switching patches never changes it. 100% is unity and the
-  master goes to **400%** (+12 dB), so you can balance patches with knob 1
-  and then bring the whole board up — the loudness comes from here, not from
-  the compressor. The limiter engaging as you turn it up is normal and
-  wanted; see "Mastering & level matching". It is saved to `state.toml` and
-  survives a restart. It applies on every patch type.
+  master goes to **400%** (+12 dB). The master is the mastering compressor's
+  input gain (the drive), so it makes the chain louder *and* pushes the
+  compressor harder; the limiter catches the peaks. See "Mastering & level
+  matching". It is saved to `state.toml` and survives a restart. It applies
+  on every patch type.
 - With a **non-native patch** selected, only MAIN's knobs 1–4 (the
   global volume / reverb / comp / pedal) plus 7–8 (mastering comp and
   master) respond; the rest of the synth
@@ -647,15 +649,17 @@ offer the same cards:
   watch each note appear as an (in, out) dot on the curve. Apply for
   the session, or Save to write the curve into `config.toml` (see
   "Velocity curves" below).
-- **Mastering** — comp amount and limiter ceiling, live. The board's
-  **Master-out card** carries both volume stages side by side: **Patch**
-  (this patch's trim, MAIN knob 1) and **Master** (Polyclav's global
-  level, MAIN knob 8). They multiply — the engine master gain is
-  `patch × master` — so switching patches keeps the master and any patch
-  can be trimmed under it. The trim runs to 200% and the master to 400%
-  (100% = unity), and the gain
-  lands before the limiter, so pushing past 100% gets louder without
-  clipping past the Ceiling.
+- **Mastering** — comp amount, limiter ceiling, and the compressor's
+  character (ratio, threshold range, makeup headroom, attack/release), all
+  live. The character knobs sit on the Comp pedal's editor as the `Mstr …`
+  knobs, beside Glue (the comp amount). The board's **Master-out card**
+  carries both volume stages side by side: **Patch** (this patch's trim,
+  MAIN knob 1) and **Master** (Polyclav's global level, MAIN knob 8). They
+  multiply — the engine master gain is `patch × master` — so switching
+  patches keeps the master and any patch can be trimmed under it. The trim
+  runs to 200% and the master to 400% (100% = unity), and the gain is the
+  compressor's input drive, landing before it and before the limiter, so
+  pushing past 100% gets louder without clipping past the Ceiling.
 - **Audition** — clip picker, tempo slider, loop toggle, play/stop
   (see "Audition mode" below).
 - **Config** — view and edit `config.toml` in the browser. Saving
@@ -886,8 +890,9 @@ A typical real-world set ends up with the grand at `0`, a bright EP at
 `gain_db` is the set-and-forget, per-patch trim. For playing, the two
 live volume knobs are **Patch** (MAIN knob 1, stored per patch) and
 **Master** (MAIN knob 8, stored globally). The engine's master gain is
-their product — `patch × master` — applied after the pedals and after the
-mastering compressor, but **before the brick-wall limiter**.
+their product — `patch × master` — applied after the pedals and **before**
+the mastering compressor and the brick-wall limiter. It is the compressor's
+input gain (the drive), so turning it up pushes the compressor harder.
 
 100% is unity. The per-patch trim runs to **200%** (+6 dB) — enough to lift a
 quiet patch in a balance — and the master to **400%** (+12 dB), because the
@@ -909,8 +914,10 @@ If the master is all the way up and you still want more, raise the
 master 400% is the loudest the chain can be while the limiter still holds
 the Ceiling. Nothing above that is louder; it is only more clipped.
 
-The mastering compressor is a different tool: it does not add level (see
-"Mastering chain" below), it reshapes dynamics. Reach for the master first.
+The mastering compressor is a different tool: it squashes the loud parts into
+the headroom under the Ceiling, and its threshold-tied makeup lifts the body
+with them (see "Mastering chain" below). Reach for the master for more level;
+reach for the comp for more squash.
 
 `gain_db` and the Live Volume knobs stack: a patch with `gain_db = +6`
 and Volume 100% is already twice as hot as a `gain_db = 0` patch at
@@ -919,37 +926,45 @@ select time, and the Volume knob for on-the-fly balance.
 
 ### Mastering chain (`[mastering]`)
 
-After the six pedals, every patch goes through its `gain_db` trim, the
-mastering compressor, and the live master gain, before a brick-wall limiter
-sets the output ceiling. The defaults are sensible — most users will never
-touch this block — but it is there to shape dynamics, and it does **not**
-add level: loudness is the master knob's job.
+After the six pedals, every patch goes through its `gain_db` trim, the **live
+master gain** (the compressor's input gain — the drive), the mastering
+compressor, and finally a brick-wall limiter that sets the output ceiling. The
+compressor is the primary dynamics device; the limiter is the fallback.
 
 ```toml
 [mastering]
-comp_amount        = 0.25    # 0..1 mastering compressor: 0 = bypass; turning
-                              # it up lowers the threshold (to -30 dBFS) and
-                              # raises the ratio (2:1 -> 10:1). 2 ms attack,
-                              # 100 ms release. 0.25 is gentle glue; 1.0 is a
-                              # hard leveler.
-limiter_ceiling_db = -0.3    # -12..0 dBFS brick-wall limiter ceiling.
+comp_amount        = 0.25    # 0..1: the threshold depth. 0 = at the Ceiling
+                              # (no compression); turning it up drops the
+                              # threshold toward `range_db` below it.
+limiter_ceiling_db = -0.3    # -12..0 dBFS brick-wall ceiling, and the
+                              # compressor's threshold origin.
+ratio              = 8       # fixed high ratio (1..20)
+range_db           = 30      # threshold reach at comp_amount = 1 (0..48 dB)
+headroom_db        = 2       # gap the makeup leaves under the Ceiling (0..24)
+attack_ms          = 2       # 0.1..200
+release_ms         = 100     # 1..2000
 ```
 
-**What `comp_amount` does and does not do.** It levels the performance:
-it measures the recent peak and applies just enough makeup to put that peak
-back where it was, so turning it up lifts the quiet parts toward the loud
-ones without pushing anything new into the limiter. That means:
+**What the compressor does.** The threshold starts *at* the limiter Ceiling
+and comes down as you turn `comp_amount` up: at 0 nothing is compressed, at 1
+the squash begins `range_db` dB down. The ratio is fixed and high, so above
+the threshold the mix is squashed into the window between the threshold and
+the Ceiling. The makeup is tied to the threshold — it lifts the mix by the
+reduction a signal at the Ceiling would take, minus `headroom_db`. That means:
 
-- It **never clips on its own**, at any setting — 100% with Master at 100%
-is a clean, dense sound.
-- It **does not make the mix louder** in any simple way. A compressor only
-adds loudness by reducing dynamics, so its effect is proportional to how
-much dynamic range you are playing with: a dynamic piano part gains several
-dB, a sustained organ pad gains almost none. If you want more level, turn up
-the **Master** (or the per-patch Volume) — that is what the limiter is
-for. This codebase measured the difference: a wide-velocity phrase moves
-less than 0.5 dB across the whole `comp_amount` range, while the master
-range is worth +12 dB.
+- Turning it up **levels and lifts**: louder *and* more squashed, not one or
+the other. On its own it brings the peak to within `headroom_db` of the
+Ceiling and no further; past that the limiter is the fallback.
+- Because the makeup is tied to the threshold rather than tracking the signal,
+the curve is predictable — the same input lands in the same place for a given
+setting. The price is that every patch is normalized toward the Ceiling, so
+quiet material is lifted as far as loud, and the Master's own effect on level
+is only `1/ratio` per dB above the threshold. Raise `headroom_db` if you want
+the Master to have more range before the peak reaches the limiter.
+
+All seven values are **live**: the dashboard's comp editor (the `Mstr …` knobs)
+and `PATCH /api/mastering` set them without a restart; `[mastering]` only seeds
+the boot values.
 
 The limiter is **always on** as a peak-safety net, even when
 `comp_amount = 0`. It is lookahead-free (zero added latency), with a

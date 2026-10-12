@@ -258,11 +258,28 @@ func main() {
 	// old gentle-4:1 default.
 	var compAmount float32 = 0.25
 	var limiterCeilingDB float32 = -0.3
+	ch := controls.DefaultMasteringCharacter()
 	if cfg.Mastering != nil {
 		compAmount = cfg.Mastering.CompAmount
 		limiterCeilingDB = cfg.Mastering.LimiterCeilingDB
+		if cfg.Mastering.Ratio != nil {
+			ch.Ratio = *cfg.Mastering.Ratio
+		}
+		if cfg.Mastering.RangeDB != nil {
+			ch.RangeDB = *cfg.Mastering.RangeDB
+		}
+		if cfg.Mastering.HeadroomDB != nil {
+			ch.HeadroomDB = *cfg.Mastering.HeadroomDB
+		}
+		if cfg.Mastering.AttackMs != nil {
+			ch.AttackMs = *cfg.Mastering.AttackMs
+		}
+		if cfg.Mastering.ReleaseMs != nil {
+			ch.ReleaseMs = *cfg.Mastering.ReleaseMs
+		}
 	}
 	ctl.InitMastering(compAmount, limiterCeilingDB)
+	ctl.InitMasteringCharacter(ch)
 
 	// pushSynth is the synth fork of the MIDI funnel — keyboard and
 	// audition-player events both land here. The velocity curve applies to
@@ -992,6 +1009,11 @@ func (audioBackend) SaveClapState() ([]byte, error)   { return audio.SaveClapSta
 func (audioBackend) SetNativeCutoffHz(hz float32)     { audio.SetNativeCutoffHz(hz) }
 func (audioBackend) SetMasteringCompressor(v float32) { audio.SetMasteringCompressor(v) }
 func (audioBackend) SetLimiterCeilingDB(db float32)   { audio.SetLimiterCeilingDB(db) }
+func (audioBackend) SetMasteringRatio(v float32)      { audio.SetMasteringRatio(v) }
+func (audioBackend) SetMasteringRangeDB(v float32)    { audio.SetMasteringRangeDB(v) }
+func (audioBackend) SetMasteringHeadroomDB(v float32) { audio.SetMasteringHeadroomDB(v) }
+func (audioBackend) SetMasteringAttackMs(v float32)   { audio.SetMasteringAttackMs(v) }
+func (audioBackend) SetMasteringReleaseMs(v float32)  { audio.SetMasteringReleaseMs(v) }
 func (audioBackend) SetNativeResonance(v float32)     { audio.SetNativeResonance(v) }
 func (audioBackend) SetNativeFilterEnv(a, d, s, r, amount float32) {
 	audio.SetNativeFilterEnv(a, d, s, r, amount)

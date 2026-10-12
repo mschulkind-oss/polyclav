@@ -13,6 +13,7 @@ import { Stomp } from "@/components/pedalboard/Stomp";
 import { TremOptoViz } from "@/components/pedalboard/TremOptoViz";
 import { formatValue } from "@/lib/pedalboard/knobMath";
 import type { ParamSpec, PedalSpec } from "@/lib/pedalboard/model";
+import { MASTER_COMP_PARAMS } from "@/lib/pedalboard/model";
 
 /** Min–max caption under an editor knob, e.g. "1 – 1000 ms" / "0 – 90%". */
 export function rangeLabel(spec: ParamSpec): string {
@@ -125,10 +126,11 @@ export function PedalEditor({
   onReset,
   onBack,
 }: PedalEditorProps) {
+  const params = pedal.id === "comp" ? [...pedal.params, ...MASTER_COMP_PARAMS] : pedal.params;
   const v = (id: string): number =>
-    values[id] ?? pedal.params.find((p) => p.id === id)?.defaultValue ?? 0;
+    values[id] ?? params.find((p) => p.id === id)?.defaultValue ?? 0;
   const sigId = SIGNATURE_PARAM[pedal.id];
-  const caption = pedal.params.map((p) => `${formatValue(v(p.id), p)} ${p.label}`).join(" · ");
+  const caption = params.map((p) => `${formatValue(v(p.id), p)} ${p.label}`).join(" · ");
   const accent = { "--pb-accent": `var(${pedal.accentVar})` } as CSSProperties;
   return (
     <>
@@ -179,7 +181,7 @@ export function PedalEditor({
 
           <div>
             <div className="pb-hero-knobs">
-              {pedal.params.map((spec) => {
+              {params.map((spec) => {
                 const isSig = spec.id === sigId;
                 return (
                   <div key={spec.id} className="pb-kgroup">

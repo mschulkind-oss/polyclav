@@ -184,6 +184,14 @@ type XR18Config struct {
 type MasteringConfig struct {
 	CompAmount       float32 `toml:"comp_amount"`        // 0..1, 0 = bypass
 	LimiterCeilingDB float32 `toml:"limiter_ceiling_db"` // dBFS, default -0.3
+	// Character params. Pointers so an omitted field keeps the engine
+	// default (see controls.DefaultMasteringCharacter) rather than
+	// becoming zero.
+	Ratio      *float32 `toml:"ratio"`       // 1..20, default 8 = 8:1
+	RangeDB    *float32 `toml:"range_db"`    // 0..48, default 30
+	HeadroomDB *float32 `toml:"headroom_db"` // 0..24, default 2
+	AttackMs   *float32 `toml:"attack_ms"`   // 0.1..200, default 2
+	ReleaseMs  *float32 `toml:"release_ms"`  // 1..2000, default 100
 }
 
 // PatchConfig is one [[patches]] entry in config.toml. The patches package

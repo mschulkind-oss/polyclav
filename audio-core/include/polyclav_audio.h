@@ -159,6 +159,11 @@ typedef struct {
     float patch_gain;
     float mastering_amount;
     float limiter_ceiling_db;
+    float mastering_ratio;
+    float mastering_range_db;
+    float mastering_headroom_db;
+    float mastering_attack_ms;
+    float mastering_release_ms;
     float drive_pedal_amount;
     float analog_delay_time_ms;
     float analog_delay_feedback;
@@ -230,6 +235,15 @@ void polyclav_dsp_set_mastering_compressor(float amount);
 
 /* Brick-wall limiter ceiling in dBFS. Default -0.3, clamped to [-12.0, 0.0]. */
 void polyclav_dsp_set_limiter_ceiling_db(float db);
+
+/* Mastering compressor character. Ratio is dimensionless (1..20, default 8);
+ * range and headroom are dB (default 30 and 2); attack/release are ms
+ * (default 2 and 100). All clamped in Rust. */
+void polyclav_dsp_set_mastering_ratio(float ratio);
+void polyclav_dsp_set_mastering_range_db(float db);
+void polyclav_dsp_set_mastering_headroom_db(float db);
+void polyclav_dsp_set_mastering_attack_ms(float ms);
+void polyclav_dsp_set_mastering_release_ms(float ms);
 
 /* Drive-pedal amount in [0.0, 1.0]. Default 0.0 = bit-exact bypass. Runs
  * in the shared post-synth DSP chain (before patch gain), so it applies

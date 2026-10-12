@@ -49,6 +49,37 @@ export const PARAM_WIRING: Record<string, ParamWire> = {
   // Comp pedal — main amount is the per-patch compressor; glue is the master glue.
   "comp.amount": { endpoint: "params", field: "compressor", toEngine: pct, fromEngine: unpct },
   "comp.glue": { endpoint: "mastering", field: "comp_amount", toEngine: pct, fromEngine: unpct },
+  // Mastering compressor character (global; shown in the comp pedal's editor).
+  "comp.mstr_ratio": {
+    endpoint: "mastering",
+    field: "mastering_ratio",
+    toEngine: same,
+    fromEngine: same,
+  },
+  "comp.mstr_range": {
+    endpoint: "mastering",
+    field: "mastering_range_db",
+    toEngine: same,
+    fromEngine: same,
+  },
+  "comp.mstr_headroom": {
+    endpoint: "mastering",
+    field: "mastering_headroom_db",
+    toEngine: same,
+    fromEngine: same,
+  },
+  "comp.mstr_attack": {
+    endpoint: "mastering",
+    field: "mastering_attack_ms",
+    toEngine: same,
+    fromEngine: same,
+  },
+  "comp.mstr_release": {
+    endpoint: "mastering",
+    field: "mastering_release_ms",
+    toEngine: same,
+    fromEngine: same,
+  },
   // Reverb pedal — only the wet send is a live engine param today.
   "reverb.mix": { endpoint: "params", field: "reverb", toEngine: pct, fromEngine: unpct },
   // Master-out card. The two volume stages multiply: Patch is this patch's

@@ -201,12 +201,19 @@ type OfflineMIDIEvent struct {
 // delay, master volume, ...) — not the native synth's own voice params
 // (cutoff, oscillators, ...), a separate, backend-specific concern.
 type ChainParams struct {
-	MasterVolume        float32
-	CompAmount          float32
-	ReverbMix           float32
-	PatchGain           float32
-	MasteringAmount     float32
-	LimiterCeilingDB    float32
+	MasterVolume     float32
+	CompAmount       float32
+	ReverbMix        float32
+	PatchGain        float32
+	MasteringAmount  float32
+	LimiterCeilingDB float32
+	// Mastering compressor character, live. Ratio is dimensionless;
+	// range/headroom are dB; attack/release are milliseconds.
+	MasteringRatio      float32
+	MasteringRangeDB    float32
+	MasteringHeadroomDB float32
+	MasteringAttackMs   float32
+	MasteringReleaseMs  float32
 	DrivePedalAmount    float32
 	AnalogDelayTimeMs   float32
 	AnalogDelayFeedback float32
@@ -232,6 +239,11 @@ func NewChainParams() ChainParams {
 		PatchGain:           nan,
 		MasteringAmount:     nan,
 		LimiterCeilingDB:    nan,
+		MasteringRatio:      nan,
+		MasteringRangeDB:    nan,
+		MasteringHeadroomDB: nan,
+		MasteringAttackMs:   nan,
+		MasteringReleaseMs:  nan,
 		DrivePedalAmount:    nan,
 		AnalogDelayTimeMs:   nan,
 		AnalogDelayFeedback: nan,
@@ -282,6 +294,11 @@ func RenderOfflineEvents(patchType, patchRef, pluginID string, chainParams *Chai
 			patch_gain:            C.float(chainParams.PatchGain),
 			mastering_amount:      C.float(chainParams.MasteringAmount),
 			limiter_ceiling_db:    C.float(chainParams.LimiterCeilingDB),
+			mastering_ratio:       C.float(chainParams.MasteringRatio),
+			mastering_range_db:    C.float(chainParams.MasteringRangeDB),
+			mastering_headroom_db: C.float(chainParams.MasteringHeadroomDB),
+			mastering_attack_ms:   C.float(chainParams.MasteringAttackMs),
+			mastering_release_ms:  C.float(chainParams.MasteringReleaseMs),
 			drive_pedal_amount:    C.float(chainParams.DrivePedalAmount),
 			analog_delay_time_ms:  C.float(chainParams.AnalogDelayTimeMs),
 			analog_delay_feedback: C.float(chainParams.AnalogDelayFeedback),
@@ -668,6 +685,38 @@ func SetMasteringCompressor(amount float32) {
 // clamped to [-12, 0] in Rust.
 func SetLimiterCeilingDB(db float32) {
 	C.polyclav_dsp_set_limiter_ceiling_db(C.float(db))
+}
+
+// SetMasteringRatio sets the mastering compressor ratio. Default 8,
+// clamped to [1, 20] in Rust.
+func SetMasteringRatio(ratio float32) {
+	C.polyclav_dsp_set_mastering_ratio(C.float(ratio))
+}
+
+// SetMasteringRangeDB sets how far the mastering compressor's threshold
+// reaches below the ceiling at full amount. Default 30, clamped to
+// [0, 48] in Rust.
+func SetMasteringRangeDB(db float32) {
+	C.polyclav_dsp_set_mastering_range_db(C.float(db))
+}
+
+// SetMasteringHeadroomDB sets the headroom the mastering compressor's
+// fixed makeup leaves under the ceiling. Default 2, clamped to [0, 24]
+// in Rust.
+func SetMasteringHeadroomDB(db float32) {
+	C.polyclav_dsp_set_mastering_headroom_db(C.float(db))
+}
+
+// SetMasteringAttackMs sets the mastering compressor attack in
+// milliseconds. Default 2, clamped to [0.1, 200] in Rust.
+func SetMasteringAttackMs(ms float32) {
+	C.polyclav_dsp_set_mastering_attack_ms(C.float(ms))
+}
+
+// SetMasteringReleaseMs sets the mastering compressor release in
+// milliseconds. Default 100, clamped to [1, 2000] in Rust.
+func SetMasteringReleaseMs(ms float32) {
+	C.polyclav_dsp_set_mastering_release_ms(C.float(ms))
 }
 
 // SetDrivePedal amount in [0.0, 1.0]. 0 = bypass, 1 = maximum drive.

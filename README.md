@@ -46,12 +46,14 @@ over SysEx.
   a loud grand doesn't blow your ears off.
 - **Soundfont hot-swap** — switch patches without dropping audio.
 - **DSP chain** in the audio thread, in order:
-  `synth → drive_pedal → chorus → tremolo → analog_delay → input_comp → reverb → patch_gain → mastering_comp → master_gain → limiter → out`.
+  `synth → drive_pedal → chorus → tremolo → analog_delay → input_comp → reverb → patch_gain → master_gain → mastering_comp → limiter → out`.
   The first six stages are the reorderable pedals; the tail is fixed.
-  `master_gain` is the per-patch Volume × global Master product, applied
-  before the limiter, so the trim (200%) and master (400%) raise level into
-  the limiter — hitting it when loud is expected. The mastering compressor
-  shapes dynamics without adding level. Knobs 1/2/3/4 drive patch
+  `master_gain` is the per-patch Volume × global Master product, applied as
+  the mastering compressor's input gain, so the trim (200%) and master (400%)
+  drive the compressor harder and the limiter catches the peaks. The
+  mastering compressor is the primary squash — its threshold starts at the
+  limiter Ceiling and drops as you turn it up (fixed ratio, threshold-tied
+  makeup) — and the limiter is the fallback. Knobs 1/2/3/4 drive patch
   volume, reverb, the input compressor, and a Tube-Screamer-style drive
   pedal live — all four work on every patch type, soundfont or native. The
   chorus, tremolo, and analog-delay

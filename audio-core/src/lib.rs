@@ -669,15 +669,24 @@ fn drain_synth_reload_queue_off_rt() {
 /// ceiling dB) go beyond it. See each setter for the range.
 pub(crate) struct DspParams {
     /// Master gain (`Volume * Master`, folded by Go). 0.0 mutes; 1.0 is
-    /// unity. Clamped to [0, 8] — up to +18 dB of makeup gain, applied
-    /// before the limiter so more than unity drives the limiter rather
-    /// than clipping downstream.
+    /// unity. Clamped to [0, 8] — up to +18 dB of drive into the mastering
+    /// compressor, which squashes it toward the ceiling; the limiter behind
+    /// that is only the fallback.
     master_volume: AtomicU32,
     comp_amount: AtomicU32,
     reverb_mix: AtomicU32,
     patch_gain: AtomicU32,
     mastering_amount: AtomicU32,
     limiter_ceiling_db: AtomicU32,
+    /// Mastering compressor character, live: ratio, threshold range (how far
+    /// the threshold reaches below the ceiling at full amount), makeup
+    /// headroom, and attack/release times, in ms. Clamped per setter; see
+    /// `dsp::mastering` for the ranges.
+    mastering_ratio: AtomicU32,
+    mastering_range_db: AtomicU32,
+    mastering_headroom_db: AtomicU32,
+    mastering_attack_ms: AtomicU32,
+    mastering_release_ms: AtomicU32,
     /// Drive-pedal amount in [0, 1], f32 bits. Default 0.0 — the stage
     /// is bypassed bit-exactly (regression guarantee), matching every
     /// other knob's default-off convention. Runs in the shared
@@ -730,7 +739,7 @@ pub(crate) struct DspParams {
     /// historic fixed order, so the default render is unchanged. Written
     /// by Go via `polyclav_dsp_set_fx_order`, validated to a permutation
     /// at the boundary and again (defensively) on read. The master tail
-    /// (patch gain → mastering → master gain → limiter) is NOT part of
+    /// (patch gain → master gain → mastering → limiter) is NOT part of
     /// this ordering — it is a fixed stage after the six pedals.
     fx_order: AtomicU32,
     /// Native synth filter cutoff in Hz, written by Go whenever the
@@ -883,6 +892,15 @@ impl DspParams {
             patch_gain: AtomicU32::new(1.0_f32.to_bits()),
             mastering_amount: AtomicU32::new(0.0_f32.to_bits()),
             limiter_ceiling_db: AtomicU32::new((-0.3_f32).to_bits()),
+            mastering_ratio: AtomicU32::new(crate::dsp::mastering::DEFAULT_RATIO.to_bits()),
+            mastering_range_db: AtomicU32::new(crate::dsp::mastering::DEFAULT_RANGE_DB.to_bits()),
+            mastering_headroom_db: AtomicU32::new(
+                crate::dsp::mastering::DEFAULT_HEADROOM_DB.to_bits(),
+            ),
+            mastering_attack_ms: AtomicU32::new(crate::dsp::mastering::DEFAULT_ATTACK_MS.to_bits()),
+            mastering_release_ms: AtomicU32::new(
+                crate::dsp::mastering::DEFAULT_RELEASE_MS.to_bits(),
+            ),
             drive_pedal_amount: AtomicU32::new(0.0_f32.to_bits()),
             analog_delay_time_ms: AtomicU32::new(300.0_f32.to_bits()),
             analog_delay_feedback: AtomicU32::new(0.0_f32.to_bits()),
@@ -980,6 +998,21 @@ impl DspParams {
     }
     pub fn limiter_ceiling_db(&self) -> f32 {
         Self::load(&self.limiter_ceiling_db)
+    }
+    pub fn mastering_ratio(&self) -> f32 {
+        Self::load(&self.mastering_ratio)
+    }
+    pub fn mastering_range_db(&self) -> f32 {
+        Self::load(&self.mastering_range_db)
+    }
+    pub fn mastering_headroom_db(&self) -> f32 {
+        Self::load(&self.mastering_headroom_db)
+    }
+    pub fn mastering_attack_ms(&self) -> f32 {
+        Self::load(&self.mastering_attack_ms)
+    }
+    pub fn mastering_release_ms(&self) -> f32 {
+        Self::load(&self.mastering_release_ms)
     }
     pub fn drive_pedal_amount(&self) -> f32 {
         Self::load(&self.drive_pedal_amount)
@@ -1133,9 +1166,9 @@ impl DspParams {
     }
 
     /// Master gain in [0, 8]. Unlike the normalized knobs this carries
-    /// headroom above unity (up to +18 dB) so the global level can make up
-    /// for channels balanced below full; it is applied before the limiter,
-    /// which stays the final brick wall.
+    /// headroom above unity (up to +18 dB) so the global level can drive the
+    /// mastering compressor hard; it is applied as input gain before that
+    /// compressor, and the limiter stays the final brick wall fallback.
     pub fn set_master_volume(&self, v: f32) {
         Self::store_clamped(&self.master_volume, v, 0.0, MAX_MASTER_VOLUME);
     }
@@ -1153,6 +1186,21 @@ impl DspParams {
     }
     pub fn set_limiter_ceiling_db(&self, v: f32) {
         Self::store_clamped(&self.limiter_ceiling_db, v, -12.0, 0.0);
+    }
+    pub fn set_mastering_ratio(&self, v: f32) {
+        Self::store_clamped(&self.mastering_ratio, v, 1.0, 20.0);
+    }
+    pub fn set_mastering_range_db(&self, v: f32) {
+        Self::store_clamped(&self.mastering_range_db, v, 0.0, 48.0);
+    }
+    pub fn set_mastering_headroom_db(&self, v: f32) {
+        Self::store_clamped(&self.mastering_headroom_db, v, 0.0, 24.0);
+    }
+    pub fn set_mastering_attack_ms(&self, v: f32) {
+        Self::store_clamped(&self.mastering_attack_ms, v, 0.1, 200.0);
+    }
+    pub fn set_mastering_release_ms(&self, v: f32) {
+        Self::store_clamped(&self.mastering_release_ms, v, 1.0, 2000.0);
     }
     pub fn set_drive_pedal_amount(&self, v: f32) {
         Self::store(&self.drive_pedal_amount, v);
@@ -1342,6 +1390,11 @@ pub(crate) struct UserData {
     last_reverb_mix: f32,
     last_mastering_amount: f32,
     last_limiter_ceiling_db: f32,
+    last_mastering_ratio: f32,
+    last_mastering_range_db: f32,
+    last_mastering_headroom_db: f32,
+    last_mastering_attack_ms: f32,
+    last_mastering_release_ms: f32,
     last_drive_pedal_amount: f32,
 }
 
@@ -2182,6 +2235,34 @@ pub extern "C" fn polyclav_dsp_set_limiter_ceiling_db(db: f32) {
     dsp_params().set_limiter_ceiling_db(db);
 }
 
+/// Mastering compressor character. Each is live and clamped; see
+/// `dsp::mastering` for the ranges. Ratio is dimensionless, range and
+/// headroom are dB, attack/release are milliseconds.
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_mastering_ratio(ratio: f32) {
+    dsp_params().set_mastering_ratio(ratio);
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_mastering_range_db(db: f32) {
+    dsp_params().set_mastering_range_db(db);
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_mastering_headroom_db(db: f32) {
+    dsp_params().set_mastering_headroom_db(db);
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_mastering_attack_ms(ms: f32) {
+    dsp_params().set_mastering_attack_ms(ms);
+}
+
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_set_mastering_release_ms(ms: f32) {
+    dsp_params().set_mastering_release_ms(ms);
+}
+
 /// Set the drive-pedal amount in [0, 1]. 0.0 (default) bypasses the
 /// stage bit-exactly. Runs in the shared post-synth chain, not inside
 /// any one synth backend, so it applies to every patch type. See
@@ -2268,8 +2349,8 @@ pub extern "C" fn polyclav_dsp_set_tremolo_depth(v: f32) {
 /// {0,1,2,3,4,5} — each slot present exactly once, none out of range.
 /// A non-permutation is ignored and the previous order kept, mirroring
 /// the "ignore garbage at the boundary" rule of the f32 setters. Only
-/// these six pedals reorder: the master tail (patch gain → mastering →
-/// master gain → limiter) stays a FIXED stage applied after them and
+/// these six pedals reorder: the master tail (patch gain → master gain →
+/// mastering → limiter) stays a FIXED stage applied after them and
 /// never moves.
 #[no_mangle]
 pub extern "C" fn polyclav_dsp_set_fx_order(packed: u32) {
@@ -2586,6 +2667,11 @@ pub(crate) fn build_user_data() -> UserData {
     let initial_mix = params.reverb_mix();
     let initial_mastering = params.mastering_amount();
     let initial_ceiling_db = params.limiter_ceiling_db();
+    let initial_ratio = params.mastering_ratio();
+    let initial_range_db = params.mastering_range_db();
+    let initial_headroom_db = params.mastering_headroom_db();
+    let initial_attack_ms = params.mastering_attack_ms();
+    let initial_release_ms = params.mastering_release_ms();
     let initial_drive_pedal = params.drive_pedal_amount();
     let mut compressor = Compressor::new();
     let mut reverb = Reverb::new();
@@ -2598,6 +2684,12 @@ pub(crate) fn build_user_data() -> UserData {
     compressor.set_amount(initial_comp);
     reverb.set_mix(initial_mix);
     mastering.set_amount(initial_mastering);
+    mastering.set_ceiling_db(initial_ceiling_db);
+    mastering.set_ratio(initial_ratio);
+    mastering.set_range_db(initial_range_db);
+    mastering.set_headroom_db(initial_headroom_db);
+    mastering.set_attack_ms(initial_attack_ms);
+    mastering.set_release_ms(initial_release_ms);
     limiter.set_ceiling_db(initial_ceiling_db);
     drive_pedal.set_amount(initial_drive_pedal);
     analog_delay.set_time_ms(params.analog_delay_time_ms());
@@ -2627,6 +2719,11 @@ pub(crate) fn build_user_data() -> UserData {
         last_reverb_mix: initial_mix,
         last_mastering_amount: initial_mastering,
         last_limiter_ceiling_db: initial_ceiling_db,
+        last_mastering_ratio: initial_ratio,
+        last_mastering_range_db: initial_range_db,
+        last_mastering_headroom_db: initial_headroom_db,
+        last_mastering_attack_ms: initial_attack_ms,
+        last_mastering_release_ms: initial_release_ms,
         last_drive_pedal_amount: initial_drive_pedal,
     }
 }
@@ -2647,6 +2744,12 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
     compressor.set_amount(params.comp_amount());
     reverb.set_mix(params.reverb_mix());
     mastering.set_amount(params.mastering_amount());
+    mastering.set_ceiling_db(params.limiter_ceiling_db());
+    mastering.set_ratio(params.mastering_ratio());
+    mastering.set_range_db(params.mastering_range_db());
+    mastering.set_headroom_db(params.mastering_headroom_db());
+    mastering.set_attack_ms(params.mastering_attack_ms());
+    mastering.set_release_ms(params.mastering_release_ms());
     limiter.set_ceiling_db(params.limiter_ceiling_db());
     drive_pedal.set_amount(params.drive_pedal_amount());
     analog_delay.set_time_ms(params.analog_delay_time_ms());
@@ -2666,6 +2769,11 @@ pub(crate) fn build_offline_user_data(synth: Option<SynthBackend>) -> UserData {
         last_reverb_mix: params.reverb_mix(),
         last_mastering_amount: params.mastering_amount(),
         last_limiter_ceiling_db: params.limiter_ceiling_db(),
+        last_mastering_ratio: params.mastering_ratio(),
+        last_mastering_range_db: params.mastering_range_db(),
+        last_mastering_headroom_db: params.mastering_headroom_db(),
+        last_mastering_attack_ms: params.mastering_attack_ms(),
+        last_mastering_release_ms: params.mastering_release_ms(),
         last_drive_pedal_amount: params.drive_pedal_amount(),
         dsp_params: params,
         compressor,
@@ -2715,6 +2823,11 @@ pub struct FfiChainParams {
     pub patch_gain: f32,
     pub mastering_amount: f32,
     pub limiter_ceiling_db: f32,
+    pub mastering_ratio: f32,
+    pub mastering_range_db: f32,
+    pub mastering_headroom_db: f32,
+    pub mastering_attack_ms: f32,
+    pub mastering_release_ms: f32,
     pub drive_pedal_amount: f32,
     pub analog_delay_time_ms: f32,
     pub analog_delay_feedback: f32,
@@ -2751,6 +2864,24 @@ fn apply_chain_params(ud: &UserData, cp: &FfiChainParams) {
     }
     if cp.limiter_ceiling_db.is_finite() {
         ud.dsp_params.set_limiter_ceiling_db(cp.limiter_ceiling_db);
+    }
+    if cp.mastering_ratio.is_finite() {
+        ud.dsp_params.set_mastering_ratio(cp.mastering_ratio);
+    }
+    if cp.mastering_range_db.is_finite() {
+        ud.dsp_params.set_mastering_range_db(cp.mastering_range_db);
+    }
+    if cp.mastering_headroom_db.is_finite() {
+        ud.dsp_params
+            .set_mastering_headroom_db(cp.mastering_headroom_db);
+    }
+    if cp.mastering_attack_ms.is_finite() {
+        ud.dsp_params
+            .set_mastering_attack_ms(cp.mastering_attack_ms);
+    }
+    if cp.mastering_release_ms.is_finite() {
+        ud.dsp_params
+            .set_mastering_release_ms(cp.mastering_release_ms);
     }
     if cp.drive_pedal_amount.is_finite() {
         ud.dsp_params.set_drive_pedal_amount(cp.drive_pedal_amount);
@@ -3246,7 +3377,7 @@ pub(crate) fn drain_midi(user_data: &mut UserData) {
 /// section of six pedals — drive pedal, chorus, tremolo, analog delay,
 /// compressor, reverb — applied in the order configured via
 /// `polyclav_dsp_set_fx_order` (identity by default), followed by a FIXED
-/// master tail (patch gain → mastering → master gain → limiter) that never
+/// master tail (patch gain → master gain → mastering → limiter) that never
 /// reorders. Pure portable buffer math — no OS audio API — so it is shared
 /// verbatim by the PipeWire callback (Linux) and the CoreAudio backend
 /// (macOS), and is exercised directly by the offline render tests.
@@ -3402,49 +3533,78 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         }
     }
 
-    // 3. Fixed master tail — patch gain → mastering → master gain →
-    // limiter, always in this order, never reordered. The master stage sits
-    // BEFORE the limiter so a level above unity drives the limiter (makeup
-    // gain into a brick wall) instead of clipping past it downstream; the
-    // limiter stays the last stage, so its ceiling is still the ceiling no
-    // matter where the master knob is. Read parameters once per callback.
+    // 3. Fixed master tail — patch gain → master gain → mastering → limiter,
+    // always in this order, never reordered. The master is *input gain into
+    // the mastering compressor*: the compressor is the primary squash, and
+    // its own limit converges on the limiter ceiling (see
+    // `MasteringCompressor`), so the limiter behind it is only the fallback
+    // for what the compressor's attack lets through. The limiter stays last,
+    // so its ceiling is the ceiling no matter where the master knob is. Read
+    // parameters once per callback.
     let master = user_data.dsp_params.master_volume();
     let patch_gain = user_data.dsp_params.patch_gain();
     let mastering_amount = user_data.dsp_params.mastering_amount();
     let limiter_ceiling_db = user_data.dsp_params.limiter_ceiling_db();
+    let mastering_ratio = user_data.dsp_params.mastering_ratio();
+    let mastering_range_db = user_data.dsp_params.mastering_range_db();
+    let mastering_headroom_db = user_data.dsp_params.mastering_headroom_db();
+    let mastering_attack_ms = user_data.dsp_params.mastering_attack_ms();
+    let mastering_release_ms = user_data.dsp_params.mastering_release_ms();
 
     if (mastering_amount - user_data.last_mastering_amount).abs() > f32::EPSILON {
         user_data.mastering.set_amount(mastering_amount);
         user_data.last_mastering_amount = mastering_amount;
     }
+    if (mastering_ratio - user_data.last_mastering_ratio).abs() > f32::EPSILON {
+        user_data.mastering.set_ratio(mastering_ratio);
+        user_data.last_mastering_ratio = mastering_ratio;
+    }
+    if (mastering_range_db - user_data.last_mastering_range_db).abs() > f32::EPSILON {
+        user_data.mastering.set_range_db(mastering_range_db);
+        user_data.last_mastering_range_db = mastering_range_db;
+    }
+    if (mastering_headroom_db - user_data.last_mastering_headroom_db).abs() > f32::EPSILON {
+        user_data.mastering.set_headroom_db(mastering_headroom_db);
+        user_data.last_mastering_headroom_db = mastering_headroom_db;
+    }
+    if (mastering_attack_ms - user_data.last_mastering_attack_ms).abs() > f32::EPSILON {
+        user_data.mastering.set_attack_ms(mastering_attack_ms);
+        user_data.last_mastering_attack_ms = mastering_attack_ms;
+    }
+    if (mastering_release_ms - user_data.last_mastering_release_ms).abs() > f32::EPSILON {
+        user_data.mastering.set_release_ms(mastering_release_ms);
+        user_data.last_mastering_release_ms = mastering_release_ms;
+    }
     if (limiter_ceiling_db - user_data.last_limiter_ceiling_db).abs() > f32::EPSILON {
         user_data.limiter.set_ceiling_db(limiter_ceiling_db);
+        // The compressor's window top is the same ceiling, so its limit
+        // tracks the limiter as the ceiling moves.
+        user_data.mastering.set_ceiling_db(limiter_ceiling_db);
         user_data.last_limiter_ceiling_db = limiter_ceiling_db;
     }
 
-    // Patch gain — direct multiply on every sample. It now applies AFTER
-    // the six pedals (compressor/reverb moved from post-gain into the
-    // reorderable section): the pedals sit in front of the amp, matching
-    // the drive-pedal rationale above, so per-patch gain staging doesn't
-    // colour their character.
+    // Patch gain — direct multiply on every sample. It applies AFTER the six
+    // pedals (compressor/reverb moved from post-gain into the reorderable
+    // section): the pedals sit in front of the amp, matching the drive-pedal
+    // rationale above, so per-patch gain staging doesn't colour their
+    // character.
     if (patch_gain - 1.0).abs() > f32::EPSILON {
         for s in samples.iter_mut() {
             *s *= patch_gain;
         }
     }
-    if mastering_amount > 0.0 {
-        user_data.mastering.process(samples);
-    }
-    // Master gain — the global level, applied after the pedals and the
-    // mastering compressor but before the limiter (see the section comment).
-    // Above unity it drives the limiter; at or below unity the limiter sees
-    // the same signal it always did.
+    // Master gain — the global drive, applied with the patch trim and BEFORE
+    // the mastering compressor, so turning it up pushes the compressor harder
+    // (more squash, more loudness) instead of shoving a brick wall downstream.
     if (master - 1.0).abs() > f32::EPSILON {
         for s in samples.iter_mut() {
             *s *= master;
         }
     }
-    // Limiter always runs — it is brick-wall safety, default ceiling -0.3 dBFS.
+    if mastering_amount > 0.0 {
+        user_data.mastering.process(samples);
+    }
+    // Limiter always runs — the fallback brick wall, default ceiling -0.3 dBFS.
     user_data.limiter.process(samples);
 }
 
@@ -4172,6 +4332,11 @@ mod tests {
             patch_gain: nan,
             mastering_amount: nan,
             limiter_ceiling_db: nan,
+            mastering_ratio: nan,
+            mastering_range_db: nan,
+            mastering_headroom_db: nan,
+            mastering_attack_ms: nan,
+            mastering_release_ms: nan,
             drive_pedal_amount: 1.0,
             analog_delay_time_ms: nan,
             analog_delay_feedback: nan,
@@ -4248,6 +4413,11 @@ mod tests {
                 patch_gain: 8.0,
                 mastering_amount: nan,
                 limiter_ceiling_db: nan,
+                mastering_ratio: nan,
+                mastering_range_db: nan,
+                mastering_headroom_db: nan,
+                mastering_attack_ms: nan,
+                mastering_release_ms: nan,
                 drive_pedal_amount: nan,
                 analog_delay_time_ms: nan,
                 analog_delay_feedback: nan,
@@ -5293,6 +5463,11 @@ mod tests {
         p.set_patch_gain(2.0);
         p.set_mastering_amount(0.5);
         p.set_limiter_ceiling_db(-6.0);
+        p.set_mastering_ratio(6.0);
+        p.set_mastering_range_db(20.0);
+        p.set_mastering_headroom_db(4.0);
+        p.set_mastering_attack_ms(5.0);
+        p.set_mastering_release_ms(250.0);
         p.set_drive_pedal_amount(0.5);
         p.set_analog_delay_time_ms(250.0);
         p.set_analog_delay_feedback(0.4);
@@ -5318,6 +5493,11 @@ mod tests {
             p.set_patch_gain(bad);
             p.set_mastering_amount(bad);
             p.set_limiter_ceiling_db(bad);
+            p.set_mastering_ratio(bad);
+            p.set_mastering_range_db(bad);
+            p.set_mastering_headroom_db(bad);
+            p.set_mastering_attack_ms(bad);
+            p.set_mastering_release_ms(bad);
             p.set_drive_pedal_amount(bad);
             p.set_analog_delay_time_ms(bad);
             p.set_analog_delay_feedback(bad);
@@ -5427,6 +5607,31 @@ mod tests {
                 7.0,
                 "native_bend_range poisoned by {bad}"
             );
+            assert_eq!(
+                p.mastering_ratio(),
+                6.0,
+                "mastering_ratio poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_range_db(),
+                20.0,
+                "mastering_range_db poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_headroom_db(),
+                4.0,
+                "mastering_headroom_db poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_attack_ms(),
+                5.0,
+                "mastering_attack_ms poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_release_ms(),
+                250.0,
+                "mastering_release_ms poisoned by {bad}"
+            );
         }
     }
 
@@ -5475,6 +5680,11 @@ mod tests {
         polyclav_dsp_set_patch_gain(2.0);
         polyclav_dsp_set_mastering_compressor(0.5);
         polyclav_dsp_set_limiter_ceiling_db(-6.0);
+        polyclav_dsp_set_mastering_ratio(6.0);
+        polyclav_dsp_set_mastering_range_db(20.0);
+        polyclav_dsp_set_mastering_headroom_db(4.0);
+        polyclav_dsp_set_mastering_attack_ms(5.0);
+        polyclav_dsp_set_mastering_release_ms(250.0);
         polyclav_dsp_set_drive_pedal(0.5);
         polyclav_dsp_set_analog_delay_time_ms(250.0);
         polyclav_dsp_set_analog_delay_feedback(0.4);
@@ -5487,6 +5697,11 @@ mod tests {
             polyclav_dsp_set_patch_gain(bad);
             polyclav_dsp_set_mastering_compressor(bad);
             polyclav_dsp_set_limiter_ceiling_db(bad);
+            polyclav_dsp_set_mastering_ratio(bad);
+            polyclav_dsp_set_mastering_range_db(bad);
+            polyclav_dsp_set_mastering_headroom_db(bad);
+            polyclav_dsp_set_mastering_attack_ms(bad);
+            polyclav_dsp_set_mastering_release_ms(bad);
             polyclav_dsp_set_drive_pedal(bad);
             polyclav_dsp_set_analog_delay_time_ms(bad);
             polyclav_dsp_set_analog_delay_feedback(bad);
@@ -5527,6 +5742,31 @@ mod tests {
                 0.6,
                 "analog_delay_mix poisoned by {bad}"
             );
+            assert_eq!(
+                p.mastering_ratio(),
+                6.0,
+                "mastering_ratio poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_range_db(),
+                20.0,
+                "mastering_range_db poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_headroom_db(),
+                4.0,
+                "mastering_headroom_db poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_attack_ms(),
+                5.0,
+                "mastering_attack_ms poisoned by {bad}"
+            );
+            assert_eq!(
+                p.mastering_release_ms(),
+                250.0,
+                "mastering_release_ms poisoned by {bad}"
+            );
         }
 
         // Restore the documented boot values.
@@ -5536,6 +5776,11 @@ mod tests {
         polyclav_dsp_set_patch_gain(1.0);
         polyclav_dsp_set_mastering_compressor(0.0);
         polyclav_dsp_set_limiter_ceiling_db(-0.3);
+        polyclav_dsp_set_mastering_ratio(crate::dsp::mastering::DEFAULT_RATIO);
+        polyclav_dsp_set_mastering_range_db(crate::dsp::mastering::DEFAULT_RANGE_DB);
+        polyclav_dsp_set_mastering_headroom_db(crate::dsp::mastering::DEFAULT_HEADROOM_DB);
+        polyclav_dsp_set_mastering_attack_ms(crate::dsp::mastering::DEFAULT_ATTACK_MS);
+        polyclav_dsp_set_mastering_release_ms(crate::dsp::mastering::DEFAULT_RELEASE_MS);
         polyclav_dsp_set_drive_pedal(0.0);
         polyclav_dsp_set_analog_delay_time_ms(300.0);
         polyclav_dsp_set_analog_delay_feedback(0.0);

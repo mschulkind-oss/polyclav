@@ -20,7 +20,7 @@ export interface ParamSpec {
   min: number;
   max: number;
   defaultValue: number;
-  unit: "%" | "Hz" | "ms" | "dB" | "";
+  unit: "%" | "Hz" | "ms" | "dB" | ":1" | "";
   /** Gate — knob at 0 is a true bypass (renders the gate notch + gate dot). */
   gate?: boolean;
   /** Bipolar — arc fills from the sweep center instead of the start. */
@@ -288,10 +288,65 @@ export const MASTER_PARAMS: ParamSpec[] = [
   },
 ];
 
+/**
+ * Mastering (master-bus) compressor character — global, not per-patch, so it
+ * is not part of any pedal's `params` (which the strip maps one-per-role to
+ * its rows). The comp editor renders these beside the per-patch comp knobs
+ * and Glue; see lib/pedalboard/wiring.ts for the live bindings. All are
+ * engine-side clamps (Rust), so a stray value is bounded there too.
+ */
+export const MASTER_COMP_PARAMS: ParamSpec[] = [
+  {
+    id: "comp.mstr_ratio",
+    label: "Mstr Ratio",
+    role: "level",
+    min: 1,
+    max: 20,
+    defaultValue: 8,
+    unit: ":1",
+  },
+  {
+    id: "comp.mstr_range",
+    label: "Mstr Range",
+    role: "level",
+    min: 0,
+    max: 48,
+    defaultValue: 30,
+    unit: "dB",
+  },
+  {
+    id: "comp.mstr_headroom",
+    label: "Mstr Headroom",
+    role: "level",
+    min: 0,
+    max: 24,
+    defaultValue: 2,
+    unit: "dB",
+  },
+  {
+    id: "comp.mstr_attack",
+    label: "Mstr Atk",
+    role: "level",
+    min: 0.1,
+    max: 200,
+    defaultValue: 2,
+    unit: "ms",
+  },
+  {
+    id: "comp.mstr_release",
+    label: "Mstr Rel",
+    role: "level",
+    min: 1,
+    max: 2000,
+    defaultValue: 100,
+    unit: "ms",
+  },
+];
+
 /** Default pedal order = chain order (drive → … → reverb). The board lets the
  * user reorder this (persisted client-side); the DSP signal path itself is
- * fixed in the Rust engine, so reordering rearranges the editing surface. */
-export const DEFAULT_PEDAL_ORDER: string[] = CHAIN.map((p) => p.id);
+ * fixed in the Rust engine, so reordering rearranges the editing surface. */ export const DEFAULT_PEDAL_ORDER: string[] =
+  CHAIN.map((p) => p.id);
 
 export type PatchType = "native" | "soundfont" | "sfizz";
 

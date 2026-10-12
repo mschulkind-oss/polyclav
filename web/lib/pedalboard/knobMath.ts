@@ -92,6 +92,8 @@ export function formatValue(v: number, spec: Pick<ParamSpec, "unit" | "fmt">): s
       return `${v.toFixed(1)} Hz`;
     case "ms":
       return `${Math.round(v)} ms`;
+    case ":1":
+      return `${v.toFixed(1)}:1`;
     case "dB": {
       const sign = v < 0 ? MINUS : "";
       return `${sign}${Math.abs(v).toFixed(1)} dB`;

@@ -202,19 +202,24 @@ type devicesJSON struct {
 }
 
 type paramsJSON struct {
-	Patch            string    `json:"patch"`
-	PatchDisplay     string    `json:"patch_display"`
-	Volume           float32   `json:"volume"`
-	Reverb           float32   `json:"reverb"`
-	Compressor       float32   `json:"compressor"`
-	DrivePedal       float32   `json:"drive_pedal"`
-	MasterVolume     float32   `json:"master_volume"`
-	CutoffPos        float32   `json:"cutoff_pos"`
-	CutoffHz         float32   `json:"cutoff_hz"`
-	MasteringComp    float32   `json:"mastering_comp"`
-	LimiterCeilingDB float32   `json:"limiter_ceiling_db"`
-	VelocityCurve    string    `json:"velocity_curve"`
-	Synth            synthJSON `json:"synth"`
+	Patch               string    `json:"patch"`
+	PatchDisplay        string    `json:"patch_display"`
+	Volume              float32   `json:"volume"`
+	Reverb              float32   `json:"reverb"`
+	Compressor          float32   `json:"compressor"`
+	DrivePedal          float32   `json:"drive_pedal"`
+	MasterVolume        float32   `json:"master_volume"`
+	CutoffPos           float32   `json:"cutoff_pos"`
+	CutoffHz            float32   `json:"cutoff_hz"`
+	MasteringComp       float32   `json:"mastering_comp"`
+	LimiterCeilingDB    float32   `json:"limiter_ceiling_db"`
+	MasteringRatio      float32   `json:"mastering_ratio"`
+	MasteringRangeDB    float32   `json:"mastering_range_db"`
+	MasteringHeadroomDB float32   `json:"mastering_headroom_db"`
+	MasteringAttackMs   float32   `json:"mastering_attack_ms"`
+	MasteringReleaseMs  float32   `json:"mastering_release_ms"`
+	VelocityCurve       string    `json:"velocity_curve"`
+	Synth               synthJSON `json:"synth"`
 }
 
 type filterEnvJSON struct {
@@ -345,19 +350,24 @@ type statusJSON struct {
 
 func paramsView(sn controls.ParamsSnapshot) paramsJSON {
 	return paramsJSON{
-		Patch:            sn.Patch,
-		PatchDisplay:     sn.PatchDisplay,
-		Volume:           sn.Volume,
-		Reverb:           sn.Reverb,
-		Compressor:       sn.Compressor,
-		DrivePedal:       sn.DrivePedal,
-		MasterVolume:     sn.MasterVolume,
-		CutoffPos:        sn.CutoffPos,
-		CutoffHz:         sn.CutoffHz,
-		MasteringComp:    sn.MasteringComp,
-		LimiterCeilingDB: sn.LimiterCeilingDB,
-		VelocityCurve:    sn.VelocityCurve,
-		Synth:            synthView(sn.Synth),
+		Patch:               sn.Patch,
+		PatchDisplay:        sn.PatchDisplay,
+		Volume:              sn.Volume,
+		Reverb:              sn.Reverb,
+		Compressor:          sn.Compressor,
+		DrivePedal:          sn.DrivePedal,
+		MasterVolume:        sn.MasterVolume,
+		CutoffPos:           sn.CutoffPos,
+		CutoffHz:            sn.CutoffHz,
+		MasteringComp:       sn.MasteringComp,
+		LimiterCeilingDB:    sn.LimiterCeilingDB,
+		MasteringRatio:      sn.MasteringCharacter.Ratio,
+		MasteringRangeDB:    sn.MasteringCharacter.RangeDB,
+		MasteringHeadroomDB: sn.MasteringCharacter.HeadroomDB,
+		MasteringAttackMs:   sn.MasteringCharacter.AttackMs,
+		MasteringReleaseMs:  sn.MasteringCharacter.ReleaseMs,
+		VelocityCurve:       sn.VelocityCurve,
+		Synth:               synthView(sn.Synth),
 	}
 }
 
@@ -948,9 +958,14 @@ func (s *Server) handleHwmap(w http.ResponseWriter, _ *http.Request) {
 }
 
 type masteringPatchBody struct {
-	CompAmount       *float64 `json:"comp_amount"`
-	LimiterCeilingDB *float64 `json:"limiter_ceiling_db"`
-	MasterVolume     *float64 `json:"master_volume"`
+	CompAmount          *float64 `json:"comp_amount"`
+	LimiterCeilingDB    *float64 `json:"limiter_ceiling_db"`
+	MasterVolume        *float64 `json:"master_volume"`
+	MasteringRatio      *float64 `json:"mastering_ratio"`
+	MasteringRangeDB    *float64 `json:"mastering_range_db"`
+	MasteringHeadroomDB *float64 `json:"mastering_headroom_db"`
+	MasteringAttackMs   *float64 `json:"mastering_attack_ms"`
+	MasteringReleaseMs  *float64 `json:"mastering_release_ms"`
 }
 
 func (s *Server) handleMastering(w http.ResponseWriter, r *http.Request) {
@@ -990,10 +1005,52 @@ func (s *Server) handleMastering(w http.ResponseWriter, r *http.Request) {
 		master = v
 	}
 	comp, ceiling := s.deps.Controls.SetMastering(compP, ceilP)
+	of := func(v *float64, name string) (*float32, bool) {
+		if v == nil {
+			return nil, true
+		}
+		if !finite(*v) {
+			writeErr(w, http.StatusBadRequest, name+" must be finite")
+			return nil, false
+		}
+		f := float32(*v)
+		return &f, true
+	}
+	ratio, ok := of(body.MasteringRatio, "mastering_ratio")
+	if !ok {
+		return
+	}
+	rangeDB, ok := of(body.MasteringRangeDB, "mastering_range_db")
+	if !ok {
+		return
+	}
+	headroom, ok := of(body.MasteringHeadroomDB, "mastering_headroom_db")
+	if !ok {
+		return
+	}
+	attack, ok := of(body.MasteringAttackMs, "mastering_attack_ms")
+	if !ok {
+		return
+	}
+	release, ok := of(body.MasteringReleaseMs, "mastering_release_ms")
+	if !ok {
+		return
+	}
+	ch := s.deps.Controls.MasteringCharacter()
+	if ratio != nil || rangeDB != nil || headroom != nil || attack != nil || release != nil {
+		ch = s.deps.Controls.SetMasteringCharacter(controls.MasteringCharacterOpts{
+			Ratio: ratio, RangeDB: rangeDB, HeadroomDB: headroom, AttackMs: attack, ReleaseMs: release,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]float32{
-		"comp_amount":        comp,
-		"limiter_ceiling_db": ceiling,
-		"master_volume":      master,
+		"comp_amount":           comp,
+		"limiter_ceiling_db":    ceiling,
+		"master_volume":         master,
+		"mastering_ratio":       ch.Ratio,
+		"mastering_range_db":    ch.RangeDB,
+		"mastering_headroom_db": ch.HeadroomDB,
+		"mastering_attack_ms":   ch.AttackMs,
+		"mastering_release_ms":  ch.ReleaseMs,
 	})
 }
 

@@ -33,22 +33,23 @@ unit-tested against driver fakes, but has never met the device. Verify:
 - Knob 1 on each page sounds right on a native patch: MAIN=volume,
   OSC=osc1 level, FILTER=cutoff, AMP=amp attack, LFO/MOD=LFO rate
   (audible vibrato/wah once LFO>Pitch or LFO>Cutoff is raised).
-- MAIN knob 8 is **Master**, Polyclav's global output level and the loudness
-  knob (to 400%, +12 dB): it changes
-  loudness on a soundfont patch too, and switching patches leaves it (and
-  the resulting level) where you set it. Set it low, switch patches, and
-  confirm the new patch comes in at its own volume scaled by the same
-  master; turn it to 0 for silence. Restart the daemon and confirm the
-  level survives (`master_volume` in `state.toml`). As you push it up the
-  limiter light (`LIMIT`, red pad) comes on *and stays on* — that is the
-  limiter doing its job, which is exactly what you want at high level, not a
-  fault; the sound should stay clean as it engages and only start to sound
-  squashed at the very top.
+- MAIN knob 8 is **Master**, Polyclav's global output level and the
+  compressor's input drive (to 400%, +12 dB): it changes loudness on a
+  soundfont patch too, and switching patches leaves it (and the resulting
+  level) where you set it. Set it low, switch patches, and confirm the new
+  patch comes in at its own volume scaled by the same master; turn it to 0
+  for silence. Restart the daemon and confirm the level survives
+  (`master_volume` in `state.toml`). Master drives the mastering compressor
+  first; only when the peak reaches the Ceiling does the limiter light
+  (`LIMIT`, red pad) come on — that is the fallback, not a fault.
 - MAIN knob 7 is **Mstr Comp**, the global mastering compressor: turning it
-  up levels the performance (quiet notes lift toward loud ones) and works on
-  a soundfont patch too, and does not reset when you switch patches. It
-  should *not* force the Master down to stay clean — the compressor never
-  adds level. Drive is still on AMP knob 7.
+  up drops the threshold below the Ceiling and squashes the mix into the
+  headroom under it, lifting the body (louder *and* more squashed); it works
+  on a soundfont patch too and does not reset when you switch patches. With
+  the default `headroom_db` it should raise the loudness without pinning the
+  limiter; raise `headroom_db` (config, or the `Mstr Headroom` knob in the
+  dashboard's comp editor) if you want more Master range. Drive is still on
+  AMP knob 7.
 - The limiter/limit indicator: play hard with Master high and the
   screen's second line shows `LIMIT x.x dB` and the loaded patch's pad on
   the top row lights red while the brick-wall limiter is compressing; both

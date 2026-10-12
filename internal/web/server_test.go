@@ -29,27 +29,31 @@ import (
 type fakeAudio struct {
 	mu sync.Mutex
 
-	volume, reverb, compressor      float32
-	drivePedal                      float32
-	chorusRateHz, chorusDepth       float32
-	chorusMix                       float32
-	tremoloRateHz, tremoloDepth     float32
-	fxOrder                         uint32
-	delayTimeMs, delayFeedback      float32
-	delayMix                        float32
-	cutoffHz                        float32
-	masteringComp, limiterCeilingDB float32
-	resonance, noise, glide         float32
-	feAttack, feAmount              float32
-	aeAttack, aeSustain             float32
-	pulseWidth, drive               float32
-	velToCutoff, velToAmp           float32
-	kbdTrack, bendRange             float32
-	lfoWave                         string
-	lfoRateHz, lfoToPitchCents      float32
-	voiceMode                       string
-	oversample                      bool
-	oscCalls                        int
+	volume, reverb, compressor       float32
+	drivePedal                       float32
+	chorusRateHz, chorusDepth        float32
+	chorusMix                        float32
+	tremoloRateHz, tremoloDepth      float32
+	fxOrder                          uint32
+	delayTimeMs, delayFeedback       float32
+	delayMix                         float32
+	cutoffHz                         float32
+	masteringComp, limiterCeilingDB  float32
+	masteringRatio, masteringRangeDB float32
+	masteringHeadroomDB              float32
+	masteringAttackMs                float32
+	masteringReleaseMs               float32
+	resonance, noise, glide          float32
+	feAttack, feAmount               float32
+	aeAttack, aeSustain              float32
+	pulseWidth, drive                float32
+	velToCutoff, velToAmp            float32
+	kbdTrack, bendRange              float32
+	lfoWave                          string
+	lfoRateHz, lfoToPitchCents       float32
+	voiceMode                        string
+	oversample                       bool
+	oscCalls                         int
 }
 
 func (f *fakeAudio) SetMasterVolume(v float32) { f.mu.Lock(); defer f.mu.Unlock(); f.volume = v }
@@ -109,6 +113,36 @@ func (f *fakeAudio) SetLimiterCeilingDB(v float32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.limiterCeilingDB = v
+}
+
+func (f *fakeAudio) SetMasteringRatio(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringRatio = v
+}
+
+func (f *fakeAudio) SetMasteringRangeDB(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringRangeDB = v
+}
+
+func (f *fakeAudio) SetMasteringHeadroomDB(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringHeadroomDB = v
+}
+
+func (f *fakeAudio) SetMasteringAttackMs(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringAttackMs = v
+}
+
+func (f *fakeAudio) SetMasteringReleaseMs(v float32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.masteringReleaseMs = v
 }
 
 func (f *fakeAudio) SetNativeResonance(v float32) {

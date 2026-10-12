@@ -34,6 +34,9 @@ type fakeAudio struct {
 	fxOrder                                    uint32
 	delayTimeMs, delayFeedback, delayMix       float32
 	masteringComp, limiterDB                   float32
+	masteringRatio, masteringRangeDB           float32
+	masteringHeadroomDB, masteringAttackMs     float32
+	masteringReleaseMs                         float32
 	resonance, noise, glide, pulseWidth, drive float32
 	kbdTrack, bendRange                        float32
 	feA, feD, feS, feR, feAmt                  float32
@@ -88,7 +91,24 @@ func (f *fakeAudio) SetMasteringCompressor(v float32) {
 	f.masteringComp = v
 }
 func (f *fakeAudio) SetLimiterCeilingDB(db float32) { f.rec("SetLimiterCeilingDB"); f.limiterDB = db }
-func (f *fakeAudio) SetNativeResonance(v float32)   { f.rec("SetNativeResonance"); f.resonance = v }
+func (f *fakeAudio) SetMasteringRatio(v float32)    { f.rec("SetMasteringRatio"); f.masteringRatio = v }
+func (f *fakeAudio) SetMasteringRangeDB(v float32) {
+	f.rec("SetMasteringRangeDB")
+	f.masteringRangeDB = v
+}
+func (f *fakeAudio) SetMasteringHeadroomDB(v float32) {
+	f.rec("SetMasteringHeadroomDB")
+	f.masteringHeadroomDB = v
+}
+func (f *fakeAudio) SetMasteringAttackMs(v float32) {
+	f.rec("SetMasteringAttackMs")
+	f.masteringAttackMs = v
+}
+func (f *fakeAudio) SetMasteringReleaseMs(v float32) {
+	f.rec("SetMasteringReleaseMs")
+	f.masteringReleaseMs = v
+}
+func (f *fakeAudio) SetNativeResonance(v float32) { f.rec("SetNativeResonance"); f.resonance = v }
 func (f *fakeAudio) SetNativeFilterEnv(a, d, s, r, amount float32) {
 	f.rec("SetNativeFilterEnv")
 	f.feA, f.feD, f.feS, f.feR, f.feAmt = a, d, s, r, amount

@@ -36,6 +36,11 @@ export interface Params {
   cutoff_hz: number;
   mastering_comp: number;
   limiter_ceiling_db: number;
+  mastering_ratio: number;
+  mastering_range_db: number;
+  mastering_headroom_db: number;
+  mastering_attack_ms: number;
+  mastering_release_ms: number;
   velocity_curve: string;
   synth: Synth;
 }
@@ -177,6 +182,11 @@ export interface MasteringEvent {
   comp_amount?: number;
   limiter_ceiling_db?: number;
   master_volume?: number;
+  mastering_ratio?: number;
+  mastering_range_db?: number;
+  mastering_headroom_db?: number;
+  mastering_attack_ms?: number;
+  mastering_release_ms?: number;
 }
 
 export interface VelocityEvent {
