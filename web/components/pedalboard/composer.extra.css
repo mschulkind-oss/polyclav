@@ -130,6 +130,28 @@ body:has(.pb-root) > .topnav {
 .pb-root .pb-editor-viz .pb-axis {
   stroke: var(--pb-line-soft);
 }
+/* Mastering curve: the limiter's brick wall + 3 dB knee hint stay in the
+   neutral line tone; the live operating point and gain meter take the accent. */
+.pb-root .pb-editor-viz .pb-knee {
+  stroke: var(--pb-line-soft);
+}
+.pb-root .pb-editor-viz .pb-limit {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.pb-root .pb-editor-viz .pb-op-point {
+  fill: currentColor;
+  stroke: var(--pb-card);
+  stroke-width: 0.8;
+}
+.pb-root .pb-editor-viz .pb-gr-track {
+  fill: var(--pb-line-soft);
+  stroke: none;
+}
+.pb-root .pb-editor-viz .pb-gr {
+  fill: currentColor;
+  stroke: none;
+}
 .pb-root .pb-hero.pb-bypassed .pb-editor-viz {
   color: var(--pb-off);
 }

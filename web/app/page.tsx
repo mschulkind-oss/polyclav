@@ -127,6 +127,7 @@ export default function Page() {
               onStomp={() => pc.togglePedal(editPedal.id)}
               onReset={() => resetPedal(editPedal.id)}
               onBack={goBoard}
+              levelsSink={pc.levelsSink}
             />
           ) : (
             <Pedalboard
