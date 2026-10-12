@@ -6,8 +6,10 @@
  * Ceiling, makeup is tied to that drop, and the Ceiling is both the knee
  * origin and the limiter's flat brick wall. The heat wedge between the curve
  * and the ceiling is literally the headroom being consumed. At Glue 0 the
- * curve collapses onto unity up to the ceiling (reference: CompCurveViz idiom,
- * law from audio-core/src/dsp/mastering.rs).
+ * curve collapses onto unity up to the ceiling and then rides the wall: the
+ * limiter always runs downstream, so the drawn output is clamped to the
+ * Ceiling (reference: CompCurveViz idiom, law from
+ * audio-core/src/dsp/mastering.rs).
  */
 
 /** Ceiling clamps to [−12, 0]; the band top gives makeup and the ceiling room. */
@@ -85,7 +87,9 @@ export function MasteringCurveViz({
 
   let curve = "";
   for (let db = MIN_DB; db <= 0.001; db += 2) {
-    const out = outAt(db);
+    // The limiter runs downstream of the compressor, so the drawn output
+    // cannot exceed the Ceiling: clamp the compressor law onto the wall.
+    const out = Math.min(outAt(db), ceilingDb);
     curve += `${db === MIN_DB ? "M" : " L"}${xOfDb(db).toFixed(0)} ${yOfDb(out).toFixed(2)}`;
   }
   // Close the wedge along the ceiling — the headroom the compressor consumes.

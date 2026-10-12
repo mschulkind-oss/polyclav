@@ -47,10 +47,14 @@ test("at Glue 0 the curve is unity up to the ceiling then flattens", () => {
   expect(d.startsWith("M4 22.00")).toBe(true);
   // At the ceiling (−6) it is still exactly unity: (x100, y8).
   expect(d).toContain("L100 8.00");
-  // Past the ceiling the curve bends off unity: at input 0 it sits below the
-  // unity endpoint (y6), i.e. a larger y at x114.
-  const endY = Number(/L114 (\d+\.\d+)$/.exec(d)?.[1]);
-  expect(endY).toBeGreaterThan(6);
+  // Past the ceiling the limiter holds the output flat on the brick wall, so
+  // the endpoint lands exactly on the ceiling's y (8.00) at x114.
+  expect(d.endsWith("L114 8.00")).toBe(true);
+  // No sampled point rides above the ceiling: every y sits on or below the
+  // ceiling's y (a smaller y would be a louder output past the wall).
+  const ys = [...d.matchAll(/L\d+ (\d+\.\d+)/g)].map((m) => Number(m[1]));
+  expect(ys.length).toBeGreaterThan(0);
+  for (const y of ys) expect(y).toBeGreaterThanOrEqual(8);
 });
 
 test("raising Glue lowers the threshold and lifts the quiet end", () => {
@@ -66,8 +70,9 @@ test("ratio changes the compressed slope", () => {
   const soft = parts({ glue: 100, ratio: 2 }).curve?.getAttribute("d") ?? "";
   const hard = parts({ glue: 100, ratio: 8 }).curve?.getAttribute("d") ?? "";
   expect(soft).not.toBe(hard);
-  // At full drive a 2:1 curve ends higher (less reduction) than 8:1.
-  expect(soft.endsWith("L114 7.67")).toBe(true);
+  // 2:1 compresses least, so its top end reaches past the ceiling and clamps
+  // onto the wall; 8:1's reduction keeps it below the ceiling under this makeup.
+  expect(soft.endsWith("L114 8.00")).toBe(true);
   expect(hard.endsWith("L114 8.42")).toBe(true);
 });
 
