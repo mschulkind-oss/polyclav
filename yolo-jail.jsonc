@@ -72,6 +72,22 @@
     }
   },
 
+  // Build state kept PER SIDE. This workspace is one directory mounted at two
+  // different absolute paths — /home/matt/code/polyclav on the host, /workspace
+  // in this jail — and the repo-local build caches (mise pins CARGO_HOME,
+  // RUSTUP_HOME and GOCACHE under the workspace; `target/` lives here too) are
+  // therefore written by both sides into the same directories. Cargo and Go
+  // fingerprints record ABSOLUTE paths, so each side's paths are missing on the
+  // other: every host<->jail switch recompiled the whole graph (observed: 138
+  // crates, ~80 s on the host after any in-jail build).
+  //
+  // Shadowing gives each side its own backing dir at the SAME path spelling, so
+  // cgo's -L${SRCDIR}/../../target/release keeps resolving and neither side
+  // invalidates the other. `.cargo`/`.rustup` stay shared on purpose: they are
+  // download caches, and sharing them costs nothing once `target/` is per-side
+  // (first launch after this change rebuilds once per side, then both stay warm).
+  "per_side_paths": ["target", ".gocache"],
+
   // Machine-specific overrides (mounts, etc.) live in yolo-jail.local.jsonc,
   // swept into swarf/ (gitignored, not portable across machines) rather than
   // committed here.
