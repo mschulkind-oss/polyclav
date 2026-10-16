@@ -515,9 +515,10 @@ Cross-checked with `internal/launchkey/driver/driver.go`:
 - ✅ Pad LED set via `SetPadColor(row, col, components.Color)` (palette
   by velocity) and `SetPadRGB(row, col, r, g, b)` (24-bit SysEx).
 - ⚠️ The pre-startup loop in `Open()` suppresses auto-temp on
-  targets 0x15–0x1C and 0x21 to prevent the device from overlaying its
-  own knob-value popup on our patch screen. **This must stay** — we
-  drive the screen entirely from Go for analog-synth knobs too.
+  targets 0x05–0x0D (faders), 0x15–0x1C (encoders) and 0x21 to prevent
+  the device from overlaying its own value popup (the raw 0–127 MIDI
+  value) on our patch screen. **This must stay** — we drive the screen
+  entirely from Go for analog-synth knobs and organ drawbars too.
 
 No changes to `driver.go` are required for the UX described above. The
 new page-switching, screen-rendering, and pad-coloring logic lives in

@@ -146,6 +146,24 @@ func Open(ctx context.Context, logger *slog.Logger, portMatch string) (*Driver, 
 	return OpenWithRaw(ctx, logger, portMatch, nil)
 }
 
+// tempSuppressTargets lists the firmware auto-temp display targets to
+// configure with auto-temp-on-change/touch cleared at Open. Per the
+// MK4 Programmer's Reference, temp targets 0x00-0x1F are per-analogue-
+// control (same indices as their CCs): 0x05-0x0D are the nine faders,
+// 0x15-0x1C the eight encoders; 0x21 is the global temp display. The
+// faders were originally missed here (they only carried mixer OSC, no
+// Go display), which became visible once organ patches captured them
+// as drawbars: moving a drawbar let the firmware paint its raw 0-127
+// value over the patch name for the whole gesture, re-triggering on
+// every fader event so no Go-side screen write could win.
+func tempSuppressTargets() []byte {
+	return []byte{
+		0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+		0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+		0x21,
+	}
+}
+
 // OpenWithRaw is Open plus an optional read-only raw inbound sink used by the
 // Launchkey debug stream. The sink is called from the existing DAW listener;
 // no extra MIDI ports are opened.
@@ -227,10 +245,11 @@ func OpenWithModeRestore(ctx context.Context, logger *slog.Logger, portMatch str
 		}
 	}
 
-	suppressTargets := []byte{
-		0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
-		0x21,
-	}
+	// Suppress the firmware's auto temp displays (see
+	// tempSuppressTargets). We drive the screen entirely from Go, so a
+	// firmware popup would overlay the patch display with the control's
+	// raw MIDI value.
+	suppressTargets := tempSuppressTargets()
 	for _, target := range suppressTargets {
 		msg := append([]byte{}, mk4SysExHeader...)
 		msg = append(msg, 0x04, target, displayConfigArrangement1, sysExEnd)

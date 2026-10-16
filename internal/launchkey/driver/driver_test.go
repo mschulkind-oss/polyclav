@@ -432,6 +432,23 @@ func TestDisplayConfigCancelEncoder(t *testing.T) {
 	}
 }
 
+// TestTempSuppressTargetsCoverFadersEncodersAndGlobal pins the Open()
+// auto-temp suppression set: all nine fader temp targets (0x05-0x0D),
+// all eight encoder temp targets (0x15-0x1C), and the global temp
+// (0x21). Missing the faders let the firmware paint its raw 0-127
+// fader value over the Go-driven patch display during drawbar moves.
+func TestTempSuppressTargetsCoverFadersEncodersAndGlobal(t *testing.T) {
+	got := tempSuppressTargets()
+	want := []byte{
+		0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+		0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+		0x21,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("tempSuppressTargets = % X, want % X", got, want)
+	}
+}
+
 // ---- activity tracking (idle watchdog + send ring buffer) -----------------
 //
 // These exercise recordSend/recordEvent directly against a bare &Driver{}
