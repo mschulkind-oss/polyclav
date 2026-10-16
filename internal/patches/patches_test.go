@@ -53,7 +53,7 @@ func (f *fakeAudio) ReloadSoundfont() error {
 	return f.reloadErr
 }
 
-func (f *fakeAudio) SetPatchGain(linear float32) {
+func (f *fakeAudio) StagePatchGain(linear float32) {
 	f.setPatchGainCalls++
 	f.lastPatchGain = linear
 }
@@ -410,7 +410,7 @@ func TestSelectIndexLv2Patch(t *testing.T) {
 		t.Errorf("soundfont path should NOT be touched for lv2 patch (set=%d reload=%d)", fa.setCalls, fa.reloadCalls)
 	}
 	if fa.setPatchGainCalls != 1 {
-		t.Errorf("expected 1 SetPatchGain call (gain applies to plugin patches), got %d", fa.setPatchGainCalls)
+		t.Errorf("expected 1 StagePatchGain call (gain applies to plugin patches), got %d", fa.setPatchGainCalls)
 	}
 	cur := r.Current()
 	if cur == nil || cur.Name != "dexed-lv2" {
@@ -450,7 +450,7 @@ func TestSelectIndexClapPatch(t *testing.T) {
 		t.Errorf("soundfont path should NOT be touched for clap patch (set=%d reload=%d)", fa.setCalls, fa.reloadCalls)
 	}
 	if fa.setPatchGainCalls != 1 {
-		t.Errorf("expected 1 SetPatchGain call, got %d", fa.setPatchGainCalls)
+		t.Errorf("expected 1 StagePatchGain call, got %d", fa.setPatchGainCalls)
 	}
 	want := float32(0.7079458)
 	if fa.lastPatchGain < want*0.99 || fa.lastPatchGain > want*1.01 {
@@ -538,7 +538,7 @@ func TestSelectIndexNativePatch(t *testing.T) {
 		t.Errorf("plugin paths should NOT be touched for native patch (lv2=%d clap=%d)", fa.lv2Calls, fa.clapCalls)
 	}
 	if fa.setPatchGainCalls != 1 {
-		t.Errorf("expected 1 SetPatchGain call (gain applies to native patches too), got %d", fa.setPatchGainCalls)
+		t.Errorf("expected 1 StagePatchGain call (gain applies to native patches too), got %d", fa.setPatchGainCalls)
 	}
 	cur := r.Current()
 	if cur == nil || cur.Name != "moog-bass-native" {

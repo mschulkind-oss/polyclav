@@ -63,6 +63,8 @@ type fakeAudio struct {
 	oscErr                           error  // forced SetNativeOsc failure
 	lfoErr                           error  // forced SetNativeLFO failure
 	voiceModeErr                     error  // forced SetNativeVoiceMode failure
+	staged                           StagedPatchParams
+	stagedCalls                      int
 	volumeCalls, reverbCalls         int
 	compressorCalls, cutoffCalls     int
 	drivePedalCalls                  int
@@ -74,6 +76,13 @@ type fakeAudio struct {
 	kbdTrackCalls, lfoCalls          int
 	bendRangeCalls, voiceModeCalls   int
 	oversampleCalls                  int
+}
+
+func (f *fakeAudio) StagePatchParams(sp StagedPatchParams) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.staged = sp
+	f.stagedCalls++
 }
 
 func (f *fakeAudio) SetMasterVolume(v float32) {
@@ -876,9 +885,19 @@ func TestSelectPatchRestoresKnobsAndPublishes(t *testing.T) {
 	if cur := f.reg.Current(); cur == nil || cur.Name != "salamander" {
 		t.Fatalf("expected registry current salamander, got %v", cur)
 	}
-	if f.audio.volume != 0.7 || f.audio.reverb != 0.2 || f.audio.compressor != 0.4 {
-		t.Errorf("expected knobs (0.7, 0.2, 0.4) restored to audio, got (%v, %v, %v)",
-			f.audio.volume, f.audio.reverb, f.audio.compressor)
+	// The restored knobs are staged for the backend swap, NOT pushed
+	// live: the old backend is still sounding, and the new patch's
+	// gains landing on its tail are the patch-switch blip.
+	if f.audio.stagedCalls != 1 {
+		t.Errorf("expected 1 StagePatchParams call, got %d", f.audio.stagedCalls)
+	}
+	if sp := f.audio.staged; sp.MasterVolume != 0.7 || sp.Reverb != 0.2 || sp.Compressor != 0.4 {
+		t.Errorf("expected knobs (0.7, 0.2, 0.4) staged for the swap, got (%v, %v, %v)",
+			sp.MasterVolume, sp.Reverb, sp.Compressor)
+	}
+	if f.audio.volumeCalls != 0 || f.audio.reverbCalls != 0 || f.audio.compressorCalls != 0 {
+		t.Errorf("live audio must not be touched by a select's restore (volume=%d reverb=%d comp=%d calls)",
+			f.audio.volumeCalls, f.audio.reverbCalls, f.audio.compressorCalls)
 	}
 	if f.st.currentPatch != "salamander" {
 		t.Errorf("expected SetCurrentPatch(salamander), got %q", f.st.currentPatch)
@@ -2925,8 +2944,17 @@ func TestConcurrentSelectVsWritersConverge(t *testing.T) {
 		t.Errorf("patch diverged: registry=%q state=%q last-published=%q",
 			cur.Name, f.st.currentPatch, lastPatch)
 	}
-	if f.audio.volume != lastVol {
-		t.Errorf("volume diverged: audio=%v last-published=%v", f.audio.volume, lastVol)
+	// A select stages its restore instead of pushing it live, so the
+	// engine-side convergence point is now the staged block: one final
+	// deterministic select must stage exactly the current patch's
+	// stored volume folded with the global master.
+	if err := f.c.SelectPatch(cur.Name); err != nil {
+		t.Fatalf("final SelectPatch: %v", err)
+	}
+	wantVol := f.st.PatchKnob(cur.Name).Volume * f.st.MasterVolume()
+	if !approxEq(f.audio.staged.MasterVolume, wantVol) {
+		t.Errorf("staged volume diverged: staged=%v want %v (patch %q volume x master)",
+			f.audio.staged.MasterVolume, wantVol, cur.Name)
 	}
 	if got := f.st.PatchKnob(lastVolPatch).Volume; got != lastVol {
 		t.Errorf("state volume diverged for %q: state=%v last-published=%v", lastVolPatch, got, lastVol)
@@ -3112,15 +3140,15 @@ func TestSelectPatchRestoresChain(t *testing.T) {
 		t.Fatalf("SelectPatch: %v", err)
 	}
 
-	if f.audio.delayMix != 0 {
-		t.Errorf("audio delayMix = %v, want 0 (delay disabled)", f.audio.delayMix)
+	if f.audio.staged.AnalogDelayMix != 0 {
+		t.Errorf("staged delayMix = %v, want 0 (delay disabled)", f.audio.staged.AnalogDelayMix)
 	}
-	if f.audio.chorusMix != 0.4 {
-		t.Errorf("audio chorusMix = %v, want 0.4 (chorus enabled)", f.audio.chorusMix)
+	if f.audio.staged.ChorusMix != 0.4 {
+		t.Errorf("staged chorusMix = %v, want 0.4 (chorus enabled)", f.audio.staged.ChorusMix)
 	}
 	// Non-gate params always restore at their stored value.
-	if f.audio.delayTimeMs != 300 {
-		t.Errorf("audio delayTimeMs = %v, want 300", f.audio.delayTimeMs)
+	if f.audio.staged.AnalogDelayTimeMs != 300 {
+		t.Errorf("staged delayTimeMs = %v, want 300", f.audio.staged.AnalogDelayTimeMs)
 	}
 
 	ch := recvChange(t, f.ch)
@@ -3342,8 +3370,13 @@ func TestMasterVolumeSurvivesPatchSelect(t *testing.T) {
 		t.Errorf("master changed across patch select: %v, want 0.5", f.c.MasterVolume())
 	}
 	// Piano has never been tweaked, so its Volume is the Defaults() 1.0.
-	if !approxEq(f.audio.volume, 1.0*0.5) {
-		t.Errorf("engine volume on piano = %v, want 0.5 (1.0 x 0.5)", f.audio.volume)
+	// Its restore is staged for the swap (the old patch keeps its live
+	// 0.2 until then), folded with the surviving global master.
+	if !approxEq(f.audio.staged.MasterVolume, 1.0*0.5) {
+		t.Errorf("staged volume on piano = %v, want 0.5 (1.0 x 0.5)", f.audio.staged.MasterVolume)
+	}
+	if !approxEq(f.audio.volume, 0.4*0.5) {
+		t.Errorf("live volume must stay on the old patch until the swap, got %v", f.audio.volume)
 	}
 }
 

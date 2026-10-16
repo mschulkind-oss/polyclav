@@ -920,6 +920,22 @@ pub(crate) struct DspParams {
     /// an actual toggle swaps filter instances with a brief documented
     /// click risk (see `synth::voice::Voice::set_oversample`).
     native_oversample: AtomicU32,
+    /// Patch-scoped post-synth params (per-patch gain, per-patch volume,
+    /// compressor/reverb, and the pedal chain) staged for the NEXT backend
+    /// swap, or `None` when nothing is staged. Written off the audio thread
+    /// when a patch is selected; consumed by `swap_pending_backend` in the
+    /// same callback that swaps the backend, BEFORE that callback renders,
+    /// so the new patch's params never touch the old backend's still-
+    /// sounding notes and tails. Without this, a select pushed the new
+    /// patch's gains into the live atomics immediately while the old
+    /// backend kept rendering for the whole asynchronous load — an audible
+    /// level/FX blip in the old patch's tail. NaN fields mean "leave the
+    /// live value alone at the swap" (same convention as
+    /// [`FfiChainParams`]). Mastering/limiter fields are global, not
+    /// per-patch, and are never staged. Only the live engine's `DspParams`
+    /// (the global one) is ever staged into; offline renders construct a
+    /// fresh `DspParams` and apply chain params directly.
+    staged_patch_params: std::sync::Mutex<Option<FfiChainParams>>,
 }
 
 impl DspParams {
@@ -992,6 +1008,7 @@ impl DspParams {
             native_bend_range_semitones: AtomicU32::new(2.0_f32.to_bits()),
             native_voice_mode: AtomicU32::new(0), // mono_legato
             native_oversample: AtomicU32::new(0), // off (regression-safe)
+            staged_patch_params: std::sync::Mutex::new(None),
         }
     }
 
@@ -1219,6 +1236,80 @@ impl DspParams {
     }
     pub fn set_patch_gain(&self, v: f32) {
         Self::store_clamped(&self.patch_gain, v, 0.0, 8.0);
+    }
+
+    /// Stage patch-scoped params for the next backend swap (see the
+    /// `staged_patch_params` field doc). Finite patch-scoped fields of
+    /// `cp` merge over any previously staged values, so the registry's
+    /// per-patch gain and the controls layer's restored knob/chain block
+    /// can stage independently; mastering/limiter fields are global and
+    /// ignored here. Live values are NOT touched.
+    pub fn stage_patch_params(&self, cp: &FfiChainParams) {
+        let mut guard = self.staged_patch_params.lock().unwrap();
+        let staged = guard.get_or_insert_with(FfiChainParams::all_nan);
+        staged.merge_patch_scoped_from(cp);
+    }
+
+    /// Discard any staged patch params (a backend load failed, so the old
+    /// patch — and its live params — stay in force).
+    pub fn clear_staged_patch_params(&self) {
+        *self.staged_patch_params.lock().unwrap() = None;
+    }
+
+    /// Apply and consume the staged patch params, if any. Called by
+    /// `swap_pending_backend` once the new backend is installed, before
+    /// the callback renders, so the first block the new backend produces
+    /// already carries its own patch's gains and chain.
+    pub fn apply_staged_patch_params(&self) {
+        let staged = self.staged_patch_params.lock().unwrap().take();
+        if let Some(cp) = staged {
+            self.apply_patch_scoped_params(&cp);
+        }
+    }
+
+    /// Push every finite patch-scoped field of `cp` through the normal
+    /// (clamping) setters. Mastering/limiter fields are deliberately not
+    /// patch-scoped and are not applied here.
+    fn apply_patch_scoped_params(&self, cp: &FfiChainParams) {
+        if cp.master_volume.is_finite() {
+            self.set_master_volume(cp.master_volume);
+        }
+        if cp.comp_amount.is_finite() {
+            self.set_comp_amount(cp.comp_amount);
+        }
+        if cp.reverb_mix.is_finite() {
+            self.set_reverb_mix(cp.reverb_mix);
+        }
+        if cp.patch_gain.is_finite() {
+            self.set_patch_gain(cp.patch_gain);
+        }
+        if cp.drive_pedal_amount.is_finite() {
+            self.set_drive_pedal_amount(cp.drive_pedal_amount);
+        }
+        if cp.analog_delay_time_ms.is_finite() {
+            self.set_analog_delay_time_ms(cp.analog_delay_time_ms);
+        }
+        if cp.analog_delay_feedback.is_finite() {
+            self.set_analog_delay_feedback(cp.analog_delay_feedback);
+        }
+        if cp.analog_delay_mix.is_finite() {
+            self.set_analog_delay_mix(cp.analog_delay_mix);
+        }
+        if cp.chorus_rate_hz.is_finite() {
+            self.set_chorus_rate_hz(cp.chorus_rate_hz);
+        }
+        if cp.chorus_depth.is_finite() {
+            self.set_chorus_depth(cp.chorus_depth);
+        }
+        if cp.chorus_mix.is_finite() {
+            self.set_chorus_mix(cp.chorus_mix);
+        }
+        if cp.tremolo_rate_hz.is_finite() {
+            self.set_tremolo_rate_hz(cp.tremolo_rate_hz);
+        }
+        if cp.tremolo_depth.is_finite() {
+            self.set_tremolo_depth(cp.tremolo_depth);
+        }
     }
     pub fn set_mastering_amount(&self, v: f32) {
         Self::store(&self.mastering_amount, v);
@@ -2283,6 +2374,31 @@ pub extern "C" fn polyclav_dsp_set_patch_gain(linear: f32) {
     dsp_params().set_patch_gain(linear);
 }
 
+/// Stage patch-scoped chain params for the next backend swap (see
+/// `DspParams::staged_patch_params`). The params stay inert until the
+/// audio thread swaps in the freshly loaded backend, whose first rendered
+/// block then carries them; the old backend's tail is never re-gained or
+/// re-effected by the incoming patch. NaN fields are left alone at the
+/// swap; mastering/limiter fields are global and ignored. A NULL pointer
+/// is a no-op.
+///
+/// # Safety
+/// `cp`, when non-NULL, must point to a valid `PolyclavChainParams`.
+#[no_mangle]
+pub unsafe extern "C" fn polyclav_dsp_stage_patch_params(cp: *const FfiChainParams) {
+    if cp.is_null() {
+        return;
+    }
+    dsp_params().stage_patch_params(unsafe { &*cp });
+}
+
+/// Discard params staged by `polyclav_dsp_stage_patch_params` (the load
+/// they belonged to failed; the old patch remains live).
+#[no_mangle]
+pub extern "C" fn polyclav_dsp_clear_staged_patch_params() {
+    dsp_params().clear_staged_patch_params();
+}
+
 #[no_mangle]
 pub extern "C" fn polyclav_dsp_set_mastering_compressor(amount: f32) {
     dsp_params().set_mastering_amount(amount);
@@ -2897,6 +3013,79 @@ pub struct FfiChainParams {
     pub tremolo_depth: f32,
 }
 
+impl FfiChainParams {
+    /// Every field NaN — "override nothing" (see the struct doc).
+    fn all_nan() -> Self {
+        Self {
+            master_volume: f32::NAN,
+            comp_amount: f32::NAN,
+            reverb_mix: f32::NAN,
+            patch_gain: f32::NAN,
+            mastering_amount: f32::NAN,
+            limiter_ceiling_db: f32::NAN,
+            mastering_ratio: f32::NAN,
+            mastering_range_db: f32::NAN,
+            mastering_headroom_db: f32::NAN,
+            mastering_attack_ms: f32::NAN,
+            mastering_release_ms: f32::NAN,
+            drive_pedal_amount: f32::NAN,
+            analog_delay_time_ms: f32::NAN,
+            analog_delay_feedback: f32::NAN,
+            analog_delay_mix: f32::NAN,
+            chorus_rate_hz: f32::NAN,
+            chorus_depth: f32::NAN,
+            chorus_mix: f32::NAN,
+            tremolo_rate_hz: f32::NAN,
+            tremolo_depth: f32::NAN,
+        }
+    }
+
+    /// Copy the finite patch-scoped fields of `other` over `self`
+    /// (mastering/limiter fields are global, never staged — see
+    /// `DspParams::stage_patch_params`).
+    fn merge_patch_scoped_from(&mut self, other: &Self) {
+        if other.master_volume.is_finite() {
+            self.master_volume = other.master_volume;
+        }
+        if other.comp_amount.is_finite() {
+            self.comp_amount = other.comp_amount;
+        }
+        if other.reverb_mix.is_finite() {
+            self.reverb_mix = other.reverb_mix;
+        }
+        if other.patch_gain.is_finite() {
+            self.patch_gain = other.patch_gain;
+        }
+        if other.drive_pedal_amount.is_finite() {
+            self.drive_pedal_amount = other.drive_pedal_amount;
+        }
+        if other.analog_delay_time_ms.is_finite() {
+            self.analog_delay_time_ms = other.analog_delay_time_ms;
+        }
+        if other.analog_delay_feedback.is_finite() {
+            self.analog_delay_feedback = other.analog_delay_feedback;
+        }
+        if other.analog_delay_mix.is_finite() {
+            self.analog_delay_mix = other.analog_delay_mix;
+        }
+        if other.chorus_rate_hz.is_finite() {
+            self.chorus_rate_hz = other.chorus_rate_hz;
+        }
+        if other.chorus_depth.is_finite() {
+            self.chorus_depth = other.chorus_depth;
+        }
+        if other.chorus_mix.is_finite() {
+            self.chorus_mix = other.chorus_mix;
+        }
+        if other.tremolo_rate_hz.is_finite() {
+            self.tremolo_rate_hz = other.tremolo_rate_hz;
+        }
+        if other.tremolo_depth.is_finite() {
+            self.tremolo_depth = other.tremolo_depth;
+        }
+    }
+}
+
 /// Apply every finite (i.e. explicitly set) field of `cp` onto `ud`'s
 /// fresh `DspParams`. Called once, right after `build_offline_user_data`
 /// and before the render loop — `render_block` re-reads `dsp_params`
@@ -3368,6 +3557,10 @@ pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
             enqueue_backend_disposal(old_backend);
         }
         user_data.synth = Some(new_backend);
+        // The new patch's staged params land now — with the backend, in
+        // this callback, before it renders — so they never touched the
+        // old backend's final blocks. See `staged_patch_params`.
+        user_data.dsp_params.apply_staged_patch_params();
         audio_metrics()
             .backend_swaps
             .fetch_add(1, Ordering::Relaxed);
@@ -4129,6 +4322,69 @@ mod tests {
         assert_eq!(metrics.reload_coalesced, 1);
         assert_eq!(metrics.backend_swaps, 1);
         drain_backend_disposal_queue();
+    }
+
+    #[test]
+    fn staged_patch_params_apply_only_at_backend_swap() {
+        SOUNDFONT_GENERATION.store(20, Ordering::SeqCst);
+        let old = SynthBackend::load_native("minimoog").unwrap();
+        let mut user_data = build_offline_user_data(Some(old));
+        user_data.dsp_params.set_patch_gain(0.5);
+        user_data.dsp_params.set_master_volume(0.25);
+
+        // Staging must not disturb the still-sounding old backend.
+        let mut cp = FfiChainParams::all_nan();
+        cp.patch_gain = 2.0;
+        cp.master_volume = 4.0;
+        cp.reverb_mix = 0.75;
+        user_data.dsp_params.stage_patch_params(&cp);
+        assert_eq!(user_data.dsp_params.patch_gain(), 0.5);
+        assert_eq!(user_data.dsp_params.master_volume(), 0.25);
+        assert_eq!(user_data.dsp_params.reverb_mix(), 0.0);
+
+        user_data
+            .reload_queue
+            .push((20, SynthBackend::load_native("minimoog").unwrap()))
+            .ok()
+            .unwrap();
+        swap_pending_backend(&mut user_data);
+
+        // The swap consumed the staged values: the new backend's first
+        // block renders with its own patch's gains.
+        assert_eq!(user_data.dsp_params.patch_gain(), 2.0);
+        assert_eq!(user_data.dsp_params.master_volume(), 4.0);
+        assert_eq!(user_data.dsp_params.reverb_mix(), 0.75);
+        // Consumed means consumed: a second apply is a no-op.
+        user_data.dsp_params.set_patch_gain(1.0);
+        user_data.dsp_params.apply_staged_patch_params();
+        assert_eq!(user_data.dsp_params.patch_gain(), 1.0);
+        drain_backend_disposal_queue();
+    }
+
+    #[test]
+    fn staged_patch_params_merge_and_clear() {
+        let p = DspParams::new();
+        let mut gain_only = FfiChainParams::all_nan();
+        gain_only.patch_gain = 3.0;
+        gain_only.mastering_amount = 0.9; // global: never staged
+        p.stage_patch_params(&gain_only);
+        let mut volume_only = FfiChainParams::all_nan();
+        volume_only.master_volume = 2.0;
+        p.stage_patch_params(&volume_only);
+        // Independent stagings merge; live values stay put until apply.
+        assert_eq!(p.patch_gain(), 1.0);
+        assert_eq!(p.master_volume(), 1.0);
+        p.apply_staged_patch_params();
+        assert_eq!(p.patch_gain(), 3.0);
+        assert_eq!(p.master_volume(), 2.0);
+        assert_eq!(p.mastering_amount(), 0.0);
+
+        // A failed load discards the staging instead of applying it.
+        p.stage_patch_params(&gain_only);
+        p.clear_staged_patch_params();
+        p.set_patch_gain(1.0);
+        p.apply_staged_patch_params();
+        assert_eq!(p.patch_gain(), 1.0);
     }
 
     #[test]

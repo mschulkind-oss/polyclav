@@ -328,12 +328,14 @@ func (c *Controls) publishChain(field string, value any, patch string) {
 	}})
 }
 
-// restoreChain pushes every chain param to the engine at its effective
-// value for the given stored knob block — the patch-select restore path
-// (owns the drive-pedal push too). A gate param of a disabled stage is
-// parked at 0; every other param is pushed at its stored value. Callers
-// hold applyMu.
-func (c *Controls) restoreChain(k state.Knob) {
+// stagedChainParams builds the pedal-chain portion of the staged
+// patch block at its effective value for the given stored knob block —
+// the patch-select restore path (owns the drive pedal too). A gate
+// param of a disabled stage is parked at 0; every other param carries
+// its stored value. The block is staged for the backend swap, not
+// pushed live (see Controls.afterSelect). Callers hold applyMu.
+func stagedChainParams(k state.Knob) StagedPatchParams {
+	var sp StagedPatchParams
 	for i := range chainStages {
 		stg := &chainStages[i]
 		on := knobEnable(k, stg.ID)
@@ -342,8 +344,35 @@ func (c *Controls) restoreChain(k state.Knob) {
 			if pm.Gate && !on {
 				v = 0
 			}
-			pm.set(c.audio, v)
+			setStagedChainParam(&sp, pm.ID, v)
 		}
+	}
+	return sp
+}
+
+// setStagedChainParam routes one chain param (by registry ID) into its
+// StagedPatchParams field. Unknown IDs are dropped: the registry and
+// the staged struct are both in this package and kept in lockstep.
+func setStagedChainParam(sp *StagedPatchParams, id string, v float32) {
+	switch id {
+	case "drive.amount":
+		sp.DrivePedalAmount = v
+	case "chorus.rate_hz":
+		sp.ChorusRateHz = v
+	case "chorus.depth":
+		sp.ChorusDepth = v
+	case "chorus.mix":
+		sp.ChorusMix = v
+	case "tremolo.rate_hz":
+		sp.TremoloRateHz = v
+	case "tremolo.depth":
+		sp.TremoloDepth = v
+	case "delay.time_ms":
+		sp.AnalogDelayTimeMs = v
+	case "delay.feedback":
+		sp.AnalogDelayFeedback = v
+	case "delay.mix":
+		sp.AnalogDelayMix = v
 	}
 }
 

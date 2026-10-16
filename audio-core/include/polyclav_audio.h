@@ -239,6 +239,15 @@ void polyclav_dsp_set_master_volume(float v);
 /* Per-patch gain as a linear multiplier. Go converts dB -> linear before
  * pushing. Default 1.0, clamped to [0.0, 8.0] in Rust. */
 void polyclav_dsp_set_patch_gain(float linear);
+/* Stage patch-scoped PolyclavChainParams fields (per-patch gain, volume,
+ * compressor/reverb, pedal chain) for the next backend swap: inert until
+ * the audio thread swaps in the newly loaded backend, so the incoming
+ * patch's params never apply to the old backend's sounding tail. NaN
+ * fields are left alone at the swap; mastering/limiter fields are global
+ * and ignored. NULL is a no-op. */
+void polyclav_dsp_stage_patch_params(const PolyclavChainParams *cp);
+/* Discard staged patch params (their backend load failed). */
+void polyclav_dsp_clear_staged_patch_params(void);
 
 /* Mastering compressor amount in [0.0, 1.0]. 0 = bypass. */
 void polyclav_dsp_set_mastering_compressor(float amount);

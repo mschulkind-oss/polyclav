@@ -87,7 +87,7 @@ type audioBackend interface {
 	Panic()
 	SetSoundfont(path string)
 	ReloadSoundfont() error
-	SetPatchGain(linear float32)
+	StagePatchGain(linear float32)
 	SetLv2Plugin(uri string) error
 	SetClapPlugin(bundlePath, pluginID string) error
 	SetClapPluginWithState(bundlePath, pluginID string, stateBlob []byte) error
@@ -99,10 +99,14 @@ type audioBackend interface {
 // audio.ReloadSoundfont directly.
 type realAudioBackend struct{}
 
-func (realAudioBackend) Panic()                        { audio.Panic() }
-func (realAudioBackend) SetSoundfont(path string)      { audio.SetSoundfont(path) }
-func (realAudioBackend) ReloadSoundfont() error        { return audio.ReloadSoundfont() }
-func (realAudioBackend) SetPatchGain(linear float32)   { audio.SetPatchGain(linear) }
+func (realAudioBackend) Panic()                   { audio.Panic() }
+func (realAudioBackend) SetSoundfont(path string) { audio.SetSoundfont(path) }
+func (realAudioBackend) ReloadSoundfont() error   { return audio.ReloadSoundfont() }
+func (realAudioBackend) StagePatchGain(linear float32) {
+	cp := audio.NewChainParams()
+	cp.PatchGain = linear
+	audio.StagePatchParams(cp)
+}
 func (realAudioBackend) SetLv2Plugin(uri string) error { return audio.SetLv2Plugin(uri) }
 func (realAudioBackend) SetClapPlugin(bundlePath, pluginID string) error {
 	return audio.SetClapPlugin(bundlePath, pluginID)
@@ -320,9 +324,14 @@ func (r *Registry) selectIndex(i int, clapStateBlob []byte) error {
 		return fmt.Errorf("patch %q: unknown type %q", p.Name, p.Type)
 	}
 
-	// Push per-patch gain. 0 dB -> 1.0 linear (unity).
+	// Stage per-patch gain for the backend swap (0 dB -> 1.0 linear,
+	// unity). It must NOT go live now: the old backend keeps rendering
+	// until the freshly loaded one swaps in, and the new patch's gain
+	// applied to the old patch's tail is an audible blip. The engine
+	// applies the staged gain in the swap callback, before the new
+	// backend's first block. See audio.StagePatchParams.
 	linear := float32(math.Pow(10.0, float64(p.GainDB)/20.0))
-	backend.SetPatchGain(linear)
+	backend.StagePatchGain(linear)
 
 	r.mu.Lock()
 	r.current = i

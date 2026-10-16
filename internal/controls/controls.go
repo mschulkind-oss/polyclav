@@ -13,11 +13,37 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/state"
 )
 
+// StagedPatchParams is the patch-scoped post-synth block a patch select
+// stages for the next backend swap: the patch's own volume (folded with
+// the global master), compressor and reverb, and the pedal chain at its
+// effective (gate-parked) values. It is staged, not pushed live, because
+// the old backend keeps sounding until the new one swaps in — the new
+// patch's gains applied to the old patch's tail are an audible blip.
+// The engine applies the block in the swap callback. See
+// audio.StagePatchParams.
+type StagedPatchParams struct {
+	MasterVolume        float32
+	Compressor          float32
+	Reverb              float32
+	DrivePedalAmount    float32
+	ChorusRateHz        float32
+	ChorusDepth         float32
+	ChorusMix           float32
+	TremoloRateHz       float32
+	TremoloDepth        float32
+	AnalogDelayTimeMs   float32
+	AnalogDelayFeedback float32
+	AnalogDelayMix      float32
+}
+
 // Audio is the slice of internal/audio the controls layer drives. An
 // interface (rather than calling the audio package directly) so tests
 // can observe every apply without a running engine, mirroring the
 // audioBackend seam in internal/patches.
 type Audio interface {
+	// StagePatchParams stages the per-patch block for the next backend
+	// swap (see StagedPatchParams); it does not touch live audio.
+	StagePatchParams(StagedPatchParams)
 	SetMasterVolume(float32)
 	SetReverb(float32)
 	SetCompressor(float32)
@@ -1809,15 +1835,19 @@ func (c *Controls) afterSelect() {
 		return
 	}
 	k := c.st.PatchKnob(cur.Name)
-	c.audio.SetMasterVolume(k.Volume * c.st.MasterVolume())
-	c.audio.SetReverb(k.Reverb)
-	c.audio.SetCompressor(k.Compressor)
-	// The chain registry owns the post-synth restore, drive pedal
-	// included (the standalone SetDrivePedal call it replaced): each
-	// stage's params go to the engine at their EFFECTIVE value (a gate
-	// param of a disabled stage is parked at 0 — there is no Rust
-	// bypass). Backend-agnostic, so it runs for every patch type.
-	c.restoreChain(k)
+	// Stage (do NOT push live) the patch's whole post-synth block: the
+	// chain registry owns the chain portion, drive pedal included (the
+	// standalone SetDrivePedal call it replaced), each stage at its
+	// EFFECTIVE value (a gate param of a disabled stage is parked at 0
+	// — there is no Rust bypass). The engine applies the staged block
+	// when the new backend swaps in, so none of it re-gains or
+	// re-effects the old patch's sounding tail during the load.
+	// Backend-agnostic, so it runs for every patch type.
+	sp := stagedChainParams(k)
+	sp.MasterVolume = k.Volume * c.st.MasterVolume()
+	sp.Reverb = k.Reverb
+	sp.Compressor = k.Compressor
+	c.audio.StagePatchParams(sp)
 	c.st.SetCurrentPatch(cur.Name)
 	data := map[string]any{
 		"name":       cur.Name,

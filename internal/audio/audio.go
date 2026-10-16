@@ -287,28 +287,7 @@ func RenderOfflineEvents(patchType, patchRef, pluginID string, chainParams *Chai
 
 	var cChainParams *C.PolyclavChainParams
 	if chainParams != nil {
-		cCP := C.PolyclavChainParams{
-			master_volume:         C.float(chainParams.MasterVolume),
-			comp_amount:           C.float(chainParams.CompAmount),
-			reverb_mix:            C.float(chainParams.ReverbMix),
-			patch_gain:            C.float(chainParams.PatchGain),
-			mastering_amount:      C.float(chainParams.MasteringAmount),
-			limiter_ceiling_db:    C.float(chainParams.LimiterCeilingDB),
-			mastering_ratio:       C.float(chainParams.MasteringRatio),
-			mastering_range_db:    C.float(chainParams.MasteringRangeDB),
-			mastering_headroom_db: C.float(chainParams.MasteringHeadroomDB),
-			mastering_attack_ms:   C.float(chainParams.MasteringAttackMs),
-			mastering_release_ms:  C.float(chainParams.MasteringReleaseMs),
-			drive_pedal_amount:    C.float(chainParams.DrivePedalAmount),
-			analog_delay_time_ms:  C.float(chainParams.AnalogDelayTimeMs),
-			analog_delay_feedback: C.float(chainParams.AnalogDelayFeedback),
-			analog_delay_mix:      C.float(chainParams.AnalogDelayMix),
-			chorus_rate_hz:        C.float(chainParams.ChorusRateHz),
-			chorus_depth:          C.float(chainParams.ChorusDepth),
-			chorus_mix:            C.float(chainParams.ChorusMix),
-			tremolo_rate_hz:       C.float(chainParams.TremoloRateHz),
-			tremolo_depth:         C.float(chainParams.TremoloDepth),
-		}
+		cCP := chainParamsC(*chainParams)
 		cChainParams = &cCP
 	}
 
@@ -687,6 +666,52 @@ func SetReverb(v float32) {
 // to [0, 8] in Rust. Push on patch select.
 func SetPatchGain(linear float32) {
 	C.polyclav_dsp_set_patch_gain(C.float(linear))
+}
+
+// chainParamsC converts the Go ChainParams to its C wire twin.
+func chainParamsC(cp ChainParams) C.PolyclavChainParams {
+	return C.PolyclavChainParams{
+		master_volume:         C.float(cp.MasterVolume),
+		comp_amount:           C.float(cp.CompAmount),
+		reverb_mix:            C.float(cp.ReverbMix),
+		patch_gain:            C.float(cp.PatchGain),
+		mastering_amount:      C.float(cp.MasteringAmount),
+		limiter_ceiling_db:    C.float(cp.LimiterCeilingDB),
+		mastering_ratio:       C.float(cp.MasteringRatio),
+		mastering_range_db:    C.float(cp.MasteringRangeDB),
+		mastering_headroom_db: C.float(cp.MasteringHeadroomDB),
+		mastering_attack_ms:   C.float(cp.MasteringAttackMs),
+		mastering_release_ms:  C.float(cp.MasteringReleaseMs),
+		drive_pedal_amount:    C.float(cp.DrivePedalAmount),
+		analog_delay_time_ms:  C.float(cp.AnalogDelayTimeMs),
+		analog_delay_feedback: C.float(cp.AnalogDelayFeedback),
+		analog_delay_mix:      C.float(cp.AnalogDelayMix),
+		chorus_rate_hz:        C.float(cp.ChorusRateHz),
+		chorus_depth:          C.float(cp.ChorusDepth),
+		chorus_mix:            C.float(cp.ChorusMix),
+		tremolo_rate_hz:       C.float(cp.TremoloRateHz),
+		tremolo_depth:         C.float(cp.TremoloDepth),
+	}
+}
+
+// StagePatchParams stages patch-scoped chain params (per-patch gain and
+// volume, compressor/reverb, the pedal chain) for the NEXT backend swap:
+// they stay inert until the audio thread swaps in the newly loaded
+// backend, whose first rendered block then carries them. Patch selection
+// stages through here instead of pushing the live setters, so the
+// incoming patch's gains never re-gain the old backend's sounding tail
+// during the asynchronous load. NaN fields (see NewChainParams) are left
+// alone at the swap; mastering/limiter fields are global and ignored by
+// the staging path in Rust.
+func StagePatchParams(cp ChainParams) {
+	cCP := chainParamsC(cp)
+	C.polyclav_dsp_stage_patch_params(&cCP)
+}
+
+// ClearStagedPatchParams discards anything staged by StagePatchParams —
+// the load it belonged to failed, so the old patch's params stay live.
+func ClearStagedPatchParams() {
+	C.polyclav_dsp_clear_staged_patch_params()
 }
 
 // SetMasteringCompressor amount in [0.0, 1.0]. 0 = bypass. Clamped in Rust.

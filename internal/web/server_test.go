@@ -54,8 +54,16 @@ type fakeAudio struct {
 	voiceMode                        string
 	oversample                       bool
 	oscCalls                         int
+	staged                           controls.StagedPatchParams
+	stagedCalls                      int
 }
 
+func (f *fakeAudio) StagePatchParams(sp controls.StagedPatchParams) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.staged = sp
+	f.stagedCalls++
+}
 func (f *fakeAudio) SetMasterVolume(v float32) { f.mu.Lock(); defer f.mu.Unlock(); f.volume = v }
 func (f *fakeAudio) SetReverb(v float32)       { f.mu.Lock(); defer f.mu.Unlock(); f.reverb = v }
 func (f *fakeAudio) SetCompressor(v float32)   { f.mu.Lock(); defer f.mu.Unlock(); f.compressor = v }
@@ -825,9 +833,13 @@ func TestPatchSelect(t *testing.T) {
 	if v := m["volume"].(float64); !approxEq(v, 0.7) {
 		t.Errorf("response params.volume: expected 0.7, got %v", v)
 	}
-	// The select restored the stored knobs into the (fake) engine.
-	if v := f.audio.get("volume"); !approxEq(float64(v), 0.7) {
-		t.Errorf("audio volume: expected 0.7, got %v", v)
+	// The select staged the stored knobs for the backend swap; live
+	// engine values stay on the old patch until the swap lands.
+	if v := f.audio.staged.MasterVolume; !approxEq(float64(v), 0.7) {
+		t.Errorf("staged volume: expected 0.7, got %v", v)
+	}
+	if v := f.audio.get("volume"); v != 0 {
+		t.Errorf("live audio volume must be untouched by the select, got %v", v)
 	}
 	if f.st.getCurrentPatch() != "salamander" {
 		t.Errorf("state current patch: expected salamander, got %q", f.st.getCurrentPatch())
@@ -932,8 +944,11 @@ func TestParamsPatchOutOfRange(t *testing.T) {
 		rec := f.do(t, "PATCH", "/api/params", body)
 		wantStatus(t, rec, http.StatusBadRequest)
 	}
-	if v := f.audio.get("volume"); v != 1.0 { // still the select-restored default
+	if v := f.audio.get("volume"); v != 0 { // select stages, never pushes live
 		t.Errorf("audio volume must be untouched by rejected patches, got %v", v)
+	}
+	if v := f.audio.staged.MasterVolume; !approxEq(float64(v), 1.0) { // the select-staged default
+		t.Errorf("staged volume must be untouched by rejected patches, got %v", v)
 	}
 }
 

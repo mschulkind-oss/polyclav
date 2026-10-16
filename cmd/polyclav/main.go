@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -438,13 +437,29 @@ func main() {
 			}
 		}
 	}
+	// screenArbiter owns the two-line display: the patch name is the base
+	// layer and takes precedence over value popups (drawbar/knob/bank),
+	// which restore to it after 800 ms. See screen_arbiter.go for why the
+	// precedence has to be explicit (a popup surviving a patch switch
+	// left the screen stuck on a bare drawbar value).
+	initialDisplay := ""
+	if cur := registry.Current(); cur != nil {
+		initialDisplay = cur.Display
+	}
+	screen := newScreenArbiter(func(line1, line2 string) error {
+		if sup == nil || sup.Launchkey() == nil {
+			return nil
+		}
+		return sup.Launchkey().SetDisplayText(line1, line2)
+	}, 800*time.Millisecond, initialDisplay, "")
+
 	pushPadColors := func() {
 		paintPatchRow()
 		// The device forgets pad LEDs across power cycles: repaint the
 		// page-indicator row (row 1) alongside the patch row (row 0).
 		pg.RefreshPads()
 		if cur := registry.Current(); cur != nil {
-			if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
+			if err := screen.ShowPatch(cur.Display, ""); err != nil {
 				logger.Warn("launchkey set display text", "err", err)
 			}
 		}
@@ -454,49 +469,13 @@ func main() {
 		hub.Publish(controls.Change{Type: "midi-raw", Data: ev.Data()})
 	}
 
-	var (
-		knobMu           sync.Mutex
-		knobRestoreTimer *time.Timer
-		// screenBusy is true while a knob popup / page flash / transport
-		// message owns the 2-line display. The limiter indicator yields to it
-		// and re-asserts once the screen is idle again.
-		screenBusy bool
-	)
-	restoreDisplayToPatch := func() {
-		knobMu.Lock()
-		screenBusy = false
-		knobMu.Unlock()
-		if cur := registry.Current(); cur != nil {
-			_ = sup.Launchkey().SetDisplayText(cur.Display, "")
-		}
-	}
-	// armScreenRestore (re)starts the 800 ms revert-to-patch-name timer.
-	// Every pages-driven screen write (knob value popup, page-name flash,
-	// play/stop flash) shares it — the ROADMAP §2.3 base-layer behavior,
-	// unchanged from the pre-pages hardcoded knobs.
-	armScreenRestore := func() {
-		knobMu.Lock()
-		screenBusy = true
-		if knobRestoreTimer != nil {
-			knobRestoreTimer.Stop()
-		}
-		knobRestoreTimer = time.AfterFunc(800*time.Millisecond, restoreDisplayToPatch)
-		knobMu.Unlock()
-	}
-	screenIdle := func() bool {
-		knobMu.Lock()
-		defer knobMu.Unlock()
-		return !screenBusy
-	}
-
 	onMIDIEvent := func(ev midi.Event) {
 		if pedalRouter.Handle(ev) {
 			if status, show := lesliePedalStatus(ev, pedalRouter); show {
 				if sup != nil && sup.Launchkey() != nil && sup.Launchkey().State() == "active" {
-					if err := sup.Launchkey().SetDisplayText("LESLIE", status); err != nil {
+					if err := screen.ShowPopup("LESLIE", status); err != nil {
 						logger.Warn("launchkey leslie display", "err", err)
 					}
-					armScreenRestore()
 				}
 			}
 			if err := drawbarSync.Sync(); err != nil {
@@ -541,10 +520,9 @@ func main() {
 		case driver.FaderButtonEvent:
 			if dispatchFaderButton(e, activeOrgan(), drawbarLEDs, drawbarSync, pedalRouter, organScreenFunc(func(line1, line2 string) {
 				if sup != nil && sup.Launchkey() != nil && sup.Launchkey().State() == "active" {
-					if err := sup.Launchkey().SetDisplayText(line1, line2); err != nil {
+					if err := screen.ShowPopup(line1, line2); err != nil {
 						logger.Warn("launchkey fader button display", "err", err)
 					}
-					armScreenRestore()
 				}
 			})) {
 				return
@@ -579,10 +557,9 @@ func main() {
 				patchBank.Store(int32(next))
 				pushPadColors()
 				start, end := patchBankRangeLabel(int(patchBank.Load()), len(registry.All()))
-				if err := sup.Launchkey().SetDisplayText("PATCH BANK", fmt.Sprintf("%d-%d", start, end)); err != nil {
+				if err := screen.ShowPopup("PATCH BANK", fmt.Sprintf("%d-%d", start, end)); err != nil {
 					logger.Warn("launchkey patch bank display", "err", err)
 				}
-				armScreenRestore()
 				return
 			}
 			dispatchTransport(pg, e.Button)
@@ -681,10 +658,9 @@ func main() {
 	sup = supervisor.New(logger, supCfg)
 	mapper = osc.NewMapper(sup.XR18(), logger, cfg.OSC.XR18.Bindings)
 	faderRouter = &organFaderRouter{registry: registry, cache: clapParams, setter: realClapParamSetter{}, mapper: mapper, screen: organScreenFunc(func(line1, line2 string) {
-		if err := sup.Launchkey().SetDisplayText(line1, line2); err != nil {
+		if err := screen.ShowPopup(line1, line2); err != nil {
 			logger.Warn("launchkey organ display", "err", err)
 		}
-		armScreenRestore()
 	})}
 
 	// Knob-page state machine (docs/ROADMAP.md §2): page state and all
@@ -695,11 +671,10 @@ func main() {
 	// sup itself, per the supCfg comment above).
 	pg = pages.New(ctl,
 		screenAdapter{write: func(line1, line2 string) error {
-			err := sup.Launchkey().SetDisplayText(line1, line2)
+			err := screen.ShowPopup(line1, line2)
 			if err != nil {
 				logger.Warn("launchkey pages display", "err", err)
 			}
-			armScreenRestore()
 			return err
 		}},
 		padAdapter{set: func(row, col int, color components.Color) error {
@@ -743,7 +718,10 @@ func main() {
 		if cur == nil {
 			return true
 		}
-		if err := sup.Launchkey().SetDisplayText(cur.Display, patchLoadDisplayLine(st)); err != nil {
+		// The patch display is the screen's base layer: it takes
+		// precedence over any drawbar/knob popup in flight (see
+		// screen_arbiter.go).
+		if err := screen.ShowPatch(cur.Display, patchLoadDisplayLine(st)); err != nil {
 			logger.Warn("launchkey set display text", "err", err)
 			return false
 		}
@@ -830,14 +808,14 @@ func main() {
 				return
 			}
 			limiterLabel = ""
-			if cur := registry.Current(); cur != nil && screenIdle() {
-				if err := sup.Launchkey().SetDisplayText(cur.Display, ""); err != nil {
+			if cur := registry.Current(); cur != nil && screen.Idle() {
+				if err := screen.ShowPatch(cur.Display, ""); err != nil {
 					logger.Warn("launchkey limiter display", "err", err)
 				}
 			}
 			return
 		}
-		if !screenIdle() {
+		if !screen.Idle() {
 			return // a knob popup or flash owns the screen; re-assert when idle
 		}
 		if label == limiterLabel && now.Sub(limiterWrite) < limiterIndicatorRefresh {
@@ -849,7 +827,7 @@ func main() {
 		}
 		limiterLabel = label
 		limiterWrite = now
-		if err := sup.Launchkey().SetDisplayText(cur.Display, label); err != nil {
+		if err := screen.WriteDirect(cur.Display, label); err != nil {
 			logger.Warn("launchkey limiter display", "err", err)
 		}
 	}
@@ -894,6 +872,9 @@ func main() {
 							hub.Publish(controls.Change{Type: "plugin-status", Data: map[string]any{"generation": ev.Generation, "state": "active"}})
 						}
 					case audio.BackendEventFailed:
+						// The old backend stays live, so the failed patch's
+						// staged params must never land on it.
+						audio.ClearStagedPatchParams()
 						if registry.MarkFailed(ev.Generation, "audio-core loader failed") {
 							clapParams.Clear()
 							if cur := registry.Current(); cur != nil {
@@ -1002,6 +983,22 @@ type audioBackend struct{}
 
 var _ controls.Audio = audioBackend{}
 
+func (audioBackend) StagePatchParams(sp controls.StagedPatchParams) {
+	cp := audio.NewChainParams()
+	cp.MasterVolume = sp.MasterVolume
+	cp.CompAmount = sp.Compressor
+	cp.ReverbMix = sp.Reverb
+	cp.DrivePedalAmount = sp.DrivePedalAmount
+	cp.ChorusRateHz = sp.ChorusRateHz
+	cp.ChorusDepth = sp.ChorusDepth
+	cp.ChorusMix = sp.ChorusMix
+	cp.TremoloRateHz = sp.TremoloRateHz
+	cp.TremoloDepth = sp.TremoloDepth
+	cp.AnalogDelayTimeMs = sp.AnalogDelayTimeMs
+	cp.AnalogDelayFeedback = sp.AnalogDelayFeedback
+	cp.AnalogDelayMix = sp.AnalogDelayMix
+	audio.StagePatchParams(cp)
+}
 func (audioBackend) SetMasterVolume(v float32)        { audio.SetMasterVolume(v) }
 func (audioBackend) SetReverb(v float32)              { audio.SetReverb(v) }
 func (audioBackend) SetCompressor(v float32)          { audio.SetCompressor(v) }

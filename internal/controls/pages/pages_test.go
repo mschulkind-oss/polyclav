@@ -59,6 +59,9 @@ func (f *fakeAudio) rec(m string) { f.calls[m]++ }
 // state) so a test can assert only the calls it caused.
 func (f *fakeAudio) reset() { f.calls = map[string]int{} }
 
+func (f *fakeAudio) StagePatchParams(sp controls.StagedPatchParams) {
+	f.rec("StagePatchParams")
+}
 func (f *fakeAudio) SetMasterVolume(v float32)  { f.rec("SetMasterVolume"); f.volume = v }
 func (f *fakeAudio) SetReverb(v float32)        { f.rec("SetReverb"); f.reverb = v }
 func (f *fakeAudio) SetCompressor(v float32)    { f.rec("SetCompressor"); f.compressor = v }
