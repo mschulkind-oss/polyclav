@@ -54,7 +54,6 @@ func TestOrganFaderDisabledRoutesLaunchkeyDAWFaderToMixerOSC(t *testing.T) {
 
 func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testing.T) {
 	p := organPatch()
-	p.Display = "Potato Organ"
 	cache := clapcache.New()
 	cache.Replace(drawbarParams())
 	setter, mapper, screen := &fakeSetter{}, &fakeMapper{}, &fakeScreen{}
@@ -66,10 +65,11 @@ func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testin
 	if len(mapper.events) != 0 {
 		t.Fatalf("mixer events = %v, want none", mapper.events)
 	}
-	// The popup carries the patch name on line 1 so a continuous fader
-	// stream repainting it can never hide which patch is live.
-	if screen.line1 != "Potato Organ" || screen.line2 != "16' drawbar 8" {
-		t.Fatalf("screen = %q/%q", screen.line1, screen.line2)
+	// A successful drawbar move shows nothing: the physical fader is
+	// its own position display, and a popup would only cover the patch
+	// name for the whole gesture.
+	if screen.line1 != "" || screen.line2 != "" {
+		t.Fatalf("screen = %q/%q, want untouched", screen.line1, screen.line2)
 	}
 }
 

@@ -104,32 +104,15 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 		}
 	}
 	r.cache.Update(param.ClapID, value)
-	line1, line2 := drawbarPopupLines(cur.Display, e.Index, formatParamValue(value, param.MinValue, param.MaxValue))
-	r.show(line1, line2)
+	// No screen popup for a successful drawbar move: unlike the
+	// encoders (which have no physical position readout), a fader's
+	// position is visible and tactile on the hardware itself, so a
+	// value popup only repainted text over the patch name for the whole
+	// gesture — a continuous fader stream re-triggers it on every event.
+	// The patch name keeps the screen; only failures (unresolved or
+	// missing drawbar params, SET FAILED above) still pop up, since
+	// those are not visible from the hardware.
 	return true
-}
-
-// drawbarPopupLines composes the two-line drawbar popup: the patch name
-// on line 1, footage + value on line 2 ("16' drawbar 8"). The patch name
-// must stay on screen even mid-gesture: while a drawbar is moving, the
-// fader emits a continuous event stream and every event repaints this
-// popup, so a popup that replaced the patch name would keep the name
-// invisible for the whole gesture — including across a patch switch,
-// where the switch's own patch-name write is instantly painted over.
-// Showing both at once makes the repaint harmless. The footage is
-// ASCII ("5 1/3'", not "5⅓′") because the display path byte-truncates
-// each line to 16 bytes and non-ASCII bytes render as spaces; the
-// longest line here ("2 2/3' drawbar 8") fits exactly. With no patch
-// display name, fall back to the historic label/value popup.
-func drawbarPopupLines(patchDisplay string, index int, value string) (string, string) {
-	if patchDisplay == "" {
-		return drawbarLabel(index), value
-	}
-	footage := []string{"16'", "5 1/3'", "8'", "4'", "2 2/3'", "2'", "1 3/5'", "1 1/3'", "1'"}
-	if index < 1 || index > len(footage) {
-		return patchDisplay, "drawbar " + value
-	}
-	return patchDisplay, footage[index-1] + " drawbar " + value
 }
 
 // discoverOrganDrawbars resolves runtime CLAP IDs from exact parameter
