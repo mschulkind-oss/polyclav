@@ -1092,6 +1092,14 @@ without an audio device:
 When this capture is active, fader 9 changes the ninth drawbar only; it does
 not also send the mixer L/R fader OSC binding.
 
+The faders follow the Hammond drawbar direction, not the usual mixer-fader
+direction: pull a fader toward you (toward the keys) to pull its drawbar out
+and raise its level, and push it away from you to push the drawbar in and
+lower it. Pushed fully away is drawbar 0 (silent); pulled fully toward you is
+drawbar 8 (full). This inversion applies only while the faders are captured
+as drawbars — a fader bound to the mixer through OSC keeps the conventional
+push-away-is-louder direction.
+
 ### Launchkey organ drawbar buttons and coloring
 
 The nine buttons directly below the drawbar sliders illuminate to reflect the

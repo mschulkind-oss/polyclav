@@ -58,7 +58,8 @@ func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testin
 	cache.Replace(drawbarParams())
 	setter, mapper, screen := &fakeSetter{}, &fakeMapper{}, &fakeScreen{}
 	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper, screen: screen}
-	r.HandleFader(driver.FaderEvent{Index: 1, Value: 127})
+	// Pulled fully toward the player (raw 0) is a fully-out drawbar.
+	r.HandleFader(driver.FaderEvent{Index: 1, Value: 0})
 	if !setter.called || setter.id != 101 || setter.value != 8 {
 		t.Fatalf("set = (%d,%v,%v), want (101,8,true)", setter.id, setter.value, setter.called)
 	}
@@ -70,6 +71,34 @@ func TestOrganFaderCapturesAllNineResolvedDrawbarsAndDoesNotRouteMixer(t *testin
 	// name for the whole gesture.
 	if screen.line1 != "" || screen.line2 != "" {
 		t.Fatalf("screen = %q/%q, want untouched", screen.line1, screen.line2)
+	}
+}
+
+// A Hammond drawbar is pulled out toward the player — on the Launchkey,
+// toward the keys — to raise its level, and pushed away to lower it.
+// The fader reports 127 pushed fully away and 0 pulled fully toward
+// the player, so the drawbar value must run opposite to the raw CC.
+func TestOrganDrawbarPullTowardPlayerRaisesLevel(t *testing.T) {
+	p := organPatch()
+	cache := clapcache.New()
+	cache.Replace(drawbarParams())
+	setter, mapper := &fakeSetter{}, &fakeMapper{}
+	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
+
+	r.HandleFader(driver.FaderEvent{Index: 1, Value: 0})
+	if !setter.called || setter.id != 101 || setter.value != 8 {
+		t.Fatalf("fader pulled toward player: set = (%d,%v,%v), want (101,8,true)", setter.id, setter.value, setter.called)
+	}
+	r.HandleFader(driver.FaderEvent{Index: 1, Value: 127})
+	if !setter.called || setter.id != 101 || setter.value != 0 {
+		t.Fatalf("fader pushed away: set = (%d,%v,%v), want (101,0,true)", setter.id, setter.value, setter.called)
+	}
+	r.HandleFader(driver.FaderEvent{Index: 1, Value: 64})
+	if setter.value < 3.9 || setter.value > 4.1 {
+		t.Fatalf("fader midway: value = %v, want ≈4", setter.value)
+	}
+	if len(mapper.events) != 0 {
+		t.Fatalf("mixer events = %v, want none", mapper.events)
 	}
 }
 
@@ -87,7 +116,7 @@ func TestOrganAutoBindsExactFootageLabelsWithoutPluginID(t *testing.T) {
 	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
 	for i := 1; i <= 9; i++ {
 		setter.called = false
-		r.HandleFader(driver.FaderEvent{Index: i, Value: 127})
+		r.HandleFader(driver.FaderEvent{Index: i, Value: 0})
 		if !setter.called || setter.id != uint32(100+i) || setter.value != 8 {
 			t.Errorf("fader %d: set (%d,%v,%v)", i, setter.id, setter.value, setter.called)
 		}
@@ -110,7 +139,7 @@ func TestOrganFaderBindsExplicitParameterNames(t *testing.T) {
 	cache.Replace(params)
 	setter, mapper := &fakeSetter{}, &fakeMapper{}
 	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
-	r.HandleFader(driver.FaderEvent{Index: 3, Value: 127})
+	r.HandleFader(driver.FaderEvent{Index: 3, Value: 0})
 	if !setter.called || setter.id != 103 || setter.value != 8 || len(mapper.events) != 0 {
 		t.Fatalf("custom name binding: setter=%+v mapper=%+v", setter, mapper)
 	}
@@ -219,7 +248,7 @@ func TestPotatoKeysPluginOfflineAndLaunchkeyDrawbars(t *testing.T) {
 	r := &organFaderRouter{registry: fakeOrganRegistry{cur: p, active: p, status: patches.LoadStatus{State: patches.LoadStateActive}}, cache: cache, setter: setter, mapper: mapper}
 	for i, id := range ids {
 		setter.called = false
-		r.HandleFader(driver.FaderEvent{Index: i + 1, Value: 127})
+		r.HandleFader(driver.FaderEvent{Index: i + 1, Value: 0})
 		if !setter.called || setter.id != id || setter.value != 8 {
 			t.Errorf("fader %d: set (%d,%v,%v), want (%d,8,true)", i+1, setter.id, setter.value, setter.called, id)
 		}

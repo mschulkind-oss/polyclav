@@ -96,7 +96,7 @@ func (r *organFaderRouter) routeOrganFader(e driver.FaderEvent) bool {
 		}
 	}
 	param, _ := r.cache.Get(ids[e.Index-1])
-	value := scaleMIDI(e.Value, param.MinValue, param.MaxValue)
+	value := drawbarValue(e.Value, param.MinValue, param.MaxValue)
 	if r.setter != nil {
 		if err := r.setter.SetClapParam(param.ClapID, value); err != nil {
 			r.show(drawbarLabel(e.Index), "SET FAILED")
@@ -165,6 +165,18 @@ func patchType(typ string) string {
 
 func scaleMIDI(v byte, min, max float64) float64 {
 	return min + (max-min)*(float64(v)/127.0)
+}
+
+// drawbarValue maps a fader position to a drawbar level, inverted
+// relative to scaleMIDI. A Hammond drawbar is pulled out toward the
+// player to raise its level and pushed away to lower it; a Launchkey
+// fader reports 127 pushed fully away from the player and 0 pulled
+// fully toward them (toward the keys), so the drawbar level runs
+// opposite to the raw value. Only drawbars invert this way — the
+// mixer-fader fallback in HandleFader keeps the conventional
+// push-away-is-louder direction.
+func drawbarValue(v byte, min, max float64) float64 {
+	return scaleMIDI(127-v, min, max)
 }
 
 func drawbarLabel(index int) string {
