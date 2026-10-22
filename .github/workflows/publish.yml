@@ -66,7 +66,7 @@ jobs:
       # Go's cgo rejects unknown pkg-config flags unless allowlisted.
       CGO_CFLAGS_ALLOW: "-fno-strict-aliasing|-fno-strict-overflow"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -173,7 +173,7 @@ jobs:
       CGO_ENABLED: "1"
       GOFLAGS: "-mod=mod"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -287,7 +287,7 @@ jobs:
           echo "linux_url=https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/polyclav-linux-x86_64.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: mschulkind-oss/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

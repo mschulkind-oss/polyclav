@@ -9,7 +9,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Nix provides every dep declaratively (toolchains + system libs)
       # from the pinned flake. Same env on every contributor host.
