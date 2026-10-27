@@ -18,11 +18,17 @@ panel; see "Web dashboard" below.
 
 ## What works today
 
-- Live audio out via PipeWire. Any default sink works; an XR18 with the
-  host-side WirePlumber rule documented in `AGENTS.md` gets ~8 ms round-trip
-  at a 128-frame quantum.
-- Live MIDI in over ALSA-seq. Notes, CCs, pitch bend, and mod wheel from the
-  Launchkey (or any MIDI keyboard) are forwarded into the synth.
+- Live audio out, per platform: **PipeWire** on Linux (any default sink works;
+  an XR18 with the host-side WirePlumber rule documented in `AGENTS.md` gets
+  ~8 ms round-trip at a 128-frame quantum), **CoreAudio** on macOS, **WASAPI**
+  on Windows. WASAPI is shared-mode, so its buffer period is the device's
+  (~10 ms) rather than the 2.7 ms the Linux build asks for — see
+  `WINDOWS_PORT.md` §3.1.
+- Live MIDI in, per platform: **ALSA-seq** on Linux, **CoreMIDI** on macOS,
+  **WinMM** on Windows. Notes, CCs, pitch bend, and mod wheel from the Launchkey
+  (or any MIDI keyboard) are forwarded into the synth. Linux is the
+  hardware-tested path; macOS and Windows are built and tested without devices
+  — see the platform caveats in `INSTALL.md`.
 - Synthesis backends, chosen per patch:
   - `.sf2` / `.sf3` soundfonts → oxisynth (pure Rust)
   - `.sfz` soundfonts → sfizz (C library via Rust FFI)
@@ -100,22 +106,90 @@ panel; see "Web dashboard" below.
 
 ## Prerequisites
 
-- Linux with a running **PipeWire** server and **ALSA-seq** (for MIDI).
-- A MIDI keyboard that ALSA enumerates (anything class-compliant).
-- An audio interface (or onboard audio) recognized by PipeWire.
-- At least one soundfont (`.sf2`, `.sf3`, or `.sfz`), or a configured plugin /
-  native patch.
-- **mise** for managing the Go and Rust toolchains in the dev environment.
-- **overmind** for process supervision (optional — you can run `bin/polyclav`
+- A **MIDI keyboard** your OS enumerates (anything class-compliant). None of
+  the tours that use the audition player need one.
+- An **audio interface**, or onboard audio.
+- At least one **soundfont** (`.sf2`, `.sf3`, or `.sfz`), or a configured plugin
+  or native patch. The native synth needs no files, which is why the quick start
+  below downloads nothing.
+- **Linux only:** a running **PipeWire** server and **ALSA-seq** for MIDI. macOS
+  and Windows need no extra libraries — those builds link only system
+  frameworks (macOS) or Windows system DLLs.
+- **Only if you build from source:** `mise` for the Go + Rust toolchains, and
+  `overmind` for process supervision (optional — you can run `bin/polyclav`
   directly, but the rest of this guide uses overmind).
 
 Low-latency tuning (the XR18 WirePlumber rule, host-side audio bridges, and
 similar) is out of scope here — see the "Latency tuning" and
 "Audio + MIDI bridging" sections of `AGENTS.md`.
 
-## Install / build
+## Install
 
-From the repo root:
+There are two ways: install a prebuilt binary from a package manager, or build
+from git. Both are covered for every supported OS.
+
+### Install from a package manager
+
+#### Windows (x86_64)
+
+Scoop is the recommended path — user-scope, no admin, and upgrades that don't
+fight a running daemon (each version installs into its own directory, so it
+never tries to overwrite `polyclav.exe` while it is running):
+
+```powershell
+scoop bucket add polyclav https://github.com/mschulkind-oss/scoop-bucket
+scoop install polyclav
+scoop update polyclav      # later
+```
+
+Or download `polyclav-windows-x86_64.zip` from the
+[latest release](https://github.com/mschulkind-oss/polyclav/releases/latest) and
+unpack `polyclav.exe` anywhere. It is statically linked and needs nothing
+installed alongside it.
+
+Windows caveats worth knowing before you invest time: **live audio out and MIDI
+in are not yet verified on real hardware**, and WASAPI shared mode settles at
+~10 ms buffer periods where the Linux build asks for ~2.7 ms. See
+[`INSTALL.md` § Windows](INSTALL.md#windows) for exactly what is and is not
+proven.
+
+#### macOS (Apple Silicon)
+
+```sh
+brew install mschulkind-oss/tap/polyclav
+# or, without Homebrew:
+uvx polyclav            # run without installing
+pipx install polyclav   # install persistently
+```
+
+No system libraries to install; the binary links only system frameworks.
+
+#### Linux (x86_64)
+
+Install the system audio libraries first — the binary is dynamically linked
+against them:
+
+```sh
+# Debian / Ubuntu
+sudo apt install pipewire libasound2 liblilv-0-0
+# Fedora
+sudo dnf install pipewire alsa-lib lilv
+# Arch
+sudo pacman -S pipewire alsa-lib lilv
+```
+
+Then either:
+
+```sh
+uvx polyclav            # run without installing
+pipx install polyclav   # install persistently
+# or, with Homebrew (needs glibc >= 2.39; Debian 12 / Ubuntu 22.04 are too old):
+brew install mschulkind-oss/tap/polyclav
+```
+
+### Build from git
+
+#### Linux and macOS
 
 ```sh
 mise install                      # install pinned Go + Rust toolchains
@@ -136,8 +210,77 @@ The examples in this guide invoke `polyclav` bare, which assumes
 `just install` put it on your PATH (`~/.local/bin` by default). Straight
 after `just build`, use `./bin/polyclav` instead — same flags.
 
-For the full first-run sequence (writing the default config, downloading the
-soundfonts it expects), see `docs/INSTALL.md`.
+#### Windows
+
+Windows needs a different toolchain, because Go's cgo uses gcc and **cannot use
+MSVC** — so the Rust side has to be built for the MinGW target too. The `just`
+recipes are POSIX shell, so this is done by hand from the **MSYS2 UCRT64** shell.
+
+Prerequisites:
+
+1. **MSYS2 with the UCRT64 toolchain**, so `gcc` and `g++` are on `PATH`:
+   ```sh
+   pacman -S mingw-w64-ucrt-x86_64-gcc
+   ```
+2. **Go** ≥ 1.23.
+3. **Rust** stable, plus the MinGW target — not installed by default, and an
+   `x86_64-pc-windows-msvc` staticlib cannot be linked by cgo:
+   ```sh
+   rustup target add x86_64-pc-windows-gnu
+   ```
+
+Build, from the repo root:
+
+```sh
+# --target is load-bearing: audio_windows.go links the staticlib out of
+# target/x86_64-pc-windows-gnu/release, which a plain `cargo build` does not
+# write (it writes target/release).
+cargo build --release --target x86_64-pc-windows-gnu --manifest-path audio-core/Cargo.toml
+
+go build -trimpath -ldflags "-s -w" -o dist/polyclav.exe ./cmd/polyclav
+```
+
+Check the result is portable before shipping it anywhere — the only imports
+should be Windows system DLLs, never `libstdc++-6` / `libgcc_s_*` /
+`libwinpthread` / `mcfgthread`:
+
+```sh
+objdump -p dist/polyclav.exe | grep 'DLL Name'
+```
+
+`polyclav-components` (the Launchkey SysEx CLI) is not verified on Windows and
+is not built by the release workflow; build it with the same `go build` line if
+you want it.
+
+#### Optional: the ASIO backend
+
+The ASIO backend is an **opt-in build** for Windows, off by default, and only
+useful if your interface has a real ASIO driver:
+
+```sh
+cargo build --release --target x86_64-pc-windows-gnu \
+  --features asio --manifest-path audio-core/Cargo.toml
+```
+
+It links Steinberg's ASIO SDK, which is GPL-3.0, so **a binary built this way is
+GPL-3.0 rather than Apache-2.0**. It also needs `BINDGEN_EXTRA_CLANG_ARGS`
+pointing at the MinGW headers when cross-compiling. See
+[`WINDOWS_PORT.md` §3.1](WINDOWS_PORT.md) for the details.
+
+## First run
+
+Whichever way you installed it:
+
+```sh
+polyclav bootstrap   # download the starter soundfonts (~500 MB), once
+polyclav             # start the daemon; web UI at http://127.0.0.1:8666/
+polyclav doctor      # what this build found (synths, plugins, sfizz)
+```
+
+Skipping `bootstrap` makes the daemon refuse to start, listing every soundfont
+file it cannot find. And nothing makes sound until you name your keyboard in
+`[midi].allow_devices` — see the next section. For the full first-run sequence,
+see `docs/INSTALL.md`.
 
 ## Quick start — sound in sixty seconds, zero downloads
 
@@ -271,7 +414,12 @@ patch you'll perform it on, and tweak the patch while it plays.
 The config lives at `~/.config/polyclav/config.toml`. On the first run with
 no config present, polyclav writes the embedded default there and exits with a
 list of the soundfont files it can't find; run `polyclav bootstrap` to fetch
-them, then run `polyclav` again. `docs/INSTALL.md` walks through this. The
+them, then run `polyclav` again.
+
+> **Paths on Windows.** This guide writes paths the POSIX way. On Windows the
+> config is `%APPDATA%\polyclav\config.toml`, and the data directory holding
+> `soundfonts/`, `lib/` and `clips/` is `%LOCALAPPDATA%\polyclav` where the rest
+> of this guide says `~/.local/share/polyclav`. macOS uses the paths as written. `docs/INSTALL.md` walks through this. The
 annotated reference for every field is `polyclav.example.toml` itself — this
 section covers only the operational details that aren't obvious from those
 inline comments.
