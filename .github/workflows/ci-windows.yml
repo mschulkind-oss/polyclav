@@ -1,0 +1,226 @@
+# Windows (x86_64) CI for the polyclav port.
+#
+# Separate from ci.yml (the Linux + nix job) and ci-macos.yml (CoreAudio) on
+# purpose: the Windows build is the third arm of the same platform seam — cpal's
+# WASAPI backend instead of PipeWire/CoreAudio, no LV2 hosting, no nix — and it
+# is the only job that needs a MinGW-w64 toolchain. Everything here is
+# device-free (no audio stream is ever opened), so it runs on a hardware-less
+# GitHub-hosted runner. What that means: this job proves the port *builds,
+# links and passes the test suite* on Windows. It does not prove the WASAPI
+# output path sounds right against a real device — that is W4 in
+# docs/WINDOWS_PORT.md §8 and needs a human at a keyboard.
+name: CI (Windows)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Windows bills at 2x included minutes (macOS is 10x) and is free on public
+# repos. Cancel a run as soon as a newer commit supersedes it, same as macOS.
+concurrency:
+  group: ci-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # Go must link the Rust staticlib via cgo.
+      CGO_ENABLED: "1"
+      # Match mise.toml so `go build`/`go test` behave identically to Linux CI.
+      GOFLAGS: "-mod=mod"
+      # cgo on Windows only speaks gcc — there is no MSVC cgo support at all —
+      # so the C toolchain is the MinGW-w64 UCRT64 one installed below, and the
+      # Rust staticlib must therefore be built for `x86_64-pc-windows-gnu`. An
+      # msvc staticlib is not linkable by MinGW, and windows-gnu is NOT the
+      # target a plain `rustup` on Windows installs, which is why the toolchain
+      # step below names it explicitly. See docs/WINDOWS_PORT.md §3.3.
+      CC: x86_64-w64-mingw32-gcc
+      CXX: x86_64-w64-mingw32-g++
+      # No CGO_CFLAGS_ALLOW here (unlike ci-macos.yml): this path has no
+      # pkg-config'd dependency (no PipeWire, no lilv), so cgo never sees
+      # unknown pkg-config flags and has nothing to allowlist.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 + MinGW-w64 UCRT64 toolchain
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          # UCRT64 is the mingw-w64 flavour the port was built and verified
+          # against: the UCRT runtime is what Windows 10+ ships, and it is the
+          # default MSYS2 environment for new installs.
+          msystem: UCRT64
+          # A fresh MSYS2 from upstream ships a stale keyring/db, so installing
+          # packages without updating first fails signature checks. `update:
+          # true` settles that; the action caches the installation, so only a
+          # cold cache pays for it.
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+
+      - name: Put the MinGW toolchain on PATH for the non-MSYS2 steps
+        # setup-msys2 exports its environment only inside `shell: msys2 {0}`.
+        # Go, cargo and rustc run as ordinary Windows processes here, so the
+        # UCRT64 bin dir (gcc, g++, ar, objdump, and the DLLs they load) goes on
+        # the job PATH. Deliberately NOT `path-type: inherit`, which would put
+        # MSYS2's own /usr/bin ahead of the runner's native tools.
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_PATH `
+            -Value (Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin')
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # 1.26.x tracks the latest 1.26 patch, same as ci-macos.yml; mise.toml
+          # pins 1.26.3 and go.mod declares `go 1.26`.
+          go-version: '1.26.x'
+          # setup-go@v5 caches GOMODCACHE *and* GOCACHE by default, keyed on the
+          # hash of this file — the same caching approach as the macOS job.
+          cache-dependency-path: go.sum
+
+      - name: Set up Rust toolchain (stable) + the windows-gnu target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Cross target on a Windows host: rustup on Windows defaults to
+          # x86_64-pc-windows-msvc, which cgo cannot link. Adding the gnu target
+          # makes rustc use the MinGW gcc from PATH as its linker.
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache cargo registry + git + target
+        # Same action and shape as ci-macos.yml: caches ~/.cargo/{registry,git}
+        # and the workspace target/ dir, keyed on Cargo.lock + rustc version.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build Rust staticlib (cpal WASAPI backend, windows-gnu target)
+        # Writes target/x86_64-pc-windows-gnu/release/libpolyclav_audio_core.a.
+        # internal/audio/audio_windows.go's cgo LDFLAGS point at exactly that
+        # target-specific path (not target/release, which on a machine that also
+        # builds for Linux would be a Linux archive that fails to link).
+        run: cargo build --release --manifest-path audio-core/Cargo.toml --target x86_64-pc-windows-gnu
+
+      - name: Rust unit tests (device-free)
+        # All audio-core tests are #[cfg(test)] DSP/synth unit tests — pure math,
+        # no audio stream is opened. Keep it that way: DO NOT add a test that
+        # opens the default output device. `--target x86_64-pc-windows-gnu` runs
+        # the test binaries natively on this runner.
+        run: cargo test --manifest-path audio-core/Cargo.toml --target x86_64-pc-windows-gnu
+
+      - name: Go build (cgo links the Rust staticlib)
+        # `go build ./...` (not just `go test`) catches cgo link errors that
+        # test-only linking misses — e.g. a missing system library on the
+        # windows cgo LDFLAGS line.
+        run: go build ./...
+
+      - name: Go tests (device-free)
+        run: go test ./...
+
+      - name: Link statically — no MinGW C/C++ runtime DLL dependencies
+        # The Go link must produce an exe that depends only on Windows system
+        # DLLs. rtmidi is C++, so a default MinGW link would leave
+        # libgcc_s_seh-1.dll / libstdc++-6.dll as runtime dependencies and
+        # polyclav.exe would die with a missing-DLL dialog on a clean machine.
+        # The flags live in internal/audio/audio_windows.go's cgo preamble as
+        # `-static-libgcc -static-libstdc++` rather than a broad `-static`:
+        # broad `-static` also asks for a static mcfgthread that is not shipped
+        # (docs/WINDOWS_PORT.md §7), and the narrow pair still yields a
+        # self-contained binary. This step is the assertion behind that note —
+        # it asserts only those two, and prints the full DLL list so any other
+        # surprise (a libwinpthread-1.dll line, say) is visible in the log
+        # rather than silently tolerated.
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          go build -o bin/polyclav.exe ./cmd/polyclav
+          echo "DLL dependencies:"
+          objdump -p bin/polyclav.exe | grep 'DLL Name' | sed 's/^[[:space:]]*//' | sort -u || true
+          if objdump -p bin/polyclav.exe | grep -Eqi 'libgcc_s|libstdc\+\+'; then
+            echo "::error::polyclav.exe depends on the MinGW C++ runtime — -static-libgcc/-static-libstdc++ is missing from the cgo LDFLAGS"
+            exit 1
+          fi
+
+  build-asio:
+    # OPTIONAL, NON-BLOCKING — do not make this required until it is known to
+    # pass. It is the same build with audio-core's `asio` feature on, which
+    # links cpal's ASIO host and therefore the Steinberg ASIO SDK.
+    #
+    # License: this artifact is GPL-3.0, NOT Apache-2.0. audio-core is
+    # dual-licensed `Apache-2.0 OR GPL-3.0-only`, and the ASIO SDK is GPL-3.0
+    # (or a proprietary Steinberg agreement we do not have), so a binary built
+    # with this feature has to be conveyed under GPL-3.0 — GPL-3.0 code cannot
+    # be taken into an Apache-2.0 work. See README.md § License and
+    # docs/WINDOWS_PORT.md §3.1.
+    #
+    # continue-on-error because the build is currently blocked *upstream* in
+    # asio-sys 0.3.0's generated bindings (docs/WINDOWS_PORT.md §3.1, "ASIO
+    # build status"), so a red X here means "still blocked", not "the port
+    # broke". Nothing about a default (Apache-2.0) build changes either way:
+    # the feature is off by default and must stay off in any release build.
+    continue-on-error: true
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: "1"
+      GOFLAGS: "-mod=mod"
+      CC: x86_64-w64-mingw32-gcc
+      CXX: x86_64-w64-mingw32-g++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 + MinGW-w64 UCRT64 toolchain (+ clang for bindgen)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-clang
+
+      - name: Put the MinGW toolchain on PATH (and LIBCLANG_PATH) for later steps
+        # asio-sys runs bindgen over the ASIO headers, which needs libclang;
+        # LIBCLANG_PATH points at the ucrt64 bin dir where MSYS2's clang ships
+        # libclang.dll. The C/C++ compilers need the same PATH as in the
+        # required job above.
+        shell: pwsh
+        run: |
+          $ucrt64 = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin'
+          Add-Content -Path $env:GITHUB_PATH -Value $ucrt64
+          Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$ucrt64"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: go.sum
+
+      - name: Set up Rust toolchain (stable) + the windows-gnu target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache cargo registry + git + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build Rust staticlib with the ASIO feature (GPL-3.0 artifact)
+        # asio-sys fetches the ASIO SDK from Steinberg at build time, so this
+        # needs network access and compiles the SDK's C++ itself.
+        run: cargo build --release --manifest-path audio-core/Cargo.toml --target x86_64-pc-windows-gnu --features asio
+
+      - name: Go build (cgo links the ASIO-enabled staticlib)
+        # The point of the job: prove the Go/cgo link survives the extra ASIO
+        # objects. The resulting binary is GPL-3.0 and is never shipped.
+        run: go build ./...
