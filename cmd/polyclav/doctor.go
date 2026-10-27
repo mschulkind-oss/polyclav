@@ -98,10 +98,20 @@ func runDoctor(args []string) int {
 // nothing to "install" — the parameter is runtime.GOOS, injected so tests
 // can exercise both branches regardless of the OS actually running them.
 func pluginHostLines(goos string) []string {
-	if goos == "darwin" {
+	switch goos {
+	case "darwin":
 		return []string{
 			"  n/a   LV2 plugin host          not built for macOS (Linux-only in this build)",
 			"  n/a   CLAP plugin host         not built for macOS (Linux-only in this build)",
+		}
+	case "windows":
+		// The Rust side exports stubs that return 1 for both setters (see
+		// audio-core/src/lib.rs), so claiming "built in" here would be a lie the
+		// user only discovers when a patch is silent. CLAP on Windows is a
+		// planned follow-on — docs/WINDOWS_PORT.md §3.4.
+		return []string{
+			"  n/a   LV2 plugin host          not built for Windows (Linux-only in this build)",
+			"  n/a   CLAP plugin host         not built for Windows (planned follow-on)",
 		}
 	}
 	return []string{
@@ -137,6 +147,13 @@ func sfizzInstallHint(goos string) []string {
 			"             Fedora:        sudo dnf install sfizz-devel",
 			"             Arch:          yay -S sfizz  (AUR)",
 			"             or build from source: https://github.com/sfztools/sfizz",
+		}
+	case "windows":
+		return []string{
+			"        -> polyclav does not ship a prebuilt Windows sfizz.dll yet.",
+			"        sfztools' Windows download is an installer for the VST3 and",
+			"        standalone builds, not a dlopen-able DLL. Build one from",
+			"        source: https://github.com/sfztools/sfizz",
 		}
 	default:
 		return []string{

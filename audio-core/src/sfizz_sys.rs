@@ -95,12 +95,13 @@ const BOOTSTRAPPED_LIB_NAME: &str = "libsfizz.dylib";
 #[cfg(target_os = "windows")]
 const BOOTSTRAPPED_LIB_NAME: &str = "sfizz.dll";
 
-// Where `polyclav bootstrap` puts the library. POSIX uses the XDG-ish
-// `~/.local/share/polyclav/lib`; Windows uses `%LOCALAPPDATA%\polyclav\lib`.
-#[cfg(not(target_os = "windows"))]
+// Where `polyclav bootstrap` puts the library, relative to the user's home
+// directory. Deliberately the SAME spelling on every platform, because
+// internal/bootstrap/sfizz.go writes `~/.local/share/polyclav/lib` and
+// `cmd/polyclav`'s defaults are XDG-shaped on all platforms today. If those Go
+// defaults ever become platform-aware, change this with them — the two must
+// agree or an installed sfizz.dll is silently never found.
 const BOOTSTRAP_LIB_DIR: &str = ".local/share/polyclav/lib";
-#[cfg(target_os = "windows")]
-const BOOTSTRAP_LIB_DIR: &str = r"polyclav\lib";
 
 /// polyclav bootstrap's own prebuilt libsfizz
 /// (`internal/bootstrap/sfizz.go`) at its fixed install path. See the
@@ -108,9 +109,10 @@ const BOOTSTRAP_LIB_DIR: &str = r"polyclav\lib";
 /// system-wide location.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn load_bootstrapped_lib() -> Option<Library> {
-    // Windows has no HOME; the per-user data dir is %LOCALAPPDATA%.
+    // Windows has no HOME; %USERPROFILE% is what os.UserHomeDir() returns
+    // there, so this matches how the Go side expands `~`.
     #[cfg(target_os = "windows")]
-    let base = std::env::var_os("LOCALAPPDATA")?;
+    let base = std::env::var_os("USERPROFILE")?;
     #[cfg(not(target_os = "windows"))]
     let base = std::env::var_os("HOME")?;
     let path = std::path::Path::new(&base)

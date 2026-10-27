@@ -26,6 +26,19 @@ func TestPluginHostLinesReflectsMacOSNarrowerSurface(t *testing.T) {
 	}
 }
 
+// Windows must not inherit the Linux "built in" claim: audio-core exports LV2
+// and CLAP stubs there that return 1, so reporting them as available makes a
+// silent patch look like a working one.
+func TestPluginHostLinesDoNotClaimHostingOnWindows(t *testing.T) {
+	windows := join(pluginHostLines("windows"))
+	if strings.Contains(windows, "ok    LV2") || strings.Contains(windows, "ok    CLAP") {
+		t.Errorf("windows must not claim LV2/CLAP are built in (they are stubs), got:\n%s", windows)
+	}
+	if !strings.Contains(windows, "not built for Windows") {
+		t.Errorf("windows plugin host lines should explain why, got:\n%s", windows)
+	}
+}
+
 func TestSfizzInstallHintIsConcretePerPlatform(t *testing.T) {
 	darwin := join(sfizzInstallHint("darwin"))
 	if !strings.Contains(darwin, "brew") && !strings.Contains(darwin, "no Homebrew formula") {
