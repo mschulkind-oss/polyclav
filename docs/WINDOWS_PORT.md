@@ -163,9 +163,8 @@ and driver availability, not engineering.**
     product surface. The agreement must also be countersigned before any public
     (including free beta) distribution.
 
-  Neither branch is a blocker. The honest framing is that **ASIO is free but it
-  costs you a clean open-source artifact**, and the proprietary branch is the one
-  that preserves Apache 2.0 for polyclav's own code.
+  Neither branch is a blocker, and the GPLv3 branch is cheaper than it first
+  looks — see *Dual licensing* below.
 - **ASIO would not help the device polyclav targets.** ASIO is not a
   device-independent API; it enumerates *vendor* ASIO drivers. The rig this project
   is built around is a **USB audio class-compliant** interface
@@ -190,14 +189,53 @@ Ranked by what they actually cost:
 |---|---|---|---|
 | cpal shared mode | ~10 ms | none | works |
 | WASAPI exclusive | ~2–3 ms | none, but ~500 lines of `unsafe` | works |
-| ASIO (proprietary SDK) | ~2–5 ms | free licence; binary not OSI/DFSG-clean; trademark terms; countersign before release | **needs ASIO4ALL/FlexASIO** |
-| ASIO (GPLv3 SDK) | ~2–5 ms | free, but the whole product must be GPLv3 | **needs ASIO4ALL/FlexASIO** |
+| ASIO (GPLv3 SDK) | ~2–5 ms | free; ASIO build is GPLv3; SDK **is** redistributable; no paperwork, no mandatory branding | **needs ASIO4ALL/FlexASIO** |
+| ASIO (proprietary SDK) | ~2–5 ms | free licence; binary not OSI/DFSG-clean; SDK **not** redistributable; trademark terms; countersign before release | **needs ASIO4ALL/FlexASIO** |
 
-If ASIO is wanted, the clean shape is an **opt-in build variant**: the default
-Windows release is WASAPI-only and stays Apache 2.0, and an ASIO-enabled binary is
-published separately with its licensing stated plainly rather than blurred. That
-way the project's own code keeps one license and the artifact that carries
-proprietary SDK code is the only one that does.
+#### Dual licensing: why the GPLv3 branch costs little
+
+A reasonable objection to the GPLv3 branch is *"GPL loses me nothing — I can always
+ship the non-ASIO build, and the source is mine to license as Apache anyway."* That
+objection is **mostly correct**, and it changes the recommendation. The mechanics:
+
+- As the copyright holder you may license your own code under **Apache 2.0 *and*
+  GPLv3** simultaneously. GPLv3 §5(c) says a GPLv3 work must be licensed as a whole
+  under GPLv3, *"but it does not invalidate such permission if you have separately
+  received it"* — a separate permissive grant you issue yourself survives.
+- GPLv3 §6 requires the object code to be accompanied by the Corresponding Source
+  **under the terms of this License**. So the source must be available *under GPLv3*.
+  An Apache-2.0-only release beside a GPLv3 binary does **not** satisfy §6; an
+  `Apache-2.0 OR GPLv3` dual-licensed release does. That is the one correction to
+  the "also an Apache release" idea.
+- Consequently the shape is: **source dual-licensed `Apache-2.0 OR GPLv3`; the
+  default builds shipped under Apache 2.0; the ASIO-enabled Windows build shipped
+  under GPLv3.** Nobody is worse off at the source level, because Apache 2.0 is the
+  more permissive of the two and remains available.
+- GPLv3 §7 (*Additional Terms*) can go further if wanted: you may add permissions
+  to material you own, so a GPLv3 ASIO binary can carry an explicit note that the
+  polyclav portions are also available under Apache 2.0. That is belt-and-braces —
+  §5(c) already preserves the separate grant. §7 is *required* only for the
+  opposite trick: letting a GPLv3 program link a **proprietary** SDK, which is how
+  Jamulus ships ASIO.
+
+**The GPLv3 branch is therefore the better of the two ASIO options** unless the
+project specifically wants to avoid copyleft on its artifacts, because it keeps
+everything free software: the SDK is redistributable under GPLv3 (it is not under
+the proprietary terms), there is no countersignature gate, no mandatory ASIO logo,
+and a GPLv3 binary is DFSG-clean where a proprietary-SDK binary is not. What GPLv3
+actually costs is *adoption and identity*, not rights: GPLv3 deters some corporate
+users outright, and dual licensing changes the project's self-description from
+"permissive" to "permissive or copyleft". For a personal instrument that is close
+to free; for a project courting commercial embedders it is not.
+
+Two preconditions, both cheap but real: you can only dual-license code **you own**,
+so third-party dependencies need a GPLv3-compatibility audit (Apache-2.0, MIT, BSD
+and ISC are all fine; GPLv2-only is not), and a future move *away* from GPLv3 would
+need a CLA that does not exist today.
+
+Either way, ASIO ships as an **opt-in build variant**: the default Windows release
+is WASAPI-only and stays Apache 2.0, and the ASIO binary is published separately
+with its licensing stated plainly rather than blurred.
 
 There is a fifth option nobody should take: lowering `LATENCY_FRAMES` and
 believing the number. A backend that cannot honour the request must *report* what
@@ -614,6 +652,9 @@ Everything asserted above that is checkable in this tree was checked on
 | The proprietary ASIO licence is royalty-free and individual-eligible | Steinberg "ASIO SDK Proprietary Licensing FAQ" (2026-10-21): §01.2 lists no application/execution/download/annual/per-developer/per-product/per-unit fee and no revenue royalty; §01.3 *"Individual developers may enter into the proprietary ASIO SDK Licensing Agreement in their own name"*; §02.3 one agreement covers multiple products |
 | What the proprietary licence actually restricts | Same FAQ: §03.1 the SDK *"must not be redistributed as a standalone SDK or otherwise made available as a reusable development toolkit for third parties"*; §04.1 ASIO name/logo and the attribution *"ASIO is a registered trademark of Steinberg Media Technologies GmbH"* are required; §01.7/§02.1 the agreement is countersigned before external distribution (free betas included) |
 | Apache 2.0 → GPLv3 is one-directional | Apache Foundation, "Apache License v2.0 and GPL Compatibility": *"Apache 2 software can therefore be included in GPLv3 projects … However, GPLv3 software cannot be included in Apache projects. The licenses are incompatible in one direction only."* |
+| A separate permissive grant survives a GPLv3 conveyance | GPLv3 §5(c): *"You must license the entire work, as a whole, under this License … This License gives no permission to license the work in any other way, but it does not invalidate such permission if you have separately received it."* |
+| The Corresponding Source must be conveyed *under GPLv3* | GPLv3 §6: *"You may convey a covered work in object code form under the terms of sections 4 and 5, provided that you also convey the machine-readable Corresponding Source under the terms of this License"* |
+| §7 lets you add permissions to material you own | GPLv3 §7: *"You may place additional permissions on material, added by you to a covered work, for which you have or can give appropriate copyright permission."* |
 | ASIO works with MinGW / windows-gnu | cpal `asio` feature → `asio-sys`, which states support for *"both MSVC and MinGW toolchains"*; cpal PR #1006 *"asio-sys: Fixes to get cross-compiling under mingw64"* merged 2025-08-29 |
 | The target interface is class-compliant, so has no vendor ASIO driver | `docs/INSTALL.md`: *"**Behringer XR18** (USB audio class-compliant; OSC over the network)"*; `docs/USER_GUIDE.md`: *"Any default sink works"* |
 | KVM works in the jail after `"kvm": true` + restart | `/dev/kvm` present and rw; QEMU launched with `-enable-kvm` and `-machine …accel=kvm`; `-cpu host` |
