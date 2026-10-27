@@ -24,6 +24,14 @@ name: Publish to PyPI
 # proves this compiles clean with zero `brew install` steps), so the macOS
 # wheel is about as close to "just works" as a compiled binary gets.
 #
+# build-windows ships a plain `.zip` with polyclav.exe and no wheel: there is
+# no pip/uv story for a native .exe, and the port is not hardware-verified yet
+# (docs/WINDOWS_PORT.md) — the artifact exists so the build is reproducible
+# and downloadable, not as a platform-support claim. A failure in this job
+# does not block the release: neither `publish` nor `update-homebrew-tap`
+# needs it. Default licence only — the ASIO feature, which would make the
+# binary GPL-3.0, stays off (see README.md § License).
+#
 # WHY NOT GORELEASER — this is a load-bearing constraint, not a gap to
 # close. Two independent reasons, either of which alone is sufficient:
 #
@@ -255,6 +263,100 @@ jobs:
         with:
           name: polyclav-macos-tarball
           path: dist/polyclav-macos-arm64.tar.gz
+
+  build-windows:
+    # Native Windows build, not a cross-build: MinGW-w64 and the UCRT64
+    # runtime are what Go's cgo needs on Windows (there is no MSVC path for
+    # cgo), and building on the host that runs the exe is the cheapest way to
+    # notice a link regression. x86_64 only, matching the other two jobs.
+    runs-on: windows-latest
+    permissions:
+      contents: write # to attach the zip to the release, on a real release
+    env:
+      CGO_ENABLED: "1"
+      GOFLAGS: "-mod=mod"
+    defaults:
+      run:
+        # Git Bash, which windows-latest provides — the steps below are the
+        # same shell shape as build-linux/build-macos.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # audio_windows.go links the staticlib out of
+          # target/x86_64-pc-windows-gnu/release, so the Rust side must be
+          # built for the gnu target — a windows-msvc staticlib is not
+          # linkable by MinGW/cgo. Not installed by default on Windows.
+          targets: x86_64-pc-windows-gnu
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+          # So later steps inherit gcc/g++/objdump on PATH.
+          path-type: inherit
+
+      # No version step: unlike build-linux/build-macos there is no wheel to
+      # stamp here. The zip is a plain binary archive, so like the Linux/macOS
+      # tarball binaries it reports `devel` from build info.
+
+      - name: Build Rust audio-core
+        run: cargo build --release --target x86_64-pc-windows-gnu --manifest-path audio-core/Cargo.toml
+
+      - name: Build binary (native cgo, WASAPI via cpal, system DLLs only)
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" -o dist/polyclav.exe ./cmd/polyclav
+
+      - name: Verify portability (no MinGW runtime DLLs)
+        # The narrow -static-libgcc/-static-libstdc++ pair in
+        # internal/audio/audio_windows.go is what keeps libstdc++-6.dll and
+        # libgcc_s_seh-1.dll (rtmidi is C++) off this list. If they ever come
+        # back, the exe is broken on any machine without MSYS2 installed.
+        run: |
+          set -euo pipefail
+          echo "imported DLLs:"; objdump -p dist/polyclav.exe | grep 'DLL Name' || true
+          if objdump -p dist/polyclav.exe | grep -Ei 'DLL Name: (libstdc\+\+-6|libgcc_s_|libwinpthread|mcfgthread)'; then
+            echo "::error::polyclav.exe imports a MinGW runtime DLL — not portable, the static link flags regressed"
+            exit 1
+          fi
+
+      - name: Smoke test (the exe runs on a real Windows kernel)
+        run: ./dist/polyclav.exe --version
+
+      - name: Archive the binary
+        # A zip, not a tarball, because this one is for Windows users who will
+        # double-click it. Compress-Archive (pwsh) rather than 7z so the step
+        # needs nothing outside the runner image; naming the single file means
+        # polyclav.exe sits at the zip root, matching the flat layout of the
+        # Linux/macOS tarballs. polyclav-components is not included: only
+        # polyclav.exe is verified on Windows.
+        shell: pwsh
+        run: Compress-Archive -Path dist/polyclav.exe -DestinationPath dist/polyclav-windows-x86_64.zip
+
+      - name: Upload the zip as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: polyclav-windows-zip
+          path: dist/polyclav-windows-x86_64.zip
+
+      - name: Upload the zip as a release asset
+        # Only on a real release -- workflow_dispatch dry runs have no
+        # release to attach to.
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/polyclav-windows-x86_64.zip \
+            --repo "${{ github.repository }}" --clobber
 
   update-homebrew-tap:
     # mschulkind-oss/homebrew-tap is one shared tap for the whole
