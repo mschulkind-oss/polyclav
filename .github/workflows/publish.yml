@@ -304,8 +304,12 @@ jobs:
           path-type: inherit
 
       # No version step: unlike build-linux/build-macos there is no wheel to
-      # stamp here. The zip is a plain binary archive, so like the Linux/macOS
-      # tarball binaries it reports `devel` from build info.
+      # stamp here, and none is needed. Go stamps the main module version from
+      # the VCS tag, so a build checked out at tag vX.Y.Z reports `vX.Y.Z` from
+      # `polyclav --version` on its own (verified: a local build at a tag
+      # reports the tag, and an untagged one reports a pseudo-version). A
+      # workflow_dispatch dry run is therefore the only case that does not
+      # report a release version.
 
       - name: Build Rust audio-core
         run: cargo build --release --target x86_64-pc-windows-gnu --manifest-path audio-core/Cargo.toml
