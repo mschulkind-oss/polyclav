@@ -1,12 +1,12 @@
 # polyclav
 
-A self-contained **live piano host** for Linux and macOS. Plug in a MIDI
-keyboard and an audio interface, run `polyclav`, pick your keyboard, and you
-have a digital piano: keys make piano sound, effects are in the chain, and
-(optionally) a Novation Launchkey's knobs, pads, and screen drive the front
-panel. No DAW, no recording — just playing. Devices can come and go;
-polyclav reconnects automatically and idles at near-zero CPU when nothing
-is plugged in.
+A self-contained **live piano host** for Linux, macOS, and Windows. Plug
+in a MIDI keyboard and an audio interface, run `polyclav`, pick your
+keyboard, and you have a digital piano: keys make piano sound, effects are
+in the chain, and (optionally) a Novation Launchkey's knobs, pads, and
+screen drive the front panel. No DAW, no recording — just playing. Devices
+can come and go; polyclav reconnects automatically and idles at near-zero
+CPU when nothing is plugged in.
 
 > Picking your keyboard is a one-time step: `[midi].allow_devices` is an
 > allowlist, so nothing sends notes until you name it. Startup prints your
@@ -17,9 +17,13 @@ is plugged in.
 > hardware-tested against a Novation Launchkey 61 MK4 + Behringer XR18
 > over OSC. macOS (Apple Silicon) is supported: releases ship a macOS
 > wheel and a Homebrew formula, though plugin hosting (LV2, CLAP) is
-> Linux-only in this build. Should work with any class-compliant MIDI
-> keyboard and any supported audio interface; Launchkey-specific bits
-> gracefully degrade if the device isn't present.
+> Linux-only in this build. Windows x86_64 builds and runs — releases
+> ship a `.zip` with `polyclav.exe`, and offline render works — but live
+> audio out and MIDI in are **not yet verified on real hardware**, so
+> treat Windows as untested rather than as a finished platform; see
+> [`docs/INSTALL.md` § Windows](docs/INSTALL.md#windows). Should work with
+> any class-compliant MIDI keyboard and any supported audio interface;
+> Launchkey-specific bits gracefully degrade if the device isn't present.
 
 polyclav is implemented in Go with a thin Rust `audio-core` for the
 real-time audio thread (PipeWire, oxisynth, sfizz). A `polyclav-components`
@@ -107,11 +111,14 @@ For the developer-facing rundown of every component, see `AGENTS.md`.
 ## Install
 
 polyclav ships as prebuilt binaries: a wheel on PyPI (Linux x86_64 +
-macOS arm64) and a Homebrew formula (Linux x86_64 + macOS arm64). On
-Linux the binary is dynamically linked against your **system's** audio
-libraries — install those from your distro first. On macOS the binary
-links nothing beyond the system frameworks, so no prerequisites are
-needed.
+macOS arm64), a Homebrew formula (Linux x86_64 + macOS arm64), and a
+Windows x86_64 `.zip` containing `polyclav.exe`. On Linux the binary is
+dynamically linked against your **system's** audio libraries — install
+those from your distro first. On macOS the binary links nothing beyond
+the system frameworks, so no prerequisites are needed. The Windows `.exe`
+is statically linked and needs nothing installed either, but its live
+audio and MIDI paths are unverified — see
+[`docs/INSTALL.md` § Windows](docs/INSTALL.md#windows).
 
 ### 1. System libraries (Linux only)
 
@@ -150,6 +157,13 @@ brew install mschulkind-oss/tap/polyclav
 On Linux, Homebrew does not provide the §1 system libraries — you still
 install those from your distro, and the binary needs glibc ≥ 2.39
 (Debian 12 / Ubuntu 22.04 are too old; build from source there).
+
+On Windows there is no wheel or formula yet: download
+`polyclav-windows-x86_64.zip` from the
+[latest release](https://github.com/mschulkind-oss/polyclav/releases/latest)
+and run `polyclav.exe` — it needs no system libraries, and live audio out
+and MIDI in are still unverified ([`docs/INSTALL.md` §
+Windows](docs/INSTALL.md#windows)).
 
 There is no `go install` path: the binary links a Rust staticlib that
 cargo builds next to the Go code, and the Go module proxy can't provide
