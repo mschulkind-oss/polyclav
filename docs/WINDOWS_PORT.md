@@ -228,10 +228,41 @@ users outright, and dual licensing changes the project's self-description from
 "permissive" to "permissive or copyleft". For a personal instrument that is close
 to free; for a project courting commercial embedders it is not.
 
-Two preconditions, both cheap but real: you can only dual-license code **you own**,
-so third-party dependencies need a GPLv3-compatibility audit (Apache-2.0, MIT, BSD
-and ISC are all fine; GPLv2-only is not), and a future move *away* from GPLv3 would
-need a CLA that does not exist today.
+#### What dual licensing does *not* neutralize
+
+The tempting conclusion is that the Apache grant moots the GPLv3 entirely — that
+you can always close the source and go proprietary later, so copyleft has no
+teeth. **For outbound licensing, that is correct.** Copyleft binds licensees, not
+the copyright holder; if every line is yours, you can stop offering the GPLv3
+branch and ship the same tree proprietary tomorrow. Apache-2.0 does not create
+that freedom (permissive licences always allowed it) and does not take it away.
+
+What it does not cover is the **inbound** direction, and that is where the real
+cost sits:
+
+- **GPLv3 contributions are one-way.** Dual licensing invites patches under either
+  arm. A contribution made under GPLv3 can live in the GPLv3 build and *cannot* be
+  closed later. So the discipline is: outbound `Apache-2.0 OR GPLv3`, **inbound
+  Apache-2.0 only** (say so in `CONTRIBUTING`), or a CLA. Without that, a single
+  GPLv3-only patch permanently costs the proprietary option for that code.
+  (Apache-2.0 contributions are *not* a problem — §4 permits distributing
+  derivative works under other terms with the notices kept, which is how
+  proprietary products routinely embed Apache-2.0 code.)
+- **The ratchet runs the wrong way for you.** If the community forks the GPLv3
+  build and improves it, those improvements cannot be merged into a proprietary
+  branch. With Apache-2.0 alone, they could be. So the GPLv3 branch trades away
+  the ability to absorb community work into a future closed version — precisely
+  the trade open-core projects discover after relicensing.
+- **Already-shipped binaries are irrevocable** — but that is true of the Apache
+  release too, so it is a wash rather than a cost of the GPLv3 branch.
+- **Reputation.** Neither licence obliges you to keep publishing, but a
+  dual-licensed project that later goes proprietary walks the path Redis, Elastic
+  and HashiCorp walked. That is a social cost, not a legal one, and worth naming
+  rather than discovering.
+
+One precondition, cheap but real: you can only dual-license code **you own**, so
+third-party dependencies need a GPLv3-compatibility audit (Apache-2.0, MIT, BSD and
+ISC are fine; GPLv2-only is not).
 
 Either way, ASIO ships as an **opt-in build variant**: the default Windows release
 is WASAPI-only and stays Apache 2.0, and the ASIO binary is published separately
