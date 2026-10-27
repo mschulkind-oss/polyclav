@@ -140,14 +140,32 @@ and driver availability, not engineering.**
   pulls `asio-sys`, and `asio-sys` supports MinGW as well as MSVC — cross-compiling
   it under mingw64 was fixed upstream (cpal PR #1006, merged 2025-08-29). So it
   does work with the `x86_64-pc-windows-gnu` target the rest of this plan needs.
-- **The license is the problem.** Steinberg dual-licenses the ASIO SDK: a
-  proprietary license, or **GPLv3** for open-source use. polyclav is **Apache
-  2.0**. Apache 2.0 is compatible with GPLv3, but GPLv3 is *copyleft*: a binary
-  that links the ASIO SDK is a GPLv3 combined work, so the Windows build's license
-  would differ from the rest of the project. This is not a hypothetical — it is
-  exactly why **Surge XT ships ASIO and is GPLv3**, and why a permissively
-  licensed project that ships ASIO either relicenses or takes Steinberg's
-  proprietary terms.
+- **The license is a *choice*, and ASIO costs nothing either way.** Steinberg
+  dual-licenses the ASIO SDK: **GPLv3** (for products released under GPLv3), or a
+  **proprietary agreement** that is **royalty-free** — no application, execution,
+  per-developer, per-product, per-unit or revenue fee — open to **individual
+  developers** (no company needed), entered into **once** and covering **multiple
+  products**, with no renewal per SDK version. So the cost of ASIO is not money.
+  It is which license the shipped binary carries, and that is a real fork:
+  - **GPLv3 variant** requires the *product* to be GPLv3. Apache 2.0 is compatible
+    with GPLv3 **in one direction only** — Apache-licensed code may be taken into a
+    GPLv3 work, but GPLv3 code may not be taken into an Apache-2.0 work (Apache
+    Foundation's own wording). GPLv3 is copyleft, so the combined binary must be
+    conveyed under GPLv3 and recipients get GPLv3 rights over the *whole* binary,
+    polyclav's own code included. This is why **Surge XT ships ASIO and is GPLv3**.
+  - **Proprietary variant** keeps polyclav's own source Apache 2.0 — the copyleft
+    does not spread — but the shipped Windows binary then contains proprietary SDK
+    code, so it is not an OSI/DFSG-clean artifact. Concretely that means: it cannot
+    be shipped by free-software distributions, the SDK source cannot live in this
+    repo (builders fetch it themselves, which `asio-sys` automates), the agreement
+    is not sublicensable, and the ASIO name/logo and the attribution *"ASIO is a
+    registered trademark of Steinberg Media Technologies GmbH"* become required
+    product surface. The agreement must also be countersigned before any public
+    (including free beta) distribution.
+
+  Neither branch is a blocker. The honest framing is that **ASIO is free but it
+  costs you a clean open-source artifact**, and the proprietary branch is the one
+  that preserves Apache 2.0 for polyclav's own code.
 - **ASIO would not help the device polyclav targets.** ASIO is not a
   device-independent API; it enumerates *vendor* ASIO drivers. The rig this project
   is built around is a **USB audio class-compliant** interface
@@ -159,14 +177,27 @@ and driver availability, not engineering.**
 - **ASIO is exclusive**, so it takes the interface from everything else on the
   machine — the same trade-off as option C, with an extra dependency.
 
-**So ASIO is the right answer to a different question.** It is the best path for a
-user with a pro interface that ships its own ASIO driver and who accepts a GPLv3
-build; it is the wrong default for a project whose stated goal is "any
+**So ASIO is the right answer to a different question.** It is the best
+latency-per-unit-of-effort path for a user with a pro interface that ships its own
+ASIO driver; it is the wrong *default* for a project whose stated goal is "any
 PipeWire-supported sink" on Linux, which becomes "any WASAPI endpoint" on
-Windows — i.e. zero-install, driver-free operation. If ASIO is wanted, the clean
-shape is an **opt-in build variant**: the default Windows release is WASAPI-only
-and stays Apache 2.0; an ASIO-enabled binary is published separately under GPLv3,
-with the license difference stated plainly rather than blurred.
+Windows — i.e. zero-install, driver-free operation, and which must stay a clean
+open-source artifact.
+
+Ranked by what they actually cost:
+
+| Path | Latency | License/artifact cost | Class-compliant device |
+|---|---|---|---|
+| cpal shared mode | ~10 ms | none | works |
+| WASAPI exclusive | ~2–3 ms | none, but ~500 lines of `unsafe` | works |
+| ASIO (proprietary SDK) | ~2–5 ms | free licence; binary not OSI/DFSG-clean; trademark terms; countersign before release | **needs ASIO4ALL/FlexASIO** |
+| ASIO (GPLv3 SDK) | ~2–5 ms | free, but the whole product must be GPLv3 | **needs ASIO4ALL/FlexASIO** |
+
+If ASIO is wanted, the clean shape is an **opt-in build variant**: the default
+Windows release is WASAPI-only and stays Apache 2.0, and an ASIO-enabled binary is
+published separately with its licensing stated plainly rather than blurred. That
+way the project's own code keeps one license and the artifact that carries
+proprietary SDK code is the only one that does.
 
 There is a fifth option nobody should take: lowering `LATENCY_FRAMES` and
 believing the number. A backend that cannot honour the request must *report* what
@@ -479,6 +510,43 @@ The one thing cross-compilation does not give you is execution, which is what §
 is for. The combination — cross-build on Linux for speed, Windows VM for
 execution, Windows CI for the gate — is strictly better than the macOS situation.
 
+### Verified: the whole chain, end to end
+
+This is not a paper claim. A minimal stand-in for polyclav's seam — a Rust
+`crate-type = ["staticlib"]` for `x86_64-pc-windows-gnu`, called from a Go cgo
+program — was built **on Linux** and **executed on the Windows 11 guest**, where
+it printed the expected result. The resulting `.exe` depends only on
+`KERNEL32.dll` and `msvcrt.dll`.
+
+Three things had to be fixed to get there, and all three will bite the real port:
+
+1. **Clear the Linux-tuned dev environment.** `mise.toml` exports `CGO_CFLAGS`
+   with `-idirafter` pointing at nix **glibc**, plus `C_INCLUDE_PATH` (glibc) and
+   `CPLUS_INCLUDE_PATH` (ALSA). A MinGW build then fails with
+   *"conflicting types for 'uintptr_t'"* because glibc's `stdint.h` is mixed with
+   MinGW's `corecrt.h`. Unset `CGO_CFLAGS`, `CGO_CXXFLAGS`, `CGO_LDFLAGS`,
+   `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH` and `CPATH` for the
+   Windows build — or give it its own environment rather than inheriting the
+   Linux one.
+2. **`mcfgthread` is on the link path but not in the search path.** nixpkgs'
+   MinGW gcc uses `mcfgthread` as its thread model and adds `-lmcfgthread`
+   implicitly, but `libmcfgthread.a` lives in a separate store path that the
+   compiler does not search — so **even a trivial `int main(void)` fails to link**.
+   Pass `-L$(dirname $(fd -H 'libmcfgthread\.a$' /nix/store -t f | head -1))`
+   explicitly. Note `LIBRARY_PATH` will **not** work: nix's cc-wrapper sanitizes
+   it. This is a nixpkgs packaging gap, not a polyclav problem, and it does not
+   exist on a real Windows + MSYS2 setup.
+3. **`-static` fails; `-static-libgcc -static-libstdc++` succeeds.** The broad
+   `-static` tries to link a static `mcfgthread` that is not shipped. The narrow
+   pair still yields a self-contained binary — verified: no `libgcc`, `libstdc++`
+   or `mcfgthread` DLL dependency — which is what a release wants anyway.
+
+So the recipe for a Linux-side Windows build is: MinGW cross gcc from nix, the
+`mcfgthread` lib dir on `-L`, the Linux cgo environment cleared, and
+`-static-libgcc -static-libstdc++` instead of `-static`. On a native Windows + MSYS2
+machine none of that applies — you just use the UCRT64 toolchain, which is why the
+Windows CI job should build natively rather than cross.
+
 ## 8. Recommended roadmap
 
 | Phase | Do | Proves | Cost |
@@ -543,6 +611,9 @@ Everything asserted above that is checkable in this tree was checked on
 | cpal reports min == max buffer size | same file, `supported_formats()`: `SupportedBufferSize::Range { min: frames, max: frames }` from `GetDevicePeriod` |
 | No exclusive mode in cpal | PR "Added WASAPI exclusive host" closed, not merged; cpal README lists WASAPI (default), ASIO and JACK as Windows backends |
 | ASIO SDK is dual-licensed, GPLv3 or proprietary | Steinberg's "About ASIO (Open Source license variant)": *"Adopt the General Public License (GPL) Version 3 for full open-source integration"*; the alternative is the proprietary SDK license |
+| The proprietary ASIO licence is royalty-free and individual-eligible | Steinberg "ASIO SDK Proprietary Licensing FAQ" (2026-10-21): §01.2 lists no application/execution/download/annual/per-developer/per-product/per-unit fee and no revenue royalty; §01.3 *"Individual developers may enter into the proprietary ASIO SDK Licensing Agreement in their own name"*; §02.3 one agreement covers multiple products |
+| What the proprietary licence actually restricts | Same FAQ: §03.1 the SDK *"must not be redistributed as a standalone SDK or otherwise made available as a reusable development toolkit for third parties"*; §04.1 ASIO name/logo and the attribution *"ASIO is a registered trademark of Steinberg Media Technologies GmbH"* are required; §01.7/§02.1 the agreement is countersigned before external distribution (free betas included) |
+| Apache 2.0 → GPLv3 is one-directional | Apache Foundation, "Apache License v2.0 and GPL Compatibility": *"Apache 2 software can therefore be included in GPLv3 projects … However, GPLv3 software cannot be included in Apache projects. The licenses are incompatible in one direction only."* |
 | ASIO works with MinGW / windows-gnu | cpal `asio` feature → `asio-sys`, which states support for *"both MSVC and MinGW toolchains"*; cpal PR #1006 *"asio-sys: Fixes to get cross-compiling under mingw64"* merged 2025-08-29 |
 | The target interface is class-compliant, so has no vendor ASIO driver | `docs/INSTALL.md`: *"**Behringer XR18** (USB audio class-compliant; OSC over the network)"*; `docs/USER_GUIDE.md`: *"Any default sink works"* |
 | KVM works in the jail after `"kvm": true` + restart | `/dev/kvm` present and rw; QEMU launched with `-enable-kvm` and `-machine …accel=kvm`; `-cpu host` |
