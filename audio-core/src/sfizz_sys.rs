@@ -7,8 +7,8 @@
 //! unaffected. See `sfizz.h` (sfztools/sfizz) for the full C API.
 //!
 //! On both macOS and Linux, `polyclav bootstrap` installs polyclav's own
-//! prebuilt libsfizz (see `internal/bootstrap/sfizz.go`) to a fixed path
-//! under the user's data dir, tried first:
+//! prebuilt libsfizz (see `internal/bootstrap/sfizz.go`) to the polyclav data
+//! dir's `lib/` (see `bootstrap_lib_dir` below), tried first:
 //!
 //! - On macOS, sfztools' own official release (`sfizz-<ver>-macos.tar.gz`)
 //!   is x86_64-only (their CI still targets macos-11, from before GitHub
@@ -87,7 +87,7 @@ const LIB_NAMES: &[&str] = &["libsfizz.1.dylib", "libsfizz.dylib"];
 const LIB_NAMES: &[&str] = &["sfizz.dll"];
 
 // Filename `internal/bootstrap/sfizz.go` installs for this platform, under
-// `BOOTSTRAP_LIB_DIR`.
+// `bootstrap_lib_dir()`.
 #[cfg(target_os = "linux")]
 const BOOTSTRAPPED_LIB_NAME: &str = "libsfizz.so";
 #[cfg(target_os = "macos")]
@@ -95,13 +95,24 @@ const BOOTSTRAPPED_LIB_NAME: &str = "libsfizz.dylib";
 #[cfg(target_os = "windows")]
 const BOOTSTRAPPED_LIB_NAME: &str = "sfizz.dll";
 
-// Where `polyclav bootstrap` puts the library, relative to the user's home
-// directory. Deliberately the SAME spelling on every platform, because
-// internal/bootstrap/sfizz.go writes `~/.local/share/polyclav/lib` and
-// `cmd/polyclav`'s defaults are XDG-shaped on all platforms today. If those Go
-// defaults ever become platform-aware, change this with them — the two must
-// agree or an installed sfizz.dll is silently never found.
-const BOOTSTRAP_LIB_DIR: &str = ".local/share/polyclav/lib";
+/// The directory `polyclav bootstrap` puts the library in: the polyclav data
+/// dir plus `lib` — the Rust mirror of Go's `config.DataDir()` joined with
+/// `"lib"` (`cmd/polyclav`'s `defaultSfizzLibDest`, which is also what
+/// `internal/bootstrap/sfizz.go` is handed as `Dest`).
+///
+/// Linux and macOS use `$HOME/.local/share/polyclav/lib`, unchanged from when
+/// this was a single hardcoded constant; Windows uses
+/// `%LOCALAPPDATA%\polyclav\lib`, matching the platform data dir Go resolves
+/// there. The two sides must agree on every platform or an installed
+/// `sfizz.dll` is silently never found.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+fn bootstrap_lib_dir() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("polyclav");
+    #[cfg(not(target_os = "windows"))]
+    let base = std::path::PathBuf::from(std::env::var_os("HOME")?).join(".local/share/polyclav");
+    Some(base.join("lib"))
+}
 
 /// polyclav bootstrap's own prebuilt libsfizz
 /// (`internal/bootstrap/sfizz.go`) at its fixed install path. See the
@@ -109,15 +120,7 @@ const BOOTSTRAP_LIB_DIR: &str = ".local/share/polyclav/lib";
 /// system-wide location.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn load_bootstrapped_lib() -> Option<Library> {
-    // Windows has no HOME; %USERPROFILE% is what os.UserHomeDir() returns
-    // there, so this matches how the Go side expands `~`.
-    #[cfg(target_os = "windows")]
-    let base = std::env::var_os("USERPROFILE")?;
-    #[cfg(not(target_os = "windows"))]
-    let base = std::env::var_os("HOME")?;
-    let path = std::path::Path::new(&base)
-        .join(BOOTSTRAP_LIB_DIR)
-        .join(BOOTSTRAPPED_LIB_NAME);
+    let path = bootstrap_lib_dir()?.join(BOOTSTRAPPED_LIB_NAME);
     unsafe { Library::new(&path) }.ok()
 }
 
@@ -168,4 +171,42 @@ pub fn api() -> Option<&'static SfizzApi> {
 /// Whether libsfizz is available (i.e. SFZ playback is possible).
 pub fn available() -> bool {
     api().is_some()
+}
+
+#[cfg(all(
+    test,
+    any(target_os = "macos", target_os = "linux", target_os = "windows")
+))]
+mod tests {
+    use super::*;
+
+    // Only the host's own branch is compiled, so this pins the POSIX spelling
+    // on POSIX hosts and the %LOCALAPPDATA% spelling on Windows ones — the
+    // Rust half of the Go table test for config.DataDir().
+    #[test]
+    fn bootstrap_lib_dir_matches_the_go_data_dir() {
+        let dir = bootstrap_lib_dir().expect("HOME / LOCALAPPDATA should be set in tests");
+        #[cfg(target_os = "windows")]
+        let want = std::path::Path::new(&std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"))
+            .join("polyclav")
+            .join("lib");
+        #[cfg(not(target_os = "windows"))]
+        let want = std::path::Path::new(&std::env::var_os("HOME").expect("HOME"))
+            .join(".local/share/polyclav")
+            .join("lib");
+        assert_eq!(dir, want);
+        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("lib"));
+    }
+
+    #[test]
+    fn bootstrapped_lib_path_is_absolute_and_named_for_this_platform() {
+        let path = bootstrap_lib_dir()
+            .expect("HOME / LOCALAPPDATA should be set in tests")
+            .join(BOOTSTRAPPED_LIB_NAME);
+        assert!(path.is_absolute(), "{} is not absolute", path.display());
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some(BOOTSTRAPPED_LIB_NAME)
+        );
+    }
 }

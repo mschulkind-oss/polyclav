@@ -302,19 +302,21 @@ func Load(path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("load config %q: %w", path, err)
 	}
-	// Expand leading `~` in any user-provided filesystem paths. The example
-	// config uses `~/.local/share/polyclav/soundfonts/...` so it works for any
-	// user without editing — keep this in lockstep with polyclav.example.toml.
-	cfg.Soundfont.Path = ExpandHome(cfg.Soundfont.Path)
+	// Expand leading `~` in any user-provided filesystem paths, and remap the
+	// XDG spelling of the data dir onto this platform's (see expandDataPath).
+	// The example config uses `~/.local/share/polyclav/soundfonts/...` so it
+	// works for any user without editing — keep this in lockstep with
+	// polyclav.example.toml.
+	cfg.Soundfont.Path = expandDataPath(cfg.Soundfont.Path)
 	for i := range cfg.Patches {
-		cfg.Patches[i].Soundfont = ExpandHome(cfg.Patches[i].Soundfont)
+		cfg.Patches[i].Soundfont = expandDataPath(cfg.Patches[i].Soundfont)
 	}
 	for i := range cfg.Patches {
 		c := &cfg.Patches[i]
 		if c.Type == "" {
 			c.Type = PatchTypeSoundfont
 		}
-		c.PluginPath = ExpandHome(c.PluginPath)
+		c.PluginPath = expandDataPath(c.PluginPath)
 		if c.LaunchkeyOrgan.Ownership == "" {
 			c.LaunchkeyOrgan.Ownership = "mixer"
 		}
