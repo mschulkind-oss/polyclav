@@ -201,8 +201,22 @@ any MIDI keyboard work; the Launchkey-specific code paths just stay idle.
 
 ## License
 
-polyclav itself is licensed under the **Apache License, Version 2.0** —
-see [`LICENSE`](LICENSE).
+polyclav is available under either of the following, at your option:
+
+- the **Apache License, Version 2.0** — see [`LICENSE`](LICENSE); or
+- the **GNU General Public License, version 3** — see
+  [`LICENSE-GPL-3.0`](LICENSE-GPL-3.0).
+
+The Linux and macOS builds, and the default Windows build, are distributed
+under Apache 2.0. A Windows build that enables the optional ASIO backend is
+distributed under GPL-3.0, because it links Steinberg's ASIO SDK, which is
+offered under GPL-3.0. ASIO is off by default; see
+[`docs/WINDOWS_PORT.md`](docs/WINDOWS_PORT.md).
+
+Contributions are accepted under Apache 2.0 — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+### Third-party licenses
 
 Transitively used libraries carry their own licenses:
 
@@ -211,19 +225,27 @@ Transitively used libraries carry their own licenses:
 - [`pipewire-rs`](https://gitlab.freedesktop.org/pipewire/pipewire-rs) — MIT or Apache-2.0
 - [`rtmidi`](https://github.com/thestk/rtmidi) (via cgo) — MIT-like (see upstream)
 
-If you distribute polyclav (or a derivative), bundle the appropriate
-notices. Apache 2.0 + LGPL-2.1 (oxisynth) means: dynamic linking is
-fine, you must permit relinking against modified oxisynth, and you must
-preserve oxisynth's copyright notices.
+If you distribute polyclav (or a derivative), bundle the appropriate notices.
+
+**oxisynth is LGPL-2.1 and is statically linked into the binary** — it is
+compiled into `libpolyclav_audio_core.a`, not loaded as a shared library.
+LGPL-2.1 requires that a recipient be able to modify the library and relink
+against it, so a *proprietary* redistribution has to either link oxisynth
+dynamically, ship relinkable object files, obtain a commercial licence, or
+replace that backend. Distributing the full source alongside the binary — which
+this project does — is what satisfies that requirement for the open-source
+builds. oxisynth's copyright notices must be preserved either way.
 
 ---
 
 ## Contributing
 
-Patches welcome. The workflow, code layout, and current milestones are
-documented in [`AGENTS.md`](AGENTS.md). Run `just check` before sending
-anything — it gates on `cargo build --release`, `cargo clippy -D warnings`,
-`go vet`, `cargo test`, `go test`, and `go build ./...`.
+Patches welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the licence
+terms contributions are accepted under, and the sign-off requirement. The
+workflow, code layout, and current milestones are documented in
+[`AGENTS.md`](AGENTS.md). Run `just check` before sending anything — it gates
+on `cargo build --release`, `cargo clippy -D warnings`, `go vet`, `cargo test`,
+`go test`, and `go build ./...`.
 
 Bug reports: please include `polyclav --version`, the contents of your
 `config.toml` (redact paths if you like), and the relevant slice of

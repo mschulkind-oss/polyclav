@@ -2,6 +2,9 @@
 name = "polyclav_audio_core"
 version = "0.0.1"
 edition = "2021"
+# Dual-licensed; see README.md § License. SPDX expression, not prose — cargo
+# validates this form and crates.io requires it.
+license = "Apache-2.0 OR GPL-3.0-only"
 
 [lib]
 crate-type = ["staticlib"]
