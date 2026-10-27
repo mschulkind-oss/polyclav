@@ -10,8 +10,9 @@ hardware-tested platform. **macOS** (Apple Silicon) is supported: audio
 out via cpal/CoreAudio, MIDI in via CoreMIDI, and the build needs
 nothing beyond the system frameworks — no Homebrew packages (the
 known-good toolchain setup is `.github/workflows/ci-macos.yml`; see
-`docs/MACOS_PORT.md`). LV2/CLAP plugin hosting is Linux-only: macOS
-builds ship SF2/SF3/SFZ soundfonts and the native synth. **Windows**
+`docs/MACOS_PORT.md`). LV2 plugin hosting is Linux-only; CLAP hosting
+works on Linux and Windows. macOS builds ship SF2/SF3/SFZ soundfonts and
+the native synth. **Windows**
 builds and runs, but live audio out and MIDI in are not yet verified on
 real hardware — see [Windows](#windows) below for exactly what is and is
 not proven. PulseAudio-only systems (no PipeWire) are still not
@@ -151,11 +152,16 @@ What is not verified yet — do not plan around it:
   size, so the 128-frame (~2.67 ms) period the Linux build asks for
   collapses to ~480 frames. That is a property of the backend, not a
   tuning knob; `docs/WINDOWS_PORT.md` §3.1 lays out the options.
-- **The ASIO build.** `--features asio` exists but is off by default and
-  currently fails to compile (`asio-sys` 0.3.0's generated bindings). A
-  binary built with it would also be GPL-3.0 rather than Apache-2.0 — see
-  [the licence section of the README](../README.md#license).
-- **Plugin hosting.** LV2 and CLAP are Linux-only, exactly as on macOS.
+- **The ASIO build is unproven on real hardware.** `--features asio`
+  compiles (it needs a one-line vendored patch to `asio-sys`; the offsets
+  and the reasoning are in `docs/WINDOWS_PORT.md` §3.1) and stays off by
+  default. A binary built with it links the GPL-3.0 ASIO SDK and is
+  therefore GPL-3.0 rather than Apache-2.0 — see [the licence section of
+  the README](../README.md#license). It also needs a real ASIO driver: a
+  class-compliant interface has none and would need ASIO4ALL or FlexASIO
+  in between.
+- **Plugin hosting.** LV2 is Linux-only. CLAP works on Linux and Windows
+  (not macOS), but no CLAP plugin has been loaded on Windows yet.
 - **Packaging and signing.** Releases ship a plain `.zip`, so expect
   SmartScreen to warn about an unsigned binary on first run.
 
@@ -171,7 +177,8 @@ What is not verified yet — do not plan around it:
   be linked by Go's cgo.
 
 There are no system libraries to install: the Windows build links only
-Windows system libs (no PipeWire, ALSA, lilv, or CLAP stack on this path).
+Windows system libs (no PipeWire, ALSA or lilv on this path; CLAP hosting
+is pure Rust and needs no system library either).
 
 ### The static link is load-bearing
 

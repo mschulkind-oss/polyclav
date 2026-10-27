@@ -11,10 +11,18 @@
 > `polyclav doctor` reports it as built in), and the opt-in ASIO build compiles and
 > links (§3.1) behind a one-line vendored `asio-sys` patch.
 >
-> Not yet done: a live WASAPI output stream against a real device (the VM has no
-> sound card), a live ASIO stream against a real driver, a Windows CI job, and
-> packaging. The doc keeps the full coupling map and plan because those are still
-> the map for the remaining work.
+> The device-free work is finished and gated: CI runs on `windows-latest`
+> (`.github/workflows/ci-windows.yml`), releases build a Windows `.zip`
+> (`publish.yml`), and the live WASAPI output path has been exercised against the
+> guest's emulated device (§3.1) — the stream opens, plays and reports its real
+> buffer size.
+>
+> What remains is only what needs hardware: a live ASIO stream against a real
+> ASIO driver, and real-hardware bring-up on a physical Windows machine with a
+> keyboard and speakers. That is the only way to settle whether ~10 ms shared
+> mode is acceptable under the fingers, whether MMCSS keeps the audio thread
+> scheduled, and what WinMM actually names the ports. The doc keeps the full
+> coupling map and plan because those are still the map for that work.
 >
 > The VM path is verified end to end: with `"kvm": true` in the jail config,
 > dockur's Windows 11 LTSC guest installs here under real KVM acceleration

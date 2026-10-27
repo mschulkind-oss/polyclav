@@ -16,14 +16,19 @@ CPU when nothing is plugged in.
 > **Status:** Linux (PipeWire) is the primary platform — developed and
 > hardware-tested against a Novation Launchkey 61 MK4 + Behringer XR18
 > over OSC. macOS (Apple Silicon) is supported: releases ship a macOS
-> wheel and a Homebrew formula, though plugin hosting (LV2, CLAP) is
-> Linux-only in this build. Windows x86_64 builds and runs — releases
-> ship a `.zip` with `polyclav.exe`, and offline render works — but live
-> audio out and MIDI in are **not yet verified on real hardware**, so
-> treat Windows as untested rather than as a finished platform; see
-> [`docs/INSTALL.md` § Windows](docs/INSTALL.md#windows). Should work with
-> any class-compliant MIDI keyboard and any supported audio interface;
-> Launchkey-specific bits gracefully degrade if the device isn't present.
+> wheel and a Homebrew formula. Windows x86_64 builds and runs — the
+> release workflow produces a `.zip` with `polyclav.exe`, offline render
+> works, and the WASAPI output path is compiled in — but live audio out
+> and MIDI in are **not yet verified on real hardware**, and WASAPI
+> shared mode settles at ~10 ms periods where the Linux build asks for
+> ~2.7 ms, so treat Windows as untested rather than as a finished
+> platform; see [`docs/INSTALL.md` § Windows](docs/INSTALL.md#windows).
+> Plugin hosting: **LV2 is Linux-only; CLAP works on Linux and Windows**,
+> not macOS. An optional **ASIO** build exists for Windows and is GPL-3.0
+> because it links Steinberg's SDK — see the licence section. Should work
+> with any class-compliant MIDI keyboard and any supported audio
+> interface; Launchkey-specific bits gracefully degrade if the device
+> isn't present.
 
 polyclav is implemented in Go with a thin Rust `audio-core` for the
 real-time audio thread (PipeWire, oxisynth, sfizz). A `polyclav-components`
@@ -112,7 +117,8 @@ For the developer-facing rundown of every component, see `AGENTS.md`.
 
 polyclav ships as prebuilt binaries: a wheel on PyPI (Linux x86_64 +
 macOS arm64), a Homebrew formula (Linux x86_64 + macOS arm64), and a
-Windows x86_64 `.zip` containing `polyclav.exe`. On Linux the binary is
+Windows x86_64 `.zip` containing `polyclav.exe` (produced by the release
+workflow). On Linux the binary is
 dynamically linked against your **system's** audio libraries — install
 those from your distro first. On macOS the binary links nothing beyond
 the system frameworks, so no prerequisites are needed. The Windows `.exe`
