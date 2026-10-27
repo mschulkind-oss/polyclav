@@ -1,9 +1,16 @@
 # Running polyclav on Windows
 
-> Status: **investigation, 2026-10-27. Nothing is ported yet.** This doc records
-> the coupling map against the post-macOS-port codebase, the four deltas that are
-> genuinely different from macOS, a phased plan, and the Windows-VM strategy that
-> makes the port testable from inside the Linux dev jail.
+> Status: **the build runs on Windows; the audio device path is unverified.**
+> What began as a feasibility doc now records a working port in progress. Phases
+> W0–W2 are landed: `audio-core` checks for `x86_64-pc-windows-gnu`, the cpal
+> backend is shared with macOS, `polyclav.exe` cross-builds from Linux with no
+> non-system DLL dependencies, and on the Windows 11 guest it runs `doctor` and
+> renders real audio offline (48 kHz stereo, peak 0.26, RMS 0.09).
+>
+> Not yet done: a live WASAPI output stream against a real device (the VM has no
+> sound card), the ASIO build (blocked upstream — §3.1), CLAP hosting on Windows,
+> a Windows CI job, and packaging. The doc keeps the full coupling map and plan
+> because those are still the map for the remaining work.
 >
 > The VM path is verified end to end: with `"kvm": true` in the jail config,
 > dockur's Windows 11 LTSC guest installs here under real KVM acceleration
@@ -175,6 +182,37 @@ and driver availability, not engineering.**
   they can be *slower* than WASAPI exclusive mode, not faster.
 - **ASIO is exclusive**, so it takes the interface from everything else on the
   machine — the same trade-off as option C, with an extra dependency.
+
+#### ASIO build status (tried, currently blocked upstream)
+
+The `asio` cargo feature is in place: declared, **off by default**, and
+`backend_cpal.rs`'s `output_host()` prefers the ASIO host when the feature is on
+and falls back to WASAPI when no ASIO driver is installed. Nothing about a
+default build changes.
+
+Building it is blocked, and not by cross-compilation. `cargo check --target
+x86_64-pc-windows-gnu --features asio` gets all the way through the ASIO SDK
+download (8.5 MB from Steinberg) and the `cc` build, then fails compiling
+`asio-sys 0.3.0`'s own generated bindings:
+
+```
+error[E0080]: index out of bounds: the length is 1 but the index is 4
+   --> out/asio_bindings.rs:529:5
+    | ["Offset of field: AsioDrivers::connID"][offset_of!(AsioDrivers, connID) - 12usize];
+```
+
+bindgen's layout for the C++ class `AsioDrivers` does not match what the
+compiler sees, so the generated offset assertion cannot evaluate. Reproduced with
+and without `--target` in `BINDGEN_EXTRA_CLANG_ARGS`, so it is not the cross
+toolchain: it is `asio-sys` 0.3.0 against bindgen 0.72.1. The target is
+`windows-gnu` in both cases, and `windows-gnu` is what cgo requires, so this
+blocks ASIO **on this project's toolchain** rather than merely from Linux.
+
+Next steps if ASIO is wanted: pin an older `bindgen`/`asio-sys`, or build the Rust
+side natively on Windows under MSYS2 and see whether a different clang reproduces
+it. Worth knowing before committing to ASIO as the plan: the advertised "supports
+both MSVC and MinGW toolchains" is not currently true of the combination this
+project needs.
 
 **So ASIO is the right answer to a different question.** It is the best
 latency-per-unit-of-effort path for a user with a pro interface that ships its own
