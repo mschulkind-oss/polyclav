@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mschulkind-oss/polyclav/internal/config"
@@ -86,9 +87,7 @@ func (s *Server) saveValidatedConfig(data []byte, runValidate bool) error {
 	}
 	cfg, err := config.Load(tmpPath)
 	if err != nil {
-		// Load's message quotes the file it parsed; swap the temp name for
-		// the real path so the error reads like the startup error would.
-		return &configValidationError{msg: strings.ReplaceAll(err.Error(), tmpPath, path)}
+		return &configValidationError{msg: rewriteConfigPath(err, tmpPath, path)}
 	}
 	if runValidate {
 		if err := config.Validate(cfg); err != nil {
@@ -102,6 +101,31 @@ func (s *Server) saveValidatedConfig(data []byte, runValidate bool) error {
 		return fmt.Errorf("replace config: %w", err)
 	}
 	return nil
+}
+
+// rewriteConfigPath points a config.Load error at the real config file instead
+// of the temp file it was actually parsed from, so the user-facing message
+// reads like the startup error would.
+//
+// It matches the QUOTED form, not the raw path. Load builds its message with
+// %q, which escapes the string: on Windows every backslash in the path becomes
+// `\\`, so the raw tmpPath is not a substring of the message and a naive
+// ReplaceAll silently does nothing — leaking the temp file's name to the user.
+// On Linux and macOS paths contain no backslashes, so the naive version only
+// ever worked there. %q and strconv.Quote agree on quoting, which is what makes
+// the quoted form safe to match.
+func rewriteConfigPath(err error, tmpPath, realPath string) string {
+	msg := err.Error()
+	if quoted := strconv.Quote(tmpPath); quoted != "" {
+		msg = strings.ReplaceAll(msg, quoted, strconv.Quote(realPath))
+	}
+	// Belt and braces: the base name is unique and contains no separator, so it
+	// survives quoting on every platform. This covers a message that embeds the
+	// name without Load's quoting, such as a TOML decoder's own error text.
+	if base := filepath.Base(tmpPath); base != "" && base != "." {
+		msg = strings.ReplaceAll(msg, base, filepath.Base(realPath))
+	}
+	return msg
 }
 
 // ---- GET/PUT /api/velocity ------------------------------------------------

@@ -137,6 +137,44 @@ func TestConfigPutSchemaViolation(t *testing.T) {
 	assertNoTempLitter(t, path)
 }
 
+// The Windows CI run caught a leak the POSIX suite could never see: Load builds
+// its message with %q, which escapes backslashes, so replacing the raw temp
+// path did nothing on Windows and the temp file's name reached the user. This
+// pins the Windows-shaped case on every platform.
+func TestRewriteConfigPathSurvivesQuotedWindowsPaths(t *testing.T) {
+	tmpPath := `C:\Users\dev\AppData\Local\Temp\polyclav\001\.polyclav-1392314147.toml`
+	realPath := `C:\Users\dev\AppData\Roaming\polyclav\config.toml`
+	// Exactly how config.Load formats it: %q escapes every backslash.
+	err := fmt.Errorf("load config %q: invalid settings:\n  - midi.velocity: unknown curve", tmpPath)
+
+	got := rewriteConfigPath(err, tmpPath, realPath)
+
+	if strings.Contains(got, ".polyclav-") {
+		t.Errorf("temp file name still leaked: %q", got)
+	}
+	if strings.Contains(got, `Temp`) {
+		t.Errorf("temp directory still leaked: %q", got)
+	}
+	if !strings.Contains(got, `config.toml`) {
+		t.Errorf("real path missing from the message: %q", got)
+	}
+	if !strings.Contains(got, "unknown curve") {
+		t.Errorf("the underlying reason must survive the rewrite: %q", got)
+	}
+}
+
+// A message that embeds the temp name without Load's %q quoting (a decoder's
+// own error text, say) must still be scrubbed.
+func TestRewriteConfigPathScrubsUnquotedBaseName(t *testing.T) {
+	tmpPath := `C:\tmp\.polyclav-42.toml`
+	realPath := `C:\cfg\config.toml`
+	err := fmt.Errorf("toml: error near %s: bad value", tmpPath)
+
+	if got := rewriteConfigPath(err, tmpPath, realPath); strings.Contains(got, ".polyclav-") {
+		t.Errorf("unquoted temp name still leaked: %q", got)
+	}
+}
+
 func TestConfigPutMissingDeps(t *testing.T) {
 	f, path := newConfigFixture(t, baseConfig)
 	body := "[[patches]]\nname = \"ghost\"\ntype = \"soundfont\"\nsoundfont = \"/nonexistent/ghost.sf2\"\n"
