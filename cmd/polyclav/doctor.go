@@ -92,11 +92,11 @@ func runDoctor(args []string) int {
 }
 
 // pluginHostLines reports LV2/CLAP plugin-host availability. This is a
-// build-time platform decision, not a runtime dependency: on macOS,
-// livi/lilv (LV2) and clack-host (CLAP) are excluded from the build
-// entirely (audio-core/Cargo.toml's cfg(target_os) split), so there is
-// nothing to "install" — the parameter is runtime.GOOS, injected so tests
-// can exercise both branches regardless of the OS actually running them.
+// build-time platform decision, not a runtime dependency: livi/lilv (LV2) is
+// excluded from every non-Linux build, and on macOS clack-host (CLAP) is
+// excluded too (audio-core/Cargo.toml's cfg(target_os) split), so there is
+// nothing to "install" — the parameter is runtime.GOOS, injected so tests can
+// exercise both branches regardless of the OS actually running them.
 func pluginHostLines(goos string) []string {
 	switch goos {
 	case "darwin":
@@ -105,13 +105,13 @@ func pluginHostLines(goos string) []string {
 			"  n/a   CLAP plugin host         not built for macOS (Linux-only in this build)",
 		}
 	case "windows":
-		// The Rust side exports stubs that return 1 for both setters (see
-		// audio-core/src/lib.rs), so claiming "built in" here would be a lie the
-		// user only discovers when a patch is silent. CLAP on Windows is a
-		// planned follow-on — docs/WINDOWS_PORT.md §3.4.
+		// LV2 is still excluded on Windows (livi wraps the lilv C library, which
+		// has no Windows build here), so the Rust side exports a stub that
+		// returns 1 for `polyclav_audio_set_lv2_plugin`. CLAP is really hosted
+		// there via clack-host, so it reports as built in.
 		return []string{
 			"  n/a   LV2 plugin host          not built for Windows (Linux-only in this build)",
-			"  n/a   CLAP plugin host         not built for Windows (planned follow-on)",
+			"  ok    CLAP plugin host         built in (clack-host)",
 		}
 	}
 	return []string{

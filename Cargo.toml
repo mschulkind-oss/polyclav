@@ -1,3 +1,12 @@
 [workspace]
 members = ["audio-core"]
 resolver = "2"
+
+# ASIO (the optional `audio-core` `asio` feature, Windows only) needs a one-line
+# patch to asio-sys 0.3.0: bindgen binds the C++ class `AsioDrivers`, whose
+# layout reuses its base class's tail padding — unrepresentable in `#[repr(C)]`,
+# so bindgen's generated layout assertion (`offset_of!(AsioDrivers, connID) - 12`)
+# fails to compile on every target. The vendored copy drops that unused binding
+# instead of disabling layout tests. See docs/WINDOWS_PORT.md §3.1.
+[patch.crates-io]
+asio-sys = { path = "audio-core/vendor/asio-sys-0.3.0" }

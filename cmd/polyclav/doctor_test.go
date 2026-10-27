@@ -26,16 +26,19 @@ func TestPluginHostLinesReflectsMacOSNarrowerSurface(t *testing.T) {
 	}
 }
 
-// Windows must not inherit the Linux "built in" claim: audio-core exports LV2
-// and CLAP stubs there that return 1, so reporting them as available makes a
-// silent patch look like a working one.
-func TestPluginHostLinesDoNotClaimHostingOnWindows(t *testing.T) {
+// Windows hosts CLAP for real (clack-host) but still has no LV2: audio-core
+// exports an LV2 stub there that returns 1, so claiming LV2 would make a silent
+// patch look like a working one.
+func TestPluginHostLinesClaimOnlyClapOnWindows(t *testing.T) {
 	windows := join(pluginHostLines("windows"))
-	if strings.Contains(windows, "ok    LV2") || strings.Contains(windows, "ok    CLAP") {
-		t.Errorf("windows must not claim LV2/CLAP are built in (they are stubs), got:\n%s", windows)
+	if !strings.Contains(windows, "ok    CLAP plugin host") {
+		t.Errorf("windows should report CLAP as built in (clack-host), got:\n%s", windows)
+	}
+	if strings.Contains(windows, "ok    LV2") {
+		t.Errorf("windows must not claim LV2 is built in (it is a stub), got:\n%s", windows)
 	}
 	if !strings.Contains(windows, "not built for Windows") {
-		t.Errorf("windows plugin host lines should explain why, got:\n%s", windows)
+		t.Errorf("windows LV2 line should explain why, got:\n%s", windows)
 	}
 }
 

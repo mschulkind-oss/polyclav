@@ -11,7 +11,7 @@ crate-type = ["staticlib"]
 
 # Cross-platform dependencies (build on every OS). The audio I/O backend and
 # the plugin hosts are target-gated below: PipeWire + LV2/CLAP on Linux, cpal
-# (CoreAudio) on macOS.
+# (CoreAudio) on macOS, cpal (WASAPI/ASIO) + CLAP on Windows.
 [dependencies]
 crossbeam-queue = "0.3"
 # oxisynth: pure-Rust FluidSynth port. Reads SF2 and SF3 (rustysynth is SF2 only).
@@ -31,17 +31,22 @@ libloading = "0.8"
 # Apache 2.0 binary.
 fundsp = "0.23"
 
-# --- Linux only: PipeWire output + LV2/CLAP plugin hosts ------------------
-# pipewire (pipewire-rs) links libpipewire and has no macOS port. livi is the
-# LV2 host and wraps the lilv C library (pkg-config'd; no macOS build). lv2_raw
-# is a livi companion (livi uses but doesn't re-export lv2_raw::LV2Urid; pinned
-# to livi's version to avoid two copies). clack-host is pure-Rust and *would*
-# build on macOS, but LV2/CLAP hosting is out of scope for the v1 macOS port
-# (macOS SynthBackend = Oxi/Sfizz/Native), so it rides the same gate.
+# --- Linux only: PipeWire output + LV2 plugin host ------------------------
+# pipewire (pipewire-rs) links libpipewire and has no macOS or Windows port.
+# livi is the LV2 host and wraps the lilv C library (pkg-config'd; no non-Linux
+# build). lv2_raw is a livi companion (livi uses but doesn't re-export
+# lv2_raw::LV2Urid; pinned to livi's version to avoid two copies).
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = "0.10"
 livi = "0.7"
 lv2_raw = "0.2"
+
+# --- Linux and Windows: CLAP plugin host ---------------------------------
+# clack-host is pure Rust (plugin bundles are dlopen'd via libloading), so it
+# hosts CLAP plugins on both platforms. macOS stays CLAP-free: LV2/CLAP hosting
+# is out of scope for the v1 macOS port (macOS SynthBackend =
+# Oxi/Sfizz/Native), and lib.rs keeps its non-Linux CLAP FFI stubs for it.
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 clack-host = "0.1"
 clap-sys = "0.5"
 
