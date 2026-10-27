@@ -11,8 +11,11 @@ out via cpal/CoreAudio, MIDI in via CoreMIDI, and the build needs
 nothing beyond the system frameworks — no Homebrew packages (the
 known-good toolchain setup is `.github/workflows/ci-macos.yml`; see
 `docs/MACOS_PORT.md`). LV2/CLAP plugin hosting is Linux-only: macOS
-builds ship SF2/SF3/SFZ soundfonts and the native synth. Windows and
-PulseAudio-only systems are not supported.
+builds ship SF2/SF3/SFZ soundfonts and the native synth. **Windows**
+builds and runs, but live audio out and MIDI in are not yet verified on
+real hardware — see [Windows](#windows) below for exactly what is and is
+not proven. PulseAudio-only systems (no PipeWire) are still not
+supported.
 
 ## Toolchains
 
@@ -114,6 +117,92 @@ just check              # the universal gate (build + clippy + vet + tests)
 `just check` runs a trailing `go build ./...` on purpose: `go test` only
 links cgo for packages that have test files, so without it a missing
 `-lasound` or `-llilv` slips past.
+
+## Windows
+
+**The build works; the instrument is unverified.** Those are two separate
+claims, so here they are separately.
+
+What works today:
+
+- **It builds.** `polyclav.exe` compiles for `windows/amd64` with cgo, and
+  its only imports are Windows system DLLs — nothing MinGW-specific to
+  install alongside it.
+- **It runs, and it renders audio offline.** Verified on a Windows 11
+  LTSC guest: `polyclav doctor` reports the oxisynth and native synths
+  built in (and sfizz missing, as expected), and `polyclav render`
+  produces a correct 48 kHz stereo WAV (2.000 s, peak 0.26, RMS 0.09) —
+  that path needs no audio device.
+- **The WASAPI output path is compiled in.** Windows shares the cpal
+  backend with macOS, so the DSP chain and the latency knob are the ones
+  the other platforms run.
+- **MIDI compiles** through rtmidi's WinMM backend.
+
+What is not verified yet — do not plan around it:
+
+- **Live audio out against a real device.** The guest the port was tested
+  in has no sound card, so the output stream has never been opened, let
+  alone listened to.
+- **Real USB MIDI.** The WinMM backend compiles, but no keyboard has been
+  plugged in, and port names come from WinMM here — polyclav's name
+  heuristics were tuned against ALSA port names.
+- **Latency.** cpal's WASAPI backend is shared-mode only and reports the
+  device period (typically 10 ms) as both the minimum and maximum buffer
+  size, so the 128-frame (~2.67 ms) period the Linux build asks for
+  collapses to ~480 frames. That is a property of the backend, not a
+  tuning knob; `docs/WINDOWS_PORT.md` §3.1 lays out the options.
+- **The ASIO build.** `--features asio` exists but is off by default and
+  currently fails to compile (`asio-sys` 0.3.0's generated bindings). A
+  binary built with it would also be GPL-3.0 rather than Apache-2.0 — see
+  [the licence section of the README](../README.md#license).
+- **Plugin hosting.** LV2 and CLAP are Linux-only, exactly as on macOS.
+- **Packaging and signing.** Releases ship a plain `.zip`, so expect
+  SmartScreen to warn about an unsigned binary on first run.
+
+### Windows build requirements
+
+- **MSYS2 with the UCRT64 toolchain** (`mingw-w64-ucrt-x86_64-gcc`). Go's
+  cgo on Windows uses gcc, not MSVC, so this is required — run the build
+  from the *MSYS2 UCRT64* shell so `gcc`/`g++` are on `PATH`.
+- **Go** ≥ 1.23, the same as every other platform.
+- **Rust** stable **plus the MinGW target**: `rustup target add
+  x86_64-pc-windows-gnu`. This is not the target a Windows `rustup`
+  installs by default, and an `x86_64-pc-windows-msvc` staticlib cannot
+  be linked by Go's cgo.
+
+There are no system libraries to install: the Windows build links only
+Windows system libs (no PipeWire, ALSA, lilv, or CLAP stack on this path).
+
+### The static link is load-bearing
+
+rtmidi is C++, so a plain MinGW link leaves `libstdc++-6.dll` and
+`libgcc_s_seh-1.dll` as runtime dependencies — an `.exe` that dies on a
+clean machine with a missing-DLL dialog. `internal/audio/audio_windows.go`
+therefore carries `-static-libgcc -static-libstdc++` in its cgo LDFLAGS.
+The broad `-static` is not used because it tries to link a static
+`mcfgthread` that some toolchains do not ship; the narrow pair still
+yields a self-contained binary. After changing those flags, check the
+result with `objdump -p polyclav.exe | grep 'DLL Name'` — only system
+DLLs should be listed.
+
+### How to build on Windows
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+
+# --target is load-bearing: audio_windows.go links the staticlib out of
+# target/x86_64-pc-windows-gnu/release, which a plain `cargo build` on
+# Windows does not write (it writes target/release).
+cargo build --release --target x86_64-pc-windows-gnu --manifest-path audio-core/Cargo.toml
+
+go build -trimpath -ldflags "-s -w" -o dist/polyclav.exe ./cmd/polyclav
+```
+
+The `just` recipes are POSIX shell, so on Windows either use Git Bash /
+MSYS2 or run `cargo` and `go` directly as above. First run is the same as
+everywhere: `polyclav bootstrap`, then `polyclav`. `docs/WINDOWS_PORT.md`
+has the full port record — the coupling map, the ASIO analysis, and the
+remaining work.
 
 ## Soundfonts
 
