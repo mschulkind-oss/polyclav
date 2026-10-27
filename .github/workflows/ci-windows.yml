@@ -127,16 +127,19 @@ jobs:
       - name: Link statically — no MinGW C/C++ runtime DLL dependencies
         # The Go link must produce an exe that depends only on Windows system
         # DLLs. rtmidi is C++, so a default MinGW link would leave
-        # libgcc_s_seh-1.dll / libstdc++-6.dll as runtime dependencies and
-        # polyclav.exe would die with a missing-DLL dialog on a clean machine.
-        # The flags live in internal/audio/audio_windows.go's cgo preamble as
-        # `-static-libgcc -static-libstdc++` rather than a broad `-static`:
-        # broad `-static` also asks for a static mcfgthread that is not shipped
-        # (docs/WINDOWS_PORT.md §7), and the narrow pair still yields a
-        # self-contained binary. This step is the assertion behind that note —
-        # it asserts only those two, and prints the full DLL list so any other
-        # surprise (a libwinpthread-1.dll line, say) is visible in the log
-        # rather than silently tolerated.
+        # libgcc_s_seh-1.dll / libstdc++-6.dll / libwinpthread-1.dll as runtime
+        # dependencies and polyclav.exe would die with a missing-DLL dialog on a
+        # clean machine. The flag lives in internal/audio/audio_windows.go's cgo
+        # preamble as `-static` — the narrow
+        # `-static-libgcc -static-libstdc++` pair is NOT enough, because it
+        # leaves libwinpthread dynamic (libstdc++ links the C++ runtime's thread
+        # support separately, and MSYS2's MinGW uses the winpthreads model).
+        #
+        # This step asserts the SAME list the release job asserts. Asserting only
+        # libgcc/libstdc++ here is what let v0.3.0 go green in CI and then ship
+        # with no Windows asset at all: a portability check narrower than the
+        # release's reports success for an artifact that cannot run on a clean
+        # machine, which is worse than having no check.
         shell: bash
         run: |
           set -euo pipefail
@@ -144,8 +147,13 @@ jobs:
           go build -o bin/polyclav.exe ./cmd/polyclav
           echo "DLL dependencies:"
           objdump -p bin/polyclav.exe | grep 'DLL Name' | sed 's/^[[:space:]]*//' | sort -u || true
-          if objdump -p bin/polyclav.exe | grep -Eqi 'libgcc_s|libstdc\+\+'; then
-            echo "::error::polyclav.exe depends on the MinGW C++ runtime — -static-libgcc/-static-libstdc++ is missing from the cgo LDFLAGS"
+          # Assert the SAME set the release job asserts. Asserting only
+          # libgcc/libstdc++ here is what let v0.3.0 go green in CI and then
+          # fail at release time on libwinpthread-1.dll — a portability check
+          # that is narrower than the release's is worse than none, because it
+          # reports success for an artifact that cannot run on a clean machine.
+          if objdump -p bin/polyclav.exe | grep -Eqi 'libgcc_s|libstdc\+\+|libwinpthread|mcfgthread'; then
+            echo "::error::polyclav.exe depends on a MinGW runtime DLL — the -static flag is missing from internal/audio/audio_windows.go's cgo LDFLAGS"
             exit 1
           fi
 

@@ -284,8 +284,7 @@ nix shell nixpkgs#pkgsCross.mingwW64.stdenv.cc -c bash -c "
 ```
 
 Both `cargo check` and `cargo build --release` succeed with that environment
-(`RUSTFLAGS="-L $MCFG -C link-arg=-static-libgcc -C link-arg=-static-libstdc++"`
-for the link, per §7). Note `BINDGEN_EXTRA_CLANG_ARGS` must carry **only** the
+(`RUSTFLAGS="-L $MCFG"` for the link, plus the `-static` in `audio_windows.go`, per §7). Note `BINDGEN_EXTRA_CLANG_ARGS` must carry **only** the
 MinGW-w64 headers: adding the GCC-internal include dir makes clang choke on gcc's
 `ia32intrin.h`/`mmintrin.h` builtins. On a native Windows + MSYS2 machine none of
 this applies.
@@ -473,10 +472,12 @@ This is the constraint most likely to burn a day if discovered late.
   `ksuser`) — the rtmidi preamble already names `-luuid -lksuser -lwinmm -lole32`
   for exactly this reason.
 - **Link statically, or ship DLLs.** rtmidi is C++, so a default MinGW link leaves
-  `libstdc++-6.dll` / `libgcc_s_seh-1.dll` as runtime dependencies — a `polyclav.exe`
-  that fails on a clean machine with a missing-DLL dialog. Use `-static` (or
-  `-static-libgcc -static-libstdc++`) so the release is a single self-contained
-  `.exe`, matching how the Linux and macOS releases are shipped.
+  `libstdc++-6.dll` / `libgcc_s_seh-1.dll` / `libwinpthread-1.dll` as runtime
+  dependencies — a `polyclav.exe` that fails on a clean machine with a missing-DLL
+  dialog. Use `-static`; the narrower `-static-libgcc -static-libstdc++` pair
+  still leaves `libwinpthread-1.dll` dynamic (§7, gotcha 3). That makes the
+  release a single self-contained `.exe`, matching how the Linux and macOS
+  releases are shipped.
 - **MSVC is still fine for the Rust-only test suite**, which needs no cgo. But
   never mix the two in one build tree.
 
@@ -761,16 +762,26 @@ Three things had to be fixed to get there, and all three will bite the real port
    explicitly. Note `LIBRARY_PATH` will **not** work: nix's cc-wrapper sanitizes
    it. This is a nixpkgs packaging gap, not a polyclav problem, and it does not
    exist on a real Windows + MSYS2 setup.
-3. **`-static` fails; `-static-libgcc -static-libstdc++` succeeds.** The broad
-   `-static` tries to link a static `mcfgthread` that is not shipped. The narrow
-   pair still yields a self-contained binary — verified: no `libgcc`, `libstdc++`
-   or `mcfgthread` DLL dependency — which is what a release wants anyway.
+3. **`-static` is what a portable binary needs; the narrow pair is not enough.**
+   `-static-libgcc -static-libstdc++` leaves `libwinpthread-1.dll` dynamic,
+   because libstdc++ links the C++ runtime's thread support separately and
+   MSYS2's MinGW uses the winpthreads thread model. The broad `-static` works on
+   both toolchains: MSYS2 statically links winpthreads, and nix's MinGW (thread
+   model `mcf`) statically links `mcfgthread`, which needs its lib dir on `-L`
+   per gotcha 2. Verified: no `libgcc`, `libstdc++`, `libwinpthread` or
+   `mcfgthread` DLL dependency.
+
+   This one cost a release. v0.3.0 published to PyPI and Homebrew and shipped
+   **no Windows asset**, because `ci-windows.yml` asserted only
+   `libgcc`/`libstdc++` while `publish.yml` also asserted `libwinpthread`. CI was
+   green for an artifact that could not run on a clean machine. Both jobs now
+   assert the same list.
 
 So the recipe for a Linux-side Windows build is: MinGW cross gcc from nix, the
-`mcfgthread` lib dir on `-L`, the Linux cgo environment cleared, and
-`-static-libgcc -static-libstdc++` instead of `-static`. On a native Windows + MSYS2
-machine none of that applies — you just use the UCRT64 toolchain, which is why the
-Windows CI job should build natively rather than cross.
+`mcfgthread` lib dir on `-L`, the Linux cgo environment cleared, and the `-static`
+that `audio_windows.go` already carries. On a native Windows + MSYS2 machine the
+`-L` is unnecessary — you just use the UCRT64 toolchain, which is why the Windows
+CI job builds natively rather than cross.
 
 ## 8. Recommended roadmap
 

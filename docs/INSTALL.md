@@ -182,15 +182,23 @@ is pure Rust and needs no system library either).
 
 ### The static link is load-bearing
 
-rtmidi is C++, so a plain MinGW link leaves `libstdc++-6.dll` and
-`libgcc_s_seh-1.dll` as runtime dependencies — an `.exe` that dies on a
-clean machine with a missing-DLL dialog. `internal/audio/audio_windows.go`
-therefore carries `-static-libgcc -static-libstdc++` in its cgo LDFLAGS.
-The broad `-static` is not used because it tries to link a static
-`mcfgthread` that some toolchains do not ship; the narrow pair still
-yields a self-contained binary. After changing those flags, check the
-result with `objdump -p polyclav.exe | grep 'DLL Name'` — only system
-DLLs should be listed.
+rtmidi is C++, so a plain MinGW link leaves MinGW runtime DLLs as dependencies —
+an `.exe` that dies on a clean machine with a missing-DLL dialog.
+`internal/audio/audio_windows.go` therefore carries `-static` in its cgo LDFLAGS.
+
+The narrower `-static-libgcc -static-libstdc++` pair is **not** sufficient, and
+believing it was is how v0.3.0 shipped with no Windows asset at all: it leaves
+`libwinpthread-1.dll` dynamic, because libstdc++ links the C++ runtime's thread
+support separately and MSYS2's MinGW uses the winpthreads thread model. `-static`
+covers both toolchains — MSYS2 statically links its winpthreads, and nix's MinGW
+(thread model `mcf`) statically links `mcfgthread`, which just needs its lib dir
+on `-L` (see `docs/WINDOWS_PORT.md` §7).
+
+After changing those flags, check the result with
+`objdump -p polyclav.exe | grep 'DLL Name'` — only system DLLs should be listed.
+The Windows CI job asserts exactly that, against the same list the release job
+asserts; a narrower CI check is worse than none, because it reports success for
+an artifact that cannot run on a clean machine.
 
 ### How to build on Windows
 
