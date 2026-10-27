@@ -122,6 +122,22 @@ warning. This is the single most important thing to know before writing a line o
 Windows code: **the existing macOS backend, copied to Windows, will run — and it
 will quietly be four times looser than on Linux.**
 
+**Measured, not inferred (2026-10-27).** Running the daemon on the Windows 11
+guest, with the VM given an emulated audio device, produced exactly the predicted
+behaviour in the log:
+
+```
+audio-core: output host Wasapi
+audio-core: windows latency request 128 clamped to 480 (device range 480..=480)
+audio-core: windows stream playing (buffer=480 frames, ~10.00 ms)
+```
+
+So the `clamp_frames` path does what the cpal source implied, the request degrades
+from 2.67 ms to 10.00 ms, and — because the clamp is logged rather than silent —
+the build says what it actually got. The device here is QEMU's emulated HDA rather
+than real hardware, but 480 frames / 10 ms is the standard consumer device period,
+so the number is representative even though the device is not.
+
 **The four real options**, in increasing cost:
 
 | Option | Period | Cost | Notes |
