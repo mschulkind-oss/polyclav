@@ -35,7 +35,7 @@ use oxisynth::{
 use crate::dsp::{
     AnalogDelay, Chorus, Compressor, DrivePedal, Limiter, MasteringCompressor, Reverb, Tremolo,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::plugin_clap::ClapInstance;
 #[cfg(target_os = "linux")]
 use crate::plugin_lv2::LvInstance;
@@ -46,7 +46,9 @@ mod dsp;
 // non-Linux analog of the PipeWire path.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod backend_cpal;
-#[cfg(target_os = "linux")]
+// CLAP host (clack-host, pure Rust): Linux and Windows. macOS keeps the
+// non-Linux CLAP FFI stubs further down instead.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod plugin_clap;
 #[cfg(target_os = "linux")]
 mod plugin_lv2;
@@ -338,14 +340,14 @@ pub(crate) fn record_mastering_metrics(min_gain: f32, in_peak: f32, out_peak: f3
         .store(mastering_metric_milli(out_peak), Ordering::Relaxed);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn record_plugin_render_error() {
     audio_metrics()
         .plugin_render_errors
         .fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn record_clap_input_event_drop() {
     audio_metrics()
         .clap_input_event_drops
@@ -379,7 +381,7 @@ pub(crate) enum SynthBackend {
     Sfizz(sfizz::Sfizz),
     #[cfg(target_os = "linux")]
     Lv2(Box<LvInstance>),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Clap(Box<ClapInstance>),
     Native(Box<NativeSynth>),
 }
@@ -421,7 +423,7 @@ impl SynthBackend {
         Ok(SynthBackend::Lv2(Box::new(inst)))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn load_clap(
         bundle_path: &Path,
         plugin_id: &str,
@@ -456,7 +458,7 @@ impl SynthBackend {
             SynthBackend::Sfizz(s) => s.render(samples),
             #[cfg(target_os = "linux")]
             SynthBackend::Lv2(s) => s.render(samples),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             SynthBackend::Clap(s) => s.render(samples),
             SynthBackend::Native(s) => s.render(samples),
         }
@@ -468,7 +470,7 @@ impl SynthBackend {
             SynthBackend::Sfizz(_) => "sfizz",
             #[cfg(target_os = "linux")]
             SynthBackend::Lv2(_) => "lv2",
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             SynthBackend::Clap(_) => "clap",
             SynthBackend::Native(_) => "native",
         }
@@ -1855,7 +1857,7 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(uri: *const c_char) -> i3
 ///
 /// # Safety
 /// `bundle_path` and `plugin_id` must be valid NUL-terminated C strings.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     bundle_path: *const c_char,
@@ -1868,7 +1870,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
 
 /// # Safety
 /// pointers must be valid C strings; state_blob may be NULL when state_len is 0.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
     bundle_path: *const c_char,
@@ -1931,7 +1933,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
 
 /// # Safety
 /// pointers must be valid C strings/out buffer when non-NULL.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     bundle_path: *const c_char,
@@ -1976,7 +1978,7 @@ pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
 
 /// # Safety
 /// out_count must be writable when non-NULL; out may be NULL for a count-only query.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_active_params(
     out: *mut PolyclavClapParamInfoC,
@@ -1999,7 +2001,7 @@ pub unsafe extern "C" fn polyclav_audio_clap_active_params(
     0
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn polyclav_audio_clap_set_param(clap_id: u32, value: f64) -> i32 {
     let generation = SOUNDFONT_GENERATION.load(Ordering::SeqCst);
@@ -2018,7 +2020,7 @@ pub extern "C" fn polyclav_audio_clap_set_param(clap_id: u32, value: f64) -> i32
 
 /// # Safety
 /// out must be NULL or point to writable storage for one event.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_poll_feedback(
     out: *mut PolyclavClapFeedbackEvent,
@@ -2057,7 +2059,7 @@ pub extern "C" fn polyclav_audio_backend_generation() -> u64 {
 /// # Safety
 /// out_len must be writable when non-NULL. out may be NULL to request and cache
 /// a state snapshot length; a following call with storage copies that snapshot.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_save_state(
     out: *mut u8,
@@ -2132,7 +2134,7 @@ pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(_uri: *const c_char) -> i
 ///
 /// # Safety
 /// `bundle_path` and `plugin_id` must be valid NUL-terminated C strings or NULL.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     _bundle_path: *const c_char,
@@ -2142,7 +2144,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     1
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
     _bundle_path: *const c_char,
@@ -2159,7 +2161,7 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
 ///
 /// # Safety
 /// `out_len` may be NULL or point to writable memory; `out` is unused.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_save_state(
     _out: *mut u8,
@@ -2172,7 +2174,7 @@ pub unsafe extern "C" fn polyclav_audio_clap_save_state(
     1
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     _bundle_path: *const c_char,
@@ -2184,7 +2186,7 @@ pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     1
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_active_params(
     _out: *mut PolyclavClapParamInfoC,
@@ -2199,13 +2201,13 @@ pub unsafe extern "C" fn polyclav_audio_clap_active_params(
     0
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub extern "C" fn polyclav_audio_clap_set_param(_clap_id: u32, _value: f64) -> i32 {
     1
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_poll_feedback(
     _out: *mut PolyclavClapFeedbackEvent,
@@ -3237,7 +3239,7 @@ fn render_offline_core(
 /// `patch_type` is one of "soundfont" (dispatches on file extension,
 /// same as the live `SetSoundfont` path), "native" (`patch_ref` is the
 /// engine name), "lv2" (`patch_ref` is the URI, Linux only), or "clap"
-/// (`patch_ref` is the bundle path, `plugin_id` required, Linux only).
+/// (`patch_ref` is the bundle path, `plugin_id` required; Linux and Windows).
 #[cfg(target_os = "linux")]
 fn load_synth_by_type(
     patch_type: &str,
@@ -3256,10 +3258,29 @@ fn load_synth_by_type(
     }
 }
 
-/// macOS/Windows variant: LV2/CLAP offline hosting is unavailable there (same
+/// Windows variant: CLAP hosting is built in, LV2 is not (livi wraps the lilv
+/// C library, which has no Windows build here).
+#[cfg(target_os = "windows")]
+fn load_synth_by_type(
+    patch_type: &str,
+    patch_ref: &str,
+    plugin_id: Option<&str>,
+) -> Result<SynthBackend, String> {
+    match patch_type {
+        "soundfont" => SynthBackend::load(Path::new(patch_ref)),
+        "native" => SynthBackend::load_native(patch_ref),
+        "clap" => {
+            let id = plugin_id.ok_or_else(|| "clap patch_type requires plugin_id".to_string())?;
+            SynthBackend::load_clap(Path::new(patch_ref), id, None, 0)
+        }
+        other => Err(format!("patch_type {other:?} unavailable on this platform")),
+    }
+}
+
+/// macOS variant: LV2/CLAP offline hosting is unavailable there (same
 /// boundary as `polyclav_audio_set_lv2_plugin`/`set_clap_plugin`'s
 /// stubs) — "soundfont" and "native" only.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn load_synth_by_type(
     patch_type: &str,
     patch_ref: &str,
@@ -3544,7 +3565,7 @@ pub(crate) fn swap_pending_backend(user_data: &mut UserData) {
     }
 
     if let Some((_gen, new_backend)) = selected {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let sender = match &new_backend {
                 SynthBackend::Clap(clap) => {
@@ -3619,7 +3640,7 @@ pub(crate) fn drain_midi(user_data: &mut UserData) {
             },
             #[cfg(target_os = "linux")]
             Some(SynthBackend::Lv2(ref mut s)) => s.push_midi(&event),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             Some(SynthBackend::Clap(ref mut s)) => s.push_midi(&event),
             Some(SynthBackend::Native(ref mut s)) => s.handle_event(&event),
             None => {}
@@ -3675,7 +3696,7 @@ pub(crate) fn render_block(user_data: &mut UserData, samples: &mut [f32]) {
         Some(SynthBackend::Sfizz(ref mut s)) => s.render(samples),
         #[cfg(target_os = "linux")]
         Some(SynthBackend::Lv2(ref mut s)) => s.render(samples),
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Some(SynthBackend::Clap(ref mut s)) => s.render(samples),
         Some(SynthBackend::Native(ref mut s)) => s.render(samples),
         None => {
@@ -3936,7 +3957,7 @@ fn clamp_callback_frames(requested: usize, max_frames: usize) -> usize {
 mod tests {
     use super::*;
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn clap_state_save_stub_reports_unavailable() {
         let mut len = 99;
