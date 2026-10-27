@@ -20,8 +20,10 @@ import (
 // flag parsing (see cmd/polyclav/main.go) or by hand from tests.
 type Options struct {
 	// Dest is the destination root for soundfont content. Production
-	// default is ~/.local/share/polyclav/soundfonts/ (matching the
-	// `~/...` paths in polyclav.example.toml). Tests pass a t.TempDir().
+	// default is the polyclav data dir's soundfonts/ (config.DataDir —
+	// ~/.local/share/polyclav/soundfonts/ on Linux and macOS), which is
+	// where polyclav.example.toml's `~/...` paths resolve. Tests pass a
+	// t.TempDir().
 	Dest string
 
 	// AcceptLicenses, when true, skips the interactive consent prompt

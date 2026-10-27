@@ -53,9 +53,10 @@ func sfizzAssetFor(goos string) (assetName, url string, ok bool) {
 // polyclav's own CI-built artifact of a BSD-2-Clause library, not
 // third-party copyrighted content the user must explicitly accept.
 type SfizzLibOptions struct {
-	// Dest is the directory the lib is placed in. Production default:
-	// ~/.local/share/polyclav/lib — matches the fixed path
-	// audio-core/src/sfizz_sys.rs checks first on both macOS and Linux.
+	// Dest is the directory the lib is placed in. Production default: the
+	// polyclav data dir's `lib` (config.DataDir, i.e.
+	// ~/.local/share/polyclav/lib on Linux and macOS) — it must match the
+	// path audio-core/src/sfizz_sys.rs checks first, on every platform.
 	Dest string
 
 	// URL overrides the platform-computed asset URL; tests point this at

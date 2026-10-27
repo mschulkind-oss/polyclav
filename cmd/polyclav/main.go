@@ -39,19 +39,22 @@ import (
 	"github.com/mschulkind-oss/polyclav/internal/web"
 )
 
-// defaultSoundfontDest is the soundfont root used by bootstrap and by
-// the example config's `~/.local/share/polyclav/soundfonts/` paths.
-// Stored as a `~`-prefixed string so config.ExpandHome is the single
-// source for tilde expansion (avoids divergence between bootstrap's
-// idea of "home" and the config loader's).
-const defaultSoundfontDest = "~/.local/share/polyclav/soundfonts"
+// defaultSoundfontDest is the soundfont root used by bootstrap and by the
+// example config's soundfont paths: `<data dir>/soundfonts`, i.e.
+// ~/.local/share/polyclav/soundfonts on Linux and macOS and
+// %LOCALAPPDATA%\polyclav\soundfonts on Windows (see config.DataDir).
+func defaultSoundfontDest() string { return filepath.Join(config.DataDir(), "soundfonts") }
 
 // defaultSfizzLibDest is where bootstrap installs polyclav's own prebuilt
-// libsfizz on macOS and Linux (see internal/bootstrap/sfizz.go) — a
-// sibling of defaultSoundfontDest, and the fixed path
+// libsfizz (see internal/bootstrap/sfizz.go — built for macOS and Linux
+// only) — a sibling of defaultSoundfontDest, and the fixed path
 // audio-core/src/sfizz_sys.rs's bootstrap-installed-lib search checks
-// first on both platforms.
-const defaultSfizzLibDest = "~/.local/share/polyclav/lib"
+// first.
+func defaultSfizzLibDest() string { return filepath.Join(config.DataDir(), "lib") }
+
+// defaultClipsDir is where the audition player picks up user .mid/.midi clips
+// (docs/AUDITION.md).
+func defaultClipsDir() string { return filepath.Join(config.DataDir(), "clips") }
 
 // idleWatchdogThreshold arms the Launchkey/MIDI idle watchdogs (see
 // launchkey.ReconcilerConfig.IdleThreshold, midi.MultiplexerConfig.IdleThreshold).
@@ -323,7 +326,7 @@ func main() {
 	// joins the audition registry after the built-in patterns. Loaded here,
 	// before the Player is shared with the web server or --play, per
 	// LoadUserClips's not-during-playback contract. A missing dir is fine.
-	clipsDir := config.ExpandHome("~/.local/share/polyclav/clips")
+	clipsDir := defaultClipsDir()
 	if n, cerr := plr.LoadUserClips(clipsDir); cerr != nil {
 		logger.Warn("load user clips", "dir", clipsDir, "err", cerr)
 	} else if n > 0 {
@@ -1660,7 +1663,7 @@ func promptRunBootstrapNow(stdin *os.File, stdout io.Writer, mde *config.Missing
 // again themselves.
 func runFirstRunBootstrap(ctx context.Context, path string, stdin io.Reader, stdout, stderr io.Writer) (*config.Config, error) {
 	if err := bootstrap.Run(ctx, bootstrap.Options{
-		Dest:         config.ExpandHome(defaultSoundfontDest),
+		Dest:         defaultSoundfontDest(),
 		SkipExisting: true,
 		Stdin:        stdin,
 		Stdout:       stdout,
@@ -1669,7 +1672,7 @@ func runFirstRunBootstrap(ctx context.Context, path string, stdin io.Reader, std
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	if err := bootstrap.InstallSfizzLib(ctx, bootstrap.SfizzLibOptions{
-		Dest:         config.ExpandHome(defaultSfizzLibDest),
+		Dest:         defaultSfizzLibDest(),
 		SkipExisting: true,
 		Stdout:       stdout,
 	}); err != nil {
@@ -1690,7 +1693,7 @@ func runFirstRunBootstrap(ctx context.Context, path string, stdin io.Reader, std
 // flag parser stays clean). Returns the exit code main() should use.
 func runBootstrap(args []string) int {
 	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
-	dest := fs.String("dest", "", "destination directory for soundfonts (default: ~/.local/share/polyclav/soundfonts)")
+	dest := fs.String("dest", "", "destination directory for soundfonts (default: "+defaultSoundfontDest()+")")
 	acceptShort := fs.Bool("y", false, "accept all licenses without prompting (same as --accept-licenses)")
 	accept := fs.Bool("accept-licenses", false, "accept all licenses without prompting")
 	skipExisting := fs.Bool("skip-existing", true, "skip files already present at the target path")
@@ -1699,7 +1702,7 @@ func runBootstrap(args []string) int {
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "Download the example soundfonts referenced by polyclav.example.toml.")
 		fmt.Fprintln(fs.Output(), "On macOS and Linux, also installs polyclav's own prebuilt libsfizz to")
-		fmt.Fprintln(fs.Output(), "~/.local/share/polyclav/lib/ (not affected by --dest) so SFZ patches")
+		fmt.Fprintln(fs.Output(), defaultSfizzLibDest()+"/ (not affected by --dest) so SFZ patches")
 		fmt.Fprintln(fs.Output(), "work with no further steps.")
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "Flags:")
@@ -1711,7 +1714,7 @@ func runBootstrap(args []string) int {
 
 	d := *dest
 	if d == "" {
-		d = config.ExpandHome(defaultSoundfontDest)
+		d = defaultSoundfontDest()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -1733,7 +1736,7 @@ func runBootstrap(args []string) int {
 	// further steps — the whole point of folding this into bootstrap
 	// instead of leaving it as a doctor recommendation.
 	if err := bootstrap.InstallSfizzLib(ctx, bootstrap.SfizzLibOptions{
-		Dest:         config.ExpandHome(defaultSfizzLibDest),
+		Dest:         defaultSfizzLibDest(),
 		SkipExisting: *skipExisting,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap: sfizz install failed: %v\n", err)

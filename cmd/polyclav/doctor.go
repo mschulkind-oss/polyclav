@@ -81,7 +81,7 @@ func runDoctor(args []string) int {
 
 	// --- Soundfonts dir ---
 	fmt.Fprintln(out)
-	sfDir := config.ExpandHome(defaultSoundfontDest)
+	sfDir := defaultSoundfontDest()
 	if st, err := os.Stat(sfDir); err == nil && st.IsDir() {
 		fmt.Fprintf(out, "Soundfonts: %s (present)\n", sfDir)
 	} else {

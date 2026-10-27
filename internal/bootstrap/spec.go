@@ -1,7 +1,8 @@
 // Package bootstrap implements `polyclav bootstrap`: download the example
-// soundfonts referenced by the default config.toml into
-// ~/.local/share/polyclav/soundfonts/ so the daemon can start without the
-// user manually wrangling free-soundfont archives.
+// soundfonts referenced by the default config.toml into the polyclav data
+// dir's soundfonts/ (config.DataDir — ~/.local/share/polyclav/soundfonts/ on
+// Linux and macOS) so the daemon can start without the user manually
+// wrangling free-soundfont archives.
 //
 // The download list is the curated set referenced by polyclav.example.toml
 // (see ItemList). Each entry maps a remote URL to the on-disk layout
