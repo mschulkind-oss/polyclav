@@ -5,9 +5,10 @@
 > genuinely different from macOS, a phased plan, and the Windows-VM strategy that
 > makes the port testable from inside the Linux dev jail.
 >
-> The VM path is verified as far as this jail allows without `/dev/kvm`: dockur's
-> Windows 11 LTSC guest boots here under software emulation (§6). What blocks the
-> *fast* version is one yolo setting, not a design question.
+> The VM path is verified end to end: with `"kvm": true` in the jail config,
+> dockur's Windows 11 LTSC guest installs here under real KVM acceleration
+> (`-enable-kvm`, `-cpu host`), reachable over SSH (§6). A Windows machine is
+> available to this project without leaving the Linux dev jail.
 >
 > Read [`MACOS_PORT.md`](./MACOS_PORT.md) first if you have not: that port did the
 > structural work (the `render_block`/`drain_midi`/`swap_pending_backend` seam, the
@@ -114,13 +115,14 @@ warning. This is the single most important thing to know before writing a line o
 Windows code: **the existing macOS backend, copied to Windows, will run — and it
 will quietly be four times looser than on Linux.**
 
-**The three real options**, in increasing cost:
+**The four real options**, in increasing cost:
 
 | Option | Period | Cost | Notes |
 |---|---|---|---|
 | **A. cpal shared mode as-is** | ~10 ms (device period) | ~0 (backend is `backend_macos.rs` with a different `cfg`) | Ship-quality for a practice instrument? 10 ms is roughly a well-set-up MIDI keyboard + soft synth on Windows. Bit-exactness is lost to the OS resampler only if the endpoint is not 48 k. |
 | **B. `IAudioClient3` low-latency shared mode** | down to the driver's reported minimum | Moderate — cpal does not expose it; needs a `windows`-crate backend or a cpal patch | Windows 10+. `GetSharedModeEnginePeriod` reports min/ fundamental/max; `InitializeSharedAudioStream` takes a period that is a multiple of the fundamental. Microsoft documents "a small buffer (less than 10 ms)"; **measured reality is pessimistic** — a survey of real endpoints found 10 ms minimum for NVIDIA HDA and Thesycon (SSL 2) drivers, 7 ms for one `usbaudio2` device. Worth measuring against the actual interface before designing for it. |
 | **C. WASAPI exclusive mode** | ~2.67 ms achievable | High — ~400–600 lines of `unsafe` `IAudioClient`/`IAudioRenderClient` + event-driven callback | cpal has **no** exclusive mode (the "Added WASAPI exclusive host" PR was closed, not merged). Exclusive mode takes the device away from everything else, requires the endpoint to accept the exact format, and changes the failure modes (device in use → hard error). |
+| **D. ASIO** | ~2–5 ms | Low *engineering* cost — cpal has an `asio` feature; high *licensing* and *deployment* cost | See below. Not the default, and not the answer for class-compliant devices. |
 
 **Recommendation:** ship **A** first, because it is nearly free and it gets a
 sounding Windows build in front of a keyboard. Measure the real device period on
@@ -128,7 +130,45 @@ the actual hardware (§6), and only then decide whether **B** is enough. Treat *
 as the "make it feel like Linux" project, and only if A/B measurably fail the
 under-the-fingers test.
 
-There is a fourth option nobody should take: lowering `LATENCY_FRAMES` and
+#### Why not ASIO? (the obvious question)
+
+ASIO is the standard low-latency answer on Windows and it is a reasonable thing to
+ask for, so the objection is worth stating precisely: **the obstacle is licensing
+and driver availability, not engineering.**
+
+- **The toolchain is no longer the problem.** `cpal` has an `asio` feature that
+  pulls `asio-sys`, and `asio-sys` supports MinGW as well as MSVC — cross-compiling
+  it under mingw64 was fixed upstream (cpal PR #1006, merged 2025-08-29). So it
+  does work with the `x86_64-pc-windows-gnu` target the rest of this plan needs.
+- **The license is the problem.** Steinberg dual-licenses the ASIO SDK: a
+  proprietary license, or **GPLv3** for open-source use. polyclav is **Apache
+  2.0**. Apache 2.0 is compatible with GPLv3, but GPLv3 is *copyleft*: a binary
+  that links the ASIO SDK is a GPLv3 combined work, so the Windows build's license
+  would differ from the rest of the project. This is not a hypothetical — it is
+  exactly why **Surge XT ships ASIO and is GPLv3**, and why a permissively
+  licensed project that ships ASIO either relicenses or takes Steinberg's
+  proprietary terms.
+- **ASIO would not help the device polyclav targets.** ASIO is not a
+  device-independent API; it enumerates *vendor* ASIO drivers. The rig this project
+  is built around is a **USB audio class-compliant** interface
+  (`docs/INSTALL.md` says so of the XR18 explicitly), and class-compliant devices
+  have no vendor ASIO driver — they use Windows' own `usbaudio2` driver. Reaching
+  ASIO there means putting **ASIO4ALL** (closed-source freeware) or **FlexASIO**
+  (GPLv3) in between, and those wrap WDM/WASAPI, so for a class-compliant device
+  they can be *slower* than WASAPI exclusive mode, not faster.
+- **ASIO is exclusive**, so it takes the interface from everything else on the
+  machine — the same trade-off as option C, with an extra dependency.
+
+**So ASIO is the right answer to a different question.** It is the best path for a
+user with a pro interface that ships its own ASIO driver and who accepts a GPLv3
+build; it is the wrong default for a project whose stated goal is "any
+PipeWire-supported sink" on Linux, which becomes "any WASAPI endpoint" on
+Windows — i.e. zero-install, driver-free operation. If ASIO is wanted, the clean
+shape is an **opt-in build variant**: the default Windows release is WASAPI-only
+and stays Apache 2.0; an ASIO-enabled binary is published separately under GPLv3,
+with the license difference stated plainly rather than blurred.
+
+There is a fifth option nobody should take: lowering `LATENCY_FRAMES` and
 believing the number. A backend that cannot honour the request must *report* what
 it actually got, or the latency telemetry lies.
 
@@ -502,6 +542,10 @@ Everything asserted above that is checkable in this tree was checked on
 | cpal's WASAPI is shared-mode only | cpal `src/host/wasapi/device.rs` — *"We always create voices in shared mode"*; `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` for output |
 | cpal reports min == max buffer size | same file, `supported_formats()`: `SupportedBufferSize::Range { min: frames, max: frames }` from `GetDevicePeriod` |
 | No exclusive mode in cpal | PR "Added WASAPI exclusive host" closed, not merged; cpal README lists WASAPI (default), ASIO and JACK as Windows backends |
+| ASIO SDK is dual-licensed, GPLv3 or proprietary | Steinberg's "About ASIO (Open Source license variant)": *"Adopt the General Public License (GPL) Version 3 for full open-source integration"*; the alternative is the proprietary SDK license |
+| ASIO works with MinGW / windows-gnu | cpal `asio` feature → `asio-sys`, which states support for *"both MSVC and MinGW toolchains"*; cpal PR #1006 *"asio-sys: Fixes to get cross-compiling under mingw64"* merged 2025-08-29 |
+| The target interface is class-compliant, so has no vendor ASIO driver | `docs/INSTALL.md`: *"**Behringer XR18** (USB audio class-compliant; OSC over the network)"*; `docs/USER_GUIDE.md`: *"Any default sink works"* |
+| KVM works in the jail after `"kvm": true` + restart | `/dev/kvm` present and rw; QEMU launched with `-enable-kvm` and `-machine …accel=kvm`; `-cpu host` |
 | Nested podman works in this jail | `podman run --rm docker.io/library/alpine:3.20 echo` → `NESTED_PODMAN_OK` |
 | `/dev/kvm` is the only missing device | `ls /dev` shows no `kvm`; `/dev/net/tun` present; `CapEff` includes `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` |
 | `kvm` is a real yolo key | `yolo config-ref` → `kvm (boolean, default false): Expose /dev/kvm inside the jail`; `yolo check --no-build` accepts it at workspace scope and reports *"Inside jail — kvm checks skipped"* |
