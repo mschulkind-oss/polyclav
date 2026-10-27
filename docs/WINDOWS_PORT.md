@@ -264,6 +264,46 @@ One precondition, cheap but real: you can only dual-license code **you own**, so
 third-party dependencies need a GPLv3-compatibility audit (Apache-2.0, MIT, BSD and
 ISC are fine; GPLv2-only is not).
 
+#### The concrete shape, and the copyleft already in the tree
+
+Dual licensing this repo means:
+
+- `LICENSE` keeps the Apache 2.0 text; add the GPLv3 text alongside it.
+- README's License section states the offer: *available under Apache-2.0 or
+  GPL-3.0-only, at your option*.
+- `audio-core/Cargo.toml` has **no `license` field today** — add
+  `license = "Apache-2.0 OR GPL-3.0-only"` (SPDX expression; without it `cargo
+  package` warns and crates.io rejects).
+- A new `CONTRIBUTING` says contributions are accepted under **Apache-2.0**. That
+  is sufficient for all three futures and needs **no CLA**: Apache 2.0 may be taken
+  into a GPLv3 work (the permitted direction), and Apache 2.0 §4 expressly permits
+  distributing derivative works under other terms provided the Apache notices are
+  kept — which is how a proprietary build stays legal. A DCO is a fine lightweight
+  certification. The one rule is to **never accept GPLv3-only inbound**, because
+  that code can never be closed.
+
+**But the ASIO licence is not the binding constraint on a proprietary future —
+`oxisynth` is.** `oxisynth` (the SF2/SF3 backend) is **LGPL-2.1**
+(`Cargo.toml: license = "LGPL-2.1"`) and is **statically linked** into
+`libpolyclav_audio_core.a` and therefore into every polyclav binary. LGPL-2.1 §6
+requires that recipients be able to modify the library and relink; a closed binary
+with it compiled in does not offer that. This is true **today**, under the current
+Apache-2.0 release, and has nothing to do with ASIO.
+
+So the ASIO/GPLv3 question is the easy one: it can be avoided (sign the proprietary
+agreement) or neutralised (dual license). A closed-source polyclav would instead
+need one of:
+
+1. dynamically linking oxisynth so it can be replaced (restructures the staticlib
+   boundary — the crate is compiled *into* the archive today);
+2. shipping relinkable objects, which defeats the purpose;
+3. a commercial licence from oxisynth's author; or
+4. replacing the SF2/SF3 backend with a permissively licensed one.
+
+For GPLv3 compatibility the question does not arise: LGPL-2.1 §3 permits converting
+to GPL v2 or later, so the LGPL-2.1 code sits fine inside a GPLv3 ASIO build. The
+conflict is only with a *proprietary* build.
+
 Either way, ASIO ships as an **opt-in build variant**: the default Windows release
 is WASAPI-only and stays Apache 2.0, and the ASIO binary is published separately
 with its licensing stated plainly rather than blurred.
