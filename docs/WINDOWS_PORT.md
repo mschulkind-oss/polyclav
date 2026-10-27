@@ -7,10 +7,14 @@
 > non-system DLL dependencies, and on the Windows 11 guest it runs `doctor` and
 > renders real audio offline (48 kHz stereo, peak 0.26, RMS 0.09).
 >
+> W3 has advanced too: CLAP plugins are hosted on Windows for real (clack-host;
+> `polyclav doctor` reports it as built in), and the opt-in ASIO build compiles and
+> links (§3.1) behind a one-line vendored `asio-sys` patch.
+>
 > Not yet done: a live WASAPI output stream against a real device (the VM has no
-> sound card), the ASIO build (blocked upstream — §3.1), CLAP hosting on Windows,
-> a Windows CI job, and packaging. The doc keeps the full coupling map and plan
-> because those are still the map for the remaining work.
+> sound card), a live ASIO stream against a real driver, a Windows CI job, and
+> packaging. The doc keeps the full coupling map and plan because those are still
+> the map for the remaining work.
 >
 > The VM path is verified end to end: with `"kvm": true` in the jail config,
 > dockur's Windows 11 LTSC guest installs here under real KVM acceleration
@@ -78,7 +82,7 @@ is a per-OS table with two filled rows and a third to fill.
 | **Signal handling** | `main.go:154,235,1717` — `signal.NotifyContext(…, syscall.SIGTERM)` | **Compiles unchanged.** Go defines `SIGTERM` on Windows for compatibility; it is simply never delivered. Ctrl-C (`os.Interrupt`) is the real path. |
 | **Task runner** | `Justfile` recipes are POSIX shell | **Dev-loop only.** Run `cargo`/`go` directly, or use Git Bash / MSYS2. Not a product concern. |
 | **LV2 hosting** | `plugin_lv2.rs`, `livi`/`lilv`, gated `linux` | **Drop, as macOS did.** lilv on Windows means MSYS2, and LV2 plugins are rare there (§3.4). |
-| **CLAP hosting** | `plugin_clap.rs`, `clack-host`, gated `linux` | **Re-enable for Windows.** Pure-Rust host; Windows CLAP plugins are DLLs; `libloading` works (§3.4). |
+| **CLAP hosting** | `plugin_clap.rs`, `clack-host`, gated `any(linux, windows)` | **Landed.** Pure-Rust host; Windows CLAP plugins are DLLs; `libloading` works (§3.4). |
 
 The FFI contract (`audio-core/include/polyclav_audio.h`, 33 `extern "C"`
 functions, plus the offline-render entry points) **does not change at all**. None
@@ -183,17 +187,20 @@ and driver availability, not engineering.**
 - **ASIO is exclusive**, so it takes the interface from everything else on the
   machine — the same trade-off as option C, with an extra dependency.
 
-#### ASIO build status (tried, currently blocked upstream)
+#### ASIO build status (builds; one vendored one-line patch)
 
 The `asio` cargo feature is in place: declared, **off by default**, and
 `backend_cpal.rs`'s `output_host()` prefers the ASIO host when the feature is on
 and falls back to WASAPI when no ASIO driver is installed. Nothing about a
-default build changes.
+default build changes, and a default build never touches the ASIO SDK.
 
-Building it is blocked, and not by cross-compilation. `cargo check --target
-x86_64-pc-windows-gnu --features asio` gets all the way through the ASIO SDK
-download (8.5 MB from Steinberg) and the `cc` build, then fails compiling
-`asio-sys 0.3.0`'s own generated bindings:
+**A binary built with `--features asio` links the GPL-3.0 ASIO SDK and is
+therefore distributed under GPL-3.0**, not Apache-2.0 — see the licensing
+discussion above and README.md § License. The source stays dual-licensed
+`Apache-2.0 OR GPL-3.0-only`.
+
+`cargo check --target x86_64-pc-windows-gnu --features asio` used to fail
+compiling `asio-sys 0.3.0`'s own generated bindings:
 
 ```
 error[E0080]: index out of bounds: the length is 1 but the index is 4
@@ -201,18 +208,63 @@ error[E0080]: index out of bounds: the length is 1 but the index is 4
     | ["Offset of field: AsioDrivers::connID"][offset_of!(AsioDrivers, connID) - 12usize];
 ```
 
-bindgen's layout for the C++ class `AsioDrivers` does not match what the
-compiler sees, so the generated offset assertion cannot evaluate. Reproduced with
-and without `--target` in `BINDGEN_EXTRA_CLANG_ARGS`, so it is not the cross
-toolchain: it is `asio-sys` 0.3.0 against bindgen 0.72.1. The target is
-`windows-gnu` in both cases, and `windows-gnu` is what cgo requires, so this
-blocks ASIO **on this project's toolchain** rather than merely from Linux.
+**Root cause, measured.** It is not a bindgen target model and not the cross
+toolchain. Compiled with the real Windows cross compiler, the C++ layout is:
 
-Next steps if ASIO is wanted: pin an older `bindgen`/`asio-sys`, or build the Rust
-side natively on Windows under MSYS2 and see whether a different clang reproduces
-it. Worth knowing before committing to ASIO as the plan: the advertised "supports
-both MSVC and MinGW toolchains" is not currently true of the combination this
-project needs.
+| | mingw `x86_64-w64-mingw32-g++` | `#[repr(C)]` in Rust |
+|---|---|---|
+| `sizeof(long)` | 4 (LLP64) | `c_long` = `i32` |
+| `sizeof(AsioDriverList)` | 16 | 16 |
+| `sizeof(AsioDrivers)` | 24 | 24 |
+| `alignof(AsioDrivers)` | 8 | 8 |
+| `offsetof(AsioDrivers, connID)` | **12** | **16** |
+| `offsetof(AsioDrivers, curIndex)` | **16** | **20** |
+
+`AsioDriverList` is a non-virtual class of `lpdrvlist` (8) + `numdrv` (4) = 12
+bytes of data padded to 16. The Itanium C++ ABI lets a derived class place
+`connID` in the base's **tail padding**, so `connID` sits at 12 — inside what
+`#[repr(C)]` treats as the base's trailing pad. Rust's `repr(C)` never reuses
+base tail padding, so the generated struct puts `connID` at 16. bindgen computes
+offsets with clang (12 — correct for Windows *and* for Linux: tail-padding reuse
+is not a target property) and then emits a struct Rust lays out differently, so
+its own assertion fires. Passing `--target` to clang cannot help; neither can a
+newer `asio-sys` (0.4.0's `build.rs` is byte-identical).
+
+Disabling layout tests wholesale would be the wrong fix — a wrong layout would
+corrupt memory. Instead the type is **not bound at all**:
+
+- Nothing on the Rust side uses `AsioDrivers` (or its base). Every `AsioDrivers`
+  use in the crate is C++ — `asio-link/helpers.cpp` constructs one on the stack
+  in `get_driver_names`, and `remove_current_driver` dereferences the SDK's global
+  `asioDrivers`. Neither `asio-sys/src/` nor `cpal`'s ASIO backend names the type.
+- So `audio-core/vendor/asio-sys-0.3.0/build.rs` drops the single
+  `.allowlist_type("AsioDrivers")` line, with a comment explaining why. The type
+  and its assertion disappear; **every other** ASIO type (`ASIOCallbacks`,
+  `ASIOBufferInfo`, `ASIOChannelInfo`, …) keeps its generated layout test, so the
+  structs that actually cross the Rust↔C boundary are still asserted.
+- The workspace-root `Cargo.toml` pins it with `[patch.crates-io]`. The vendored
+  copy is the pristine 0.3.0 crate from crates.io plus that one hunk, so a clean
+  checkout builds with no fork and no git dependency.
+
+Recipe (Linux cross build; from a clean checkout the build also downloads the
+8.5 MB ASIO SDK into `$TMPDIR/asio_sdk` and reuses it afterwards):
+
+```sh
+MCFG=$(fd -H 'libmcfgthread\.a$' /nix/store -t f -d 4 | head -1 | xargs dirname)
+# bindgen runs clang on the *host*, so clang needs MinGW's headers to find windows.h.
+export BINDGEN_EXTRA_CLANG_ARGS="-I<nix-store>/mingw-w64-x86_64-w64-mingw32-*-dev/include"
+nix shell nixpkgs#pkgsCross.mingwW64.stdenv.cc -c bash -c "
+  unset C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH CPATH
+  cargo check --manifest-path audio-core/Cargo.toml \
+    --target x86_64-pc-windows-gnu --features asio"
+```
+
+Both `cargo check` and `cargo build --release` succeed with that environment
+(`RUSTFLAGS="-L $MCFG -C link-arg=-static-libgcc -C link-arg=-static-libstdc++"`
+for the link, per §7). Note `BINDGEN_EXTRA_CLANG_ARGS` must carry **only** the
+MinGW-w64 headers: adding the GCC-internal include dir makes clang choke on gcc's
+`ia32intrin.h`/`mmintrin.h` builtins. On a native Windows + MSYS2 machine none of
+this applies.
 
 **So ASIO is the right answer to a different question.** It is the best
 latency-per-unit-of-effort path for a user with a pro interface that ships its own
@@ -412,8 +464,10 @@ This is the constraint most likely to burn a day if discovered late.
 - **CLAP: this is the Windows plugin story.** `clack-host` is pure Rust and
   cross-platform, Windows CLAP plugins are ordinary DLLs loaded by `libloading`,
   and the catalog (u-he, Surge XT, Dexed, Airwindows) is the same one polyclav
-  already targets. The `plugin_clap.rs` module is gated `linux` today; moving it to
-  `any(linux, windows)` is the single highest-value plugin change for Windows.
+  already targets. **Landed:** `plugin_clap.rs` and the `clack-host`/`clap-sys`
+  dependencies are gated `any(linux, windows)`, `load_synth_by_type` has a Windows
+  `clap` arm, and `polyclav doctor` reports the CLAP host as built in on Windows.
+  macOS keeps its CLAP-free FFI stubs unchanged.
 - **sfizz needs polyclav's own build, again.** `sfizz_sys.rs` `dlopen`s a bare
   library name; sfizz's official Windows download is an *installer* shipping a
   VST3 and a standalone, not a plain `sfizz.dll` to `dlopen`. So this repeats the
