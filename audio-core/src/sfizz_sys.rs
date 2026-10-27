@@ -81,23 +81,40 @@ static API: OnceLock<Option<SfizzApi>> = OnceLock::new();
 const LIB_NAMES: &[&str] = &["libsfizz.so.1", "libsfizz.so"];
 #[cfg(target_os = "macos")]
 const LIB_NAMES: &[&str] = &["libsfizz.1.dylib", "libsfizz.dylib"];
+// Windows has no soname convention, so a bare `sfizz.dll` is the whole list:
+// `LoadLibrary` searches the DLL's own directory and the PATH.
+#[cfg(target_os = "windows")]
+const LIB_NAMES: &[&str] = &["sfizz.dll"];
 
-// Filename `internal/bootstrap/sfizz.go` installs into
-// ~/.local/share/polyclav/lib/ for this platform.
+// Filename `internal/bootstrap/sfizz.go` installs for this platform, under
+// `BOOTSTRAP_LIB_DIR`.
 #[cfg(target_os = "linux")]
 const BOOTSTRAPPED_LIB_NAME: &str = "libsfizz.so";
 #[cfg(target_os = "macos")]
 const BOOTSTRAPPED_LIB_NAME: &str = "libsfizz.dylib";
+#[cfg(target_os = "windows")]
+const BOOTSTRAPPED_LIB_NAME: &str = "sfizz.dll";
+
+// Where `polyclav bootstrap` puts the library. POSIX uses the XDG-ish
+// `~/.local/share/polyclav/lib`; Windows uses `%LOCALAPPDATA%\polyclav\lib`.
+#[cfg(not(target_os = "windows"))]
+const BOOTSTRAP_LIB_DIR: &str = ".local/share/polyclav/lib";
+#[cfg(target_os = "windows")]
+const BOOTSTRAP_LIB_DIR: &str = r"polyclav\lib";
 
 /// polyclav bootstrap's own prebuilt libsfizz
 /// (`internal/bootstrap/sfizz.go`) at its fixed install path. See the
 /// module doc comment for why this exists instead of relying on any
 /// system-wide location.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 fn load_bootstrapped_lib() -> Option<Library> {
-    let home = std::env::var_os("HOME")?;
-    let path = std::path::Path::new(&home)
-        .join(".local/share/polyclav/lib")
+    // Windows has no HOME; the per-user data dir is %LOCALAPPDATA%.
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("LOCALAPPDATA")?;
+    #[cfg(not(target_os = "windows"))]
+    let base = std::env::var_os("HOME")?;
+    let path = std::path::Path::new(&base)
+        .join(BOOTSTRAP_LIB_DIR)
         .join(BOOTSTRAPPED_LIB_NAME);
     unsafe { Library::new(&path) }.ok()
 }
@@ -105,7 +122,7 @@ fn load_bootstrapped_lib() -> Option<Library> {
 /// Locates and dlopen's libsfizz: polyclav's own bootstrap-installed
 /// build first, then the bare system-search names.
 fn find_library() -> Option<Library> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
         if let Some(lib) = load_bootstrapped_lib() {
             return Some(lib);

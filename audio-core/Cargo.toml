@@ -45,10 +45,24 @@ lv2_raw = "0.2"
 clack-host = "0.1"
 clap-sys = "0.5"
 
-# --- macOS only: CoreAudio output via cpal -------------------------------
-# cpal's CoreAudio backend maps BufferSize::Fixed(n) to
+# --- macOS and Windows: cpal output --------------------------------------
+# cpal is the platform audio abstraction on both non-Linux platforms. On macOS
+# its CoreAudio backend maps BufferSize::Fixed(n) to
 # kAudioDevicePropertyBufferFrameSize — this is how polyclav dictates its own
-# buffer size on macOS. Pulls coreaudio-rs/coreaudio-sys (system frameworks;
-# no Homebrew deps).
-[target.'cfg(target_os = "macos")'.dependencies]
+# buffer size. On Windows it is WASAPI (shared mode only), where the same knob
+# is bounded by the device period, so a 128-frame request becomes ~480 frames;
+# see docs/WINDOWS_PORT.md §3.1. Pulls coreaudio-rs/coreaudio-sys (system
+# frameworks) on macOS and windows-rs on Windows — no Homebrew or SDK packages
+# either way.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = "0.18.1"
+
+[features]
+default = []
+# Windows only: adds cpal's ASIO host (asio-sys). The ASIO SDK is downloaded at
+# build time from Steinberg and needs LLVM/clang for bindgen, so this stays OFF
+# by default and must never be enabled in a default release build. A binary
+# built with this feature links the GPL-3.0 ASIO SDK and is therefore
+# distributed under GPL-3.0 rather than Apache-2.0 — see README.md § License
+# and docs/WINDOWS_PORT.md.
+asio = ["cpal/asio"]

@@ -42,9 +42,10 @@ use crate::plugin_lv2::LvInstance;
 use crate::synth::NativeSynth;
 
 mod dsp;
-// CoreAudio output backend (cpal); the macOS analog of the PipeWire path.
-#[cfg(target_os = "macos")]
-mod backend_macos;
+// cpal output backend: CoreAudio on macOS, WASAPI/ASIO on Windows. The
+// non-Linux analog of the PipeWire path.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod backend_cpal;
 #[cfg(target_os = "linux")]
 mod plugin_clap;
 #[cfg(target_os = "linux")]
@@ -1590,13 +1591,14 @@ pub extern "C" fn polyclav_audio_start() -> i32 {
     let handle = thread::Builder::new()
         .name("polyclav-audio".into())
         .spawn(move || {
-            // Platform dispatch: PipeWire on Linux, CoreAudio (cpal) on macOS.
-            // Both share the same (quit_flag, ready_tx) contract: build the
+            // Platform dispatch: PipeWire on Linux, cpal on macOS (CoreAudio)
+            // and Windows (WASAPI, or ASIO when built with that feature).
+            // All share the same (quit_flag, ready_tx) contract: build the
             // stream, signal ready, then block until quit_flag flips.
             #[cfg(target_os = "linux")]
             let setup = run_audio(quit_for_thread, &ready_tx);
-            #[cfg(target_os = "macos")]
-            let setup = crate::backend_macos::run_audio(quit_for_thread, &ready_tx);
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            let setup = crate::backend_cpal::run_audio(quit_for_thread, &ready_tx);
             if let Err(e) = setup {
                 eprintln!("audio-core: setup failed: {e}");
                 let _ = ready_tx.send(Err(e));
@@ -2107,37 +2109,40 @@ pub unsafe extern "C" fn polyclav_audio_clap_save_state(
     }
 }
 
-/// macOS stub: LV2 hosting is Linux-only (livi wraps the lilv C library,
-/// which has no macOS build). Kept as a DEFINED exported symbol so the shared,
-/// build-tag-free Go wrapper `audio.SetLv2Plugin` still links on darwin. Always
-/// returns 1 ("not available / not running").
+/// Non-Linux stub: LV2 hosting is Linux-only (livi wraps the lilv C library,
+/// which has neither a macOS nor a Windows build here). Kept as a DEFINED
+/// exported symbol so the shared, build-tag-free Go wrapper
+/// `audio.SetLv2Plugin` still links on darwin and windows. Always returns 1
+/// ("not available / not running").
 ///
 /// # Safety
 /// `uri` must be a valid NUL-terminated C string or NULL.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_lv2_plugin(_uri: *const c_char) -> i32 {
-    eprintln!("audio-core: LV2 hosting is unavailable on macOS (native/SF2/SFZ only)");
+    eprintln!("audio-core: LV2 hosting is unavailable on this platform (native/SF2/SFZ only)");
     1
 }
 
-/// macOS stub: CLAP hosting is out of scope for the v1 macOS port. Kept as a
+/// Non-Linux stub: CLAP hosting is out of scope for the v1 macOS port, and is
+/// a planned follow-on on Windows (docs/WINDOWS_PORT.md §3.4). Kept as a
 /// DEFINED exported symbol so the shared Go wrapper `audio.SetClapPlugin`
-/// still links on darwin. Always returns 1 ("not available / not running").
+/// still links on darwin and windows. Always returns 1 ("not available / not
+/// running").
 ///
 /// # Safety
 /// `bundle_path` and `plugin_id` must be valid NUL-terminated C strings or NULL.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin(
     _bundle_path: *const c_char,
     _plugin_id: *const c_char,
 ) -> i32 {
-    eprintln!("audio-core: CLAP hosting is unavailable on macOS in v1");
+    eprintln!("audio-core: CLAP hosting is unavailable on this platform in v1");
     1
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
     _bundle_path: *const c_char,
@@ -2148,13 +2153,13 @@ pub unsafe extern "C" fn polyclav_audio_set_clap_plugin_with_state(
     1
 }
 
-/// macOS fallback for the Go CLAP (CLever Audio Plugin) state wrapper, which
-/// compiles on both platforms. Plugin hosting is unavailable on macOS, so
-/// there is no state to save.
+/// Non-Linux fallback for the Go CLAP (CLever Audio Plugin) state wrapper,
+/// which compiles on every platform. Plugin hosting is unavailable on macOS and
+/// Windows, so there is no state to save.
 ///
 /// # Safety
 /// `out_len` may be NULL or point to writable memory; `out` is unused.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_save_state(
     _out: *mut u8,
@@ -2167,7 +2172,7 @@ pub unsafe extern "C" fn polyclav_audio_clap_save_state(
     1
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     _bundle_path: *const c_char,
@@ -2179,7 +2184,7 @@ pub unsafe extern "C" fn polyclav_audio_clap_discover_params(
     1
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_active_params(
     _out: *mut PolyclavClapParamInfoC,
@@ -2194,13 +2199,13 @@ pub unsafe extern "C" fn polyclav_audio_clap_active_params(
     0
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn polyclav_audio_clap_set_param(_clap_id: u32, _value: f64) -> i32 {
     1
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn polyclav_audio_clap_poll_feedback(
     _out: *mut PolyclavClapFeedbackEvent,
@@ -3251,10 +3256,10 @@ fn load_synth_by_type(
     }
 }
 
-/// macOS variant: LV2/CLAP offline hosting is unavailable there (same
+/// macOS/Windows variant: LV2/CLAP offline hosting is unavailable there (same
 /// boundary as `polyclav_audio_set_lv2_plugin`/`set_clap_plugin`'s
 /// stubs) — "soundfont" and "native" only.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn load_synth_by_type(
     patch_type: &str,
     patch_ref: &str,
@@ -3263,7 +3268,7 @@ fn load_synth_by_type(
     match patch_type {
         "soundfont" => SynthBackend::load(Path::new(patch_ref)),
         "native" => SynthBackend::load_native(patch_ref),
-        other => Err(format!("patch_type {other:?} unavailable on macOS")),
+        other => Err(format!("patch_type {other:?} unavailable on this platform")),
     }
 }
 
@@ -3931,7 +3936,7 @@ fn clamp_callback_frames(requested: usize, max_frames: usize) -> usize {
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn clap_state_save_stub_reports_unavailable() {
         let mut len = 99;
