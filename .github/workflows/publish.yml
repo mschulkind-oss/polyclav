@@ -314,36 +314,52 @@ jobs:
       - name: Build Rust audio-core
         run: cargo build --release --target x86_64-pc-windows-gnu --manifest-path audio-core/Cargo.toml
 
-      - name: Build binary (native cgo, WASAPI via cpal, system DLLs only)
+      - name: Build binaries (native cgo, WASAPI via cpal, system DLLs only)
         run: |
           mkdir -p dist
           go build -trimpath -ldflags "-s -w" -o dist/polyclav.exe ./cmd/polyclav
+          go build -trimpath -ldflags "-s -w" -o dist/polyclav-components.exe ./cmd/polyclav-components
 
       - name: Verify portability (no MinGW runtime DLLs)
-        # The narrow -static-libgcc/-static-libstdc++ pair in
-        # internal/audio/audio_windows.go is what keeps libstdc++-6.dll and
-        # libgcc_s_seh-1.dll (rtmidi is C++) off this list. If they ever come
-        # back, the exe is broken on any machine without MSYS2 installed.
+        # The -static in internal/audio/audio_windows.go is what keeps
+        # libstdc++-6.dll / libgcc_s_seh-1.dll / libwinpthread-1.dll (rtmidi is
+        # C++) off this list. If they come back, the exe is broken on any machine
+        # without MSYS2 installed. Checked for BOTH binaries: polyclav-components
+        # links the same cgo stack and can regress the same way.
         run: |
           set -euo pipefail
-          echo "imported DLLs:"; objdump -p dist/polyclav.exe | grep 'DLL Name' || true
-          if objdump -p dist/polyclav.exe | grep -Ei 'DLL Name: (libstdc\+\+-6|libgcc_s_|libwinpthread|mcfgthread)'; then
-            echo "::error::polyclav.exe imports a MinGW runtime DLL — not portable, the static link flags regressed"
-            exit 1
-          fi
+          for exe in dist/polyclav.exe dist/polyclav-components.exe; do
+            echo "=== $exe imported DLLs ==="
+            objdump -p "$exe" | grep 'DLL Name' || true
+            if objdump -p "$exe" | grep -Ei 'DLL Name: (libstdc\+\+-6|libgcc_s_|libwinpthread|mcfgthread)'; then
+              echo "::error::$exe imports a MinGW runtime DLL — not portable, the static link flags regressed"
+              exit 1
+            fi
+          done
 
-      - name: Smoke test (the exe runs on a real Windows kernel)
-        run: ./dist/polyclav.exe --version
+      - name: Smoke test (the exes run on a real Windows kernel)
+        # polyclav --version proves the daemon binary starts. The components
+        # round-trip (TOML -> SysEx -> parsed back) needs no MIDI device, so it is
+        # a real assertion here rather than a compile check; `upload` is the only
+        # subcommand that needs hardware, and it is not exercised.
+        run: |
+          set -euo pipefail
+          ./dist/polyclav.exe --version
+          hex="$(./dist/polyclav-components.exe encode cmd/polyclav-components/testdata/example.toml)"
+          [ -n "$hex" ] || { echo "::error::polyclav-components encode produced no output"; exit 1; }
+          ./dist/polyclav-components.exe decode "$hex" >/dev/null
+          echo "polyclav-components encode/decode round-trip OK"
 
-      - name: Archive the binary
+      - name: Archive the binaries
         # A zip, not a tarball, because this one is for Windows users who will
         # double-click it. Compress-Archive (pwsh) rather than 7z so the step
-        # needs nothing outside the runner image; naming the single file means
-        # polyclav.exe sits at the zip root, matching the flat layout of the
-        # Linux/macOS tarballs. polyclav-components is not included: only
-        # polyclav.exe is verified on Windows.
+        # needs nothing outside the runner image; naming the files means both
+        # exes sit at the zip root, matching the flat layout of the Linux/macOS
+        # tarballs. polyclav-components is included because the smoke test above
+        # exercises its device-free paths; its `upload` subcommand needs the
+        # Launchkey and is unverified on Windows.
         shell: pwsh
-        run: Compress-Archive -Path dist/polyclav.exe -DestinationPath dist/polyclav-windows-x86_64.zip
+        run: Compress-Archive -Path dist/polyclav.exe,dist/polyclav-components.exe -DestinationPath dist/polyclav-windows-x86_64.zip
 
       - name: Upload the zip as a build artifact
         uses: actions/upload-artifact@v4

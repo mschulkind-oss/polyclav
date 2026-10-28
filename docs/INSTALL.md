@@ -126,9 +126,13 @@ claims, so here they are separately.
 
 What works today:
 
-- **It builds.** `polyclav.exe` compiles for `windows/amd64` with cgo, and
-  its only imports are Windows system DLLs — nothing MinGW-specific to
-  install alongside it.
+- **It builds.** `polyclav.exe` and `polyclav-components.exe` compile for
+  `windows/amd64` with cgo, and their only imports are Windows system DLLs —
+  nothing MinGW-specific to install alongside them. Both ship in the release
+  zip.
+- **`polyclav-components` works for its device-free paths.** `encode`
+  (TOML → SysEx) and `decode` (SysEx → summary) are exercised by CI on Windows;
+  `upload` needs the Launchkey and is unverified there.
 - **It runs, and it renders audio offline.** Verified on a Windows 11
   LTSC guest: `polyclav doctor` reports the oxisynth and native synths
   built in (and sfizz missing, as expected), and `polyclav render`
@@ -211,6 +215,7 @@ rustup target add x86_64-pc-windows-gnu
 cargo build --release --target x86_64-pc-windows-gnu --manifest-path audio-core/Cargo.toml
 
 go build -trimpath -ldflags "-s -w" -o dist/polyclav.exe ./cmd/polyclav
+go build -trimpath -ldflags "-s -w" -o dist/polyclav-components.exe ./cmd/polyclav-components
 ```
 
 The `just` recipes are POSIX shell, so on Windows either use Git Bash /

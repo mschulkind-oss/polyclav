@@ -10,7 +10,7 @@ else. Nothing is uploaded from a developer machine.
 |---|---|
 | `build-linux` | manylinux wheel → PyPI (`uvx polyclav`, `pipx install polyclav`) |
 | `build-macos` | macOS arm64 wheel → PyPI, plus `polyclav-macos-arm64.tar.gz` |
-| `build-windows` | `polyclav-windows-x86_64.zip` (with `polyclav.exe`) as a **release asset** |
+| `build-windows` | `polyclav-windows-x86_64.zip` (with `polyclav.exe` and `polyclav-components.exe`) as a **release asset** |
 | `update-homebrew-tap` | rewrites the tap formula to the new version |
 | `publish` | publishes the wheels to PyPI |
 
@@ -53,10 +53,32 @@ gh run watch <run-id> -R mschulkind-oss/polyclav
    not `+dirty`.
 3. **The exe is portable.** `objdump -p polyclav.exe | grep 'DLL Name'` should
    list only Windows system DLLs.
-4. **The Scoop manifest matches the asset.** `bucket/polyclav.json` in the bucket
+4. **The zip contains both binaries.** `unzip -l` should show `polyclav.exe`
+   and `polyclav-components.exe`. A zip with only the daemon is a build-windows
+   step that lost the components build, and the Scoop manifest's `bin` is
+   derived from what the archive actually holds — so a partial zip produces a
+   manifest that shims only `polyclav`.
+5. **The Scoop manifest matches the asset.** `bucket/polyclav.json` in the bucket
    repo must carry the new version and the sha256 of the *published* zip
    (`sha256sum polyclav-windows-x86_64.zip`). See
    [`SCOOP.md`](./SCOOP.md).
+
+## sfizz is built and released separately
+
+`sfizz.dll` (Windows), `libsfizz.dylib` (macOS) and `libsfizz.so` (Linux) are
+**not** part of a versioned release. Each is built by its own workflow and
+published under a `sfizz-<os>-<ref>` tag:
+
+| Workflow | Asset | Tag |
+|---|---|---|
+| `build-sfizz-windows.yml` | `sfizz.dll` | `sfizz-windows-<ref>` |
+| `build-sfizz-macos.yml` | `libsfizz.dylib` | `sfizz-macos-<ref>` |
+| `build-sfizz-linux.yml` | `libsfizz.so` | `sfizz-linux-<ref>` |
+
+All three are `workflow_dispatch` only, because sfizz releases infrequently and
+re-running on every push would risk picking up an unreviewed sfizz version.
+`polyclav bootstrap` downloads the matching asset; a missing asset means `.sfz`
+patches are silent, not that bootstrap fails.
 
 ## Point releases
 

@@ -248,9 +248,15 @@ should be Windows system DLLs, never `libstdc++-6` / `libgcc_s_*` /
 objdump -p dist/polyclav.exe | grep 'DLL Name'
 ```
 
-`polyclav-components` (the Launchkey SysEx CLI) is not verified on Windows and
-is not built by the release workflow; build it with the same `go build` line if
-you want it.
+Build `polyclav-components` (the Launchkey Custom-mode SysEx CLI) with the same
+`go build` line, or take it from the release zip, which ships both exes:
+
+```sh
+go build -trimpath -ldflags "-s -w" -o dist/polyclav-components.exe ./cmd/polyclav-components
+```
+
+Its `encode` and `decode` subcommands are device-free and covered by CI on
+Windows; `upload` needs the Launchkey itself and is unverified there.
 
 #### Optional: the ASIO backend
 

@@ -27,6 +27,17 @@ hash=$(sha256sum "$zip" | cut -d' ' -f1)
 asset=$(basename "$zip")
 repo="https://github.com/mschulkind-oss/polyclav"
 
+# Derive `bin` from what the archive actually contains, not from what the
+# release *should* contain. Scoop errors when a `bin` target is missing from the
+# installed files, so a manifest that lists polyclav-components.exe against a zip
+# built before it was included would break `scoop install`. v0.3.1's zip has only
+# polyclav.exe; later ones carry both.
+contents=$(unzip -Z1 "$zip")
+bin_json='"polyclav.exe"'
+if grep -qx 'polyclav-components.exe' <<<"$contents"; then
+  bin_json='["polyclav.exe", "polyclav-components.exe"]'
+fi
+
 mkdir -p "$(dirname "$out")"
 cat >"$out" <<EOF
 {
@@ -41,7 +52,7 @@ cat >"$out" <<EOF
       "hash": "$hash"
     }
   },
-  "bin": "polyclav.exe",
+  "bin": $bin_json,
   "checkver": {
     "github": "$repo"
   },

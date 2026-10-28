@@ -81,7 +81,7 @@ is a per-OS table with two filled rows and a third to fill.
 | **Audio output** | `lib.rs` dispatch at `1594-1600`; `run_audio`/`process_audio` (Linux, `#[cfg(target_os = "linux")]`), `backend_macos.rs` (macOS, cpal) | **New backend file.** cpal/WASAPI works and is the cheap path; latency is the caveat (§3.1). |
 | **Latency knob** | `LATENCY_FRAMES` in `lib.rs`, already shared and clamped to `[16,8192]` by `polyclav_audio_set_latency_frames` | **Reusable unchanged.** The *number* survives; what a backend can honour does not (§3.1). |
 | **`load_synth_by_type`** | `lib.rs:3237` (linux), `lib.rs:3258` (macos) | **Third arm.** Same body as the macOS one (soundfont + native only). |
-| **sfizz dlopen** | `sfizz_sys.rs:80-90` — `LIB_NAMES`, `BOOTSTRAPPED_LIB_NAME`; bootstrap path gated to `any(macos, linux)` | **Third arm** — `sfizz.dll`, and the bootstrap dir under `%LOCALAPPDATA%`. Needs polyclav's own DLL build (§3.4). |
+| **sfizz dlopen** | `sfizz_sys.rs` — `LIB_NAMES`, `BOOTSTRAPPED_LIB_NAME`, and the bootstrap dir, all now `any(macos, linux, windows)` | **Done in Rust.** `sfizz.dll` and the data dir resolve from `%LOCALAPPDATA%`. The DLL itself comes from `build-sfizz-windows.yml` (§3.4); `internal/bootstrap` still needs its `case "windows"` once that asset exists. |
 | **Go cgo preamble** | `internal/audio/audio_linux.go`, `audio_darwin.go` | **New `audio_windows.go`.** MinGW system-lib list, static link (§3.3). |
 | **Singleton lock** | `cmd/polyclav/singleton_unix.go` (`//go:build unix`, `syscall.Flock`) | **New `singleton_windows.go`** — `LockFileEx` or a named `CreateMutex`. |
 | **MIDI input** | `internal/midi/midi.go`, `internal/launchkey/driver/driver.go` → `gomidi` → vendored rtmidi | **Already portable.** `#cgo windows` → WinMM. Port-name heuristics (`PickPortName` substrings tuned to ALSA names) will need re-checking against WinMM names. |
@@ -496,11 +496,24 @@ This is the constraint most likely to burn a day if discovered late.
 - **sfizz needs polyclav's own build, again.** `sfizz_sys.rs` `dlopen`s a bare
   library name; sfizz's official Windows download is an *installer* shipping a
   VST3 and a standalone, not a plain `sfizz.dll` to `dlopen`. So this repeats the
-  macOS arm64 story: a `build-sfizz-windows.yml` workflow builds polyclav's own
-  DLL from sfizz's vendored-submodule tree, publishes it as a release asset, and
-  `internal/bootstrap/sfizz.go` grows a `case "windows":` returning
-  `sfizz.dll`. Optional backend either way — `.sfz` patches degrade gracefully
-  when the DLL is absent, which is already the contract.
+  macOS arm64 story, and `.github/workflows/build-sfizz-windows.yml` now builds
+  polyclav's own DLL from sfizz's vendored-submodule tree on a `windows-latest`
+  runner, publishing it under the `sfizz-windows-<ref>` tag.
+
+  It uses MSVC at `-A x64`, matching sfztools' own Windows job, but links the C
+  runtime statically (`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`) so the DLL does
+  not need `vcruntime140.dll`/`msvcp140.dll` on the user's machine — the same
+  class of bug that shipped v0.3.0 without a Windows asset. The workflow asserts
+  the PE machine type is x64 and that no CRT is imported.
+
+  **Remaining step:** `internal/bootstrap/sfizz.go` still has no `case
+  "windows":`, so `polyclav bootstrap` does not fetch it yet. That is deliberate
+  and must land *after* the first `sfizz-windows-<ref>` release exists —
+  `bootstrap` treats a failed sfizz install as fatal, so a case pointing at a
+  missing asset would break bootstrap on Windows. Until then, `.sfz` patches are
+  silent on Windows and SF2/SF3 plus the native synth work normally. Optional
+  backend either way — `.sfz` patches degrade gracefully when the DLL is absent,
+  which is already the contract.
 
 ## 4. Porting plan
 

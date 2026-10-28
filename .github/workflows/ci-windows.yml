@@ -124,6 +124,25 @@ jobs:
       - name: Go tests (device-free)
         run: go test ./...
 
+      - name: Build and smoke-test polyclav-components (device-free)
+        # The Launchkey Custom-mode CLI: encode TOML -> SysEx, decode SysEx back.
+        # Neither touches a device, so the round-trip is a real assertion even on
+        # a runner with no MIDI hardware — unlike `upload`, which needs the
+        # Launchkey and is not covered here.
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          go build -o bin/polyclav-components.exe ./cmd/polyclav-components
+          hex="$(./bin/polyclav-components.exe encode cmd/polyclav-components/testdata/example.toml)"
+          if [ -z "$hex" ]; then
+            echo "::error::polyclav-components encode produced no output"
+            exit 1
+          fi
+          echo "encoded: $(printf '%s' "$hex" | wc -w) bytes"
+          ./bin/polyclav-components.exe decode "$hex" >/dev/null
+          echo "polyclav-components encode/decode round-trip OK"
+
       - name: Link statically — no MinGW C/C++ runtime DLL dependencies
         # The Go link must produce an exe that depends only on Windows system
         # DLLs. rtmidi is C++, so a default MinGW link would leave
@@ -145,17 +164,23 @@ jobs:
           set -euo pipefail
           mkdir -p bin
           go build -o bin/polyclav.exe ./cmd/polyclav
-          echo "DLL dependencies:"
-          objdump -p bin/polyclav.exe | grep 'DLL Name' | sed 's/^[[:space:]]*//' | sort -u || true
+          # polyclav-components is built by the smoke-test step above; both link
+          # the same cgo stack, so both are checked.
+          for exe in bin/polyclav.exe bin/polyclav-components.exe; do
+            echo "DLL dependencies ($exe):"
+            objdump -p "$exe" | grep 'DLL Name' | sed 's/^[[:space:]]*//' | sort -u || true
+          done
           # Assert the SAME set the release job asserts. Asserting only
           # libgcc/libstdc++ here is what let v0.3.0 go green in CI and then
           # fail at release time on libwinpthread-1.dll — a portability check
           # that is narrower than the release's is worse than none, because it
           # reports success for an artifact that cannot run on a clean machine.
-          if objdump -p bin/polyclav.exe | grep -Eqi 'libgcc_s|libstdc\+\+|libwinpthread|mcfgthread'; then
-            echo "::error::polyclav.exe depends on a MinGW runtime DLL — the -static flag is missing from internal/audio/audio_windows.go's cgo LDFLAGS"
-            exit 1
-          fi
+          for exe in bin/polyclav.exe bin/polyclav-components.exe; do
+            if objdump -p "$exe" | grep -Eqi 'libgcc_s|libstdc\+\+|libwinpthread|mcfgthread'; then
+              echo "::error::$exe depends on a MinGW runtime DLL — the -static flag is missing from internal/audio/audio_windows.go's cgo LDFLAGS"
+              exit 1
+            fi
+          done
 
   build-asio:
     # OPTIONAL, NON-BLOCKING — do not make this required until it is known to

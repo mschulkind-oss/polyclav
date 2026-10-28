@@ -1,8 +1,13 @@
 # Installing on Windows with Scoop
 
-polyclav ships as a portable `polyclav.exe` inside a zip, which is exactly what
+polyclav ships as portable executables inside a zip, which is exactly what
 Scoop is good at: user-scope install, no admin, no installer, and upgrades that
 do not fight a running process.
+
+The zip carries `polyclav.exe` (the daemon) and `polyclav-components.exe` (the
+Launchkey Custom-mode SysEx CLI) once both are in the release. The manifest's
+`bin` is derived from what the archive actually contains, so a release built
+before components was included still shims only `polyclav` rather than failing.
 
 ## Install
 

@@ -1,0 +1,160 @@
+# Builds polyclav's own x64 sfizz.dll and publishes it as a polyclav GitHub
+# Release asset, which `polyclav bootstrap` downloads on Windows
+# (internal/bootstrap/sfizz.go). It exists for the same reason the macOS one
+# does: sfztools publishes no dlopen-able Windows DLL. Their Windows download is
+# an installer for the VST3 and standalone builds, and polyclav dlopen's a bare
+# library (audio-core/src/sfizz_sys.rs), so it has to build its own.
+#
+# Manual trigger only: sfizz releases infrequently, and re-running this on every
+# push would waste runner minutes and risk silently picking up an unreviewed
+# sfizz version. Bump `sfizz_ref` by hand and re-run when there is a reason to.
+#
+# The build mirrors sfztools' own Windows job (build_for_windows in
+# sfztools/sfizz's .github/workflows/build.yml): the Visual Studio generator at
+# -A x64, with every SFIZZ_USE_SYSTEM_* dependency coming from the vendored git
+# submodules, so there is nothing to install. Two deliberate differences:
+#
+#   1. CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded links the C runtime statically
+#      (/MT). With the default (/MD) the DLL would need vcruntime140.dll and
+#      msvcp140.dll on the user's machine — the same class of bug that shipped
+#      v0.3.0 without a Windows asset, where polyclav.exe turned out to import
+#      libwinpthread-1.dll. The verify step below fails loudly if it regresses.
+#   2. No tests/demos/devtools/benchmarks, matching the macOS build: this
+#      produces a library for polyclav to load, not a distributable product.
+name: Build sfizz for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      sfizz_ref:
+        description: 'sfztools/sfizz git tag to build (must match internal/bootstrap/sfizz.go''s sfizz-windows-<ref> tag)'
+        required: true
+        default: '1.2.3'
+
+permissions:
+  contents: write # to create the release and upload the asset
+
+jobs:
+  build:
+    name: Build x64 sfizz.dll
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sfztools/sfizz
+        uses: actions/checkout@v4
+        with:
+          repository: sfztools/sfizz
+          ref: ${{ inputs.sfizz_ref }}
+          submodules: recursive
+          path: sfizz-src
+
+      - name: Configure CMake (Release, shared lib, static CRT)
+        working-directory: sfizz-src
+        shell: pwsh
+        run: >
+          cmake -B build -S . -A x64
+          -D CMAKE_POLICY_DEFAULT_CMP0091=NEW
+          -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          -D SFIZZ_SHARED=ON
+          -D SFIZZ_TESTS=OFF
+          -D SFIZZ_RENDER=OFF
+          -D SFIZZ_DEMOS=OFF
+          -D SFIZZ_DEVTOOLS=OFF
+          -D SFIZZ_BENCHMARKS=OFF
+
+      - name: Build
+        working-directory: sfizz-src
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Locate the built DLL
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path 'sfizz-src\build' -Recurse -Filter 'sfizz.dll' -File |
+            Select-Object -First 1
+          if (-not $dll) {
+            # Tolerate a libsfizz.dll spelling rather than failing on a name.
+            $dll = Get-ChildItem -Path 'sfizz-src\build' -Recurse -Include '*sfizz*.dll' -File |
+              Select-Object -First 1
+          }
+          if (-not $dll) {
+            Write-Error 'no sfizz DLL found under sfizz-src\build -- the CMake install layout may have changed'
+            Get-ChildItem -Path 'sfizz-src\build' -Recurse -Include '*.dll' | Select-Object FullName
+            exit 1
+          }
+          Write-Output "Found: $($dll.FullName)"
+          "DLL=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Verify the DLL (x64, no MSVC runtime dependency)
+        shell: pwsh
+        run: |
+          $dll = $env:DLL
+
+          # PE machine type at e_lfanew+4: 0x8664 is x64. Read the header rather
+          # than trusting the generator, so an accidental -A Win32 fails here.
+          $fs = [System.IO.File]::OpenRead($dll)
+          try {
+            $br = New-Object System.IO.BinaryReader($fs)
+            $fs.Seek(0x3C, 'Begin') | Out-Null
+            $peOff = $br.ReadInt32()
+            $fs.Seek($peOff + 4, 'Begin') | Out-Null
+            $machine = $br.ReadUInt16()
+          } finally { $fs.Close() }
+          if ($machine -ne 0x8664) {
+            Write-Error ('built DLL is not x64 (PE machine 0x{0:X4}) -- refusing to publish' -f $machine)
+            exit 1
+          }
+          Write-Output 'PE machine: 0x8664 (x64)'
+
+          # dumpbin is not on PATH on a runner; find it under the VS install.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { Write-Error 'vswhere found no Visual Studio install'; exit 1 }
+          $dumpbin = Get-ChildItem -Path (Join-Path $vsPath 'VC\Tools\MSVC') -Recurse -Filter 'dumpbin.exe' |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
+          if (-not $dumpbin) { Write-Error 'dumpbin not found under the VS install'; exit 1 }
+
+          $deps = & $dumpbin.FullName /dependents $dll
+          $deps | Write-Output
+
+          # With /MT the DLL must import no CRT at all. VCRUNTIME/MSVCP/MSVCR
+          # mean the static-CRT flag did not take effect; api-ms-win-crt-* means
+          # the UCRT came in dynamically (harmless on Windows 10+, but a sign the
+          # flag was ignored), so both are treated as failures.
+          $bad = $deps | Select-String -Pattern 'VCRUNTIME|MSVCP|MSVCR|api-ms-win-crt'
+          if ($bad) {
+            Write-Error "sfizz.dll imports the C runtime ($($bad -join ', ')) -- CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded did not take effect"
+            exit 1
+          }
+          Write-Output 'no C runtime dependency'
+
+      - name: Stage the release asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-asset | Out-Null
+          Copy-Item $env:DLL 'release-asset\sfizz.dll'
+          # BSD-2-Clause requires retaining the copyright/license text in
+          # redistributions of the binary.
+          $lic = 'sfizz-src\LICENSE.md'
+          if (-not (Test-Path $lic)) { $lic = 'sfizz-src\LICENSE' }
+          Copy-Item $lic 'release-asset\sfizz-LICENSE.md'
+          Get-ChildItem release-asset | Select-Object Name, Length
+
+      - name: Create or update the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="sfizz-windows-${{ inputs.sfizz_ref }}"
+          NOTES="polyclav's own x64 build of sfztools/sfizz ${{ inputs.sfizz_ref }} (BSD-2-Clause), built with MSVC from vendored git submodules on a windows-latest runner -- **not** an official sfztools release. sfztools' Windows download is an installer for the VST3 and standalone builds, with no dlopen-able DLL, so \`polyclav bootstrap\` needs this one (see internal/bootstrap/sfizz.go and audio-core/src/sfizz_sys.rs)."
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-asset/sfizz.dll release-asset/sfizz-LICENSE.md \
+              --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "sfizz $TAG (Windows x64, unofficial polyclav build)" \
+              --notes "$NOTES" \
+              release-asset/sfizz.dll release-asset/sfizz-LICENSE.md
+          fi
