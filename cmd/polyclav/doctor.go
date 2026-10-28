@@ -150,9 +150,10 @@ func sfizzInstallHint(goos string) []string {
 		}
 	case "windows":
 		return []string{
-			"        -> polyclav does not ship a prebuilt Windows sfizz.dll yet.",
-			"        sfztools' Windows download is an installer for the VST3 and",
-			"        standalone builds, not a dlopen-able DLL. Build one from",
+			"        -> run `polyclav bootstrap` to install it automatically",
+			"        (polyclav builds its own x64 sfizz.dll: sfztools' Windows",
+			"        download is an installer for the VST3 and standalone builds,",
+			"        with no dlopen-able DLL). Manual alternative: build from",
 			"        source: https://github.com/sfztools/sfizz",
 		}
 	default:

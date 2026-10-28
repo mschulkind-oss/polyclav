@@ -81,10 +81,12 @@ static API: OnceLock<Option<SfizzApi>> = OnceLock::new();
 const LIB_NAMES: &[&str] = &["libsfizz.so.1", "libsfizz.so"];
 #[cfg(target_os = "macos")]
 const LIB_NAMES: &[&str] = &["libsfizz.1.dylib", "libsfizz.dylib"];
-// Windows has no soname convention, so a bare `sfizz.dll` is the whole list:
-// `LoadLibrary` searches the DLL's own directory and the PATH.
+// Windows has no soname convention, so these are just the candidate filenames:
+// `LoadLibrary` searches the DLL's own directory and the PATH. `sfizz.dll` is
+// what build-sfizz-windows.yml publishes (MSVC names the target without a `lib`
+// prefix); `libsfizz.dll` is accepted too so a MinGW-built copy also loads.
 #[cfg(target_os = "windows")]
-const LIB_NAMES: &[&str] = &["sfizz.dll"];
+const LIB_NAMES: &[&str] = &["sfizz.dll", "libsfizz.dll"];
 
 // Filename `internal/bootstrap/sfizz.go` installs for this platform, under
 // `bootstrap_lib_dir()`.

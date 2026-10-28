@@ -42,6 +42,13 @@ func sfizzAssetFor(goos string) (assetName, url string, ok bool) {
 		return "libsfizz.dylib", "https://github.com/mschulkind-oss/polyclav/releases/download/sfizz-macos-" + sfizzVersion + "/libsfizz.dylib", true
 	case "linux":
 		return "libsfizz.so", "https://github.com/mschulkind-oss/polyclav/releases/download/sfizz-linux-" + sfizzVersion + "/libsfizz.so", true
+	case "windows":
+		// Built by .github/workflows/build-sfizz-windows.yml: MSVC at -A x64
+		// with a static C runtime, so the DLL imports only KERNEL32.dll and
+		// needs no VC++ redistributable on the user's machine. sfztools' own
+		// Windows download is an installer for the VST3/standalone builds and
+		// ships no dlopen-able DLL.
+		return "sfizz.dll", "https://github.com/mschulkind-oss/polyclav/releases/download/sfizz-windows-" + sfizzVersion + "/sfizz.dll", true
 	default:
 		return "", "", false
 	}

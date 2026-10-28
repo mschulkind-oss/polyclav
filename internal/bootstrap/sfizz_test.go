@@ -14,7 +14,7 @@ import (
 )
 
 func TestSfizzAssetForSupportedPlatforms(t *testing.T) {
-	for _, goos := range []string{"darwin", "linux"} {
+	for _, goos := range []string{"darwin", "linux", "windows"} {
 		name, url, ok := sfizzAssetFor(goos)
 		if !ok {
 			t.Errorf("%s: expected ok=true", goos)
@@ -29,8 +29,27 @@ func TestSfizzAssetForSupportedPlatforms(t *testing.T) {
 }
 
 func TestSfizzAssetForUnsupportedPlatform(t *testing.T) {
-	if _, _, ok := sfizzAssetFor("windows"); ok {
-		t.Error("windows has no polyclav-built sfizz asset yet; expected ok=false")
+	// Every OS polyclav ships for now has an asset; this pins the default
+	// branch for anything else rather than leaving it untested.
+	for _, goos := range []string{"freebsd", "js", ""} {
+		if _, _, ok := sfizzAssetFor(goos); ok {
+			t.Errorf("%q has no polyclav-built sfizz asset; expected ok=false", goos)
+		}
+	}
+}
+
+// The Windows asset name must match what audio-core/src/sfizz_sys.rs
+// dlopen's first (LIB_NAMES) and what bootstrap writes into the data dir.
+func TestSfizzWindowsAssetNameMatchesTheLoader(t *testing.T) {
+	name, url, ok := sfizzAssetFor("windows")
+	if !ok {
+		t.Fatal("windows: expected ok=true")
+	}
+	if name != "sfizz.dll" {
+		t.Errorf("windows asset name = %q, want sfizz.dll (sfizz_sys.rs LIB_NAMES)", name)
+	}
+	if !strings.Contains(url, "sfizz-windows-") {
+		t.Errorf("windows asset URL = %q, want the sfizz-windows-<ref> tag", url)
 	}
 }
 

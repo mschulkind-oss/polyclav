@@ -135,7 +135,7 @@ What works today:
   `upload` needs the Launchkey and is unverified there.
 - **It runs, and it renders audio offline.** Verified on a Windows 11
   LTSC guest: `polyclav doctor` reports the oxisynth and native synths
-  built in (and sfizz missing, as expected), and `polyclav render`
+  built in, and `polyclav render`
   produces a correct 48 kHz stereo WAV (2.000 s, peak 0.26, RMS 0.09) —
   that path needs no audio device.
 - **The WASAPI output path is compiled in.** Windows shares the cpal
@@ -253,16 +253,19 @@ installs the binary as `7zz`, not `7z` (bootstrap checks both names). If
 neither is found, bootstrap reports which packages to install rather
 than a raw "executable not found" error.
 
-On macOS and Linux, bootstrap also installs SFZ (`.sfz`) support
-automatically: sfztools publishes no working prebuilt for either platform
+On every platform, bootstrap also installs SFZ (`.sfz`) support
+automatically: sfztools publishes no working prebuilt for any of the three
 (their macOS release is x86_64-only and can't be used by a native arm64
-process; their Linux releases ship no binary at all), so bootstrap
-downloads polyclav's own build instead —
+process; their Linux releases ship no binary at all; their Windows download
+is an installer for the VST3/standalone builds, with no `dlopen`-able DLL),
+so bootstrap downloads polyclav's own build instead —
 `.github/workflows/build-sfizz-macos.yml` /
-`build-sfizz-linux.yml` — to `~/.local/share/polyclav/lib/libsfizz.dylib`
-or `libsfizz.so`. No Homebrew formula exists for sfizz either, so this is
-the only cross-distro-consistent path on both platforms. See
-`internal/bootstrap/sfizz.go` and `docs/MACOS_PORT.md`.
+`build-sfizz-linux.yml` / `build-sfizz-windows.yml` — into the data dir's
+`lib/` (`~/.local/share/polyclav/lib/libsfizz.dylib` or `libsfizz.so` on
+macOS and Linux, `%LOCALAPPDATA%\polyclav\lib\sfizz.dll` on Windows). No
+Homebrew formula exists for sfizz either, so this is the only
+cross-distro-consistent path. See `internal/bootstrap/sfizz.go` and
+`docs/MACOS_PORT.md`.
 
 ### Manual: download by hand
 
