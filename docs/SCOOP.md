@@ -54,22 +54,36 @@ not updated for a release.
 
 ## Keeping it current
 
-Two options; pick one and write it down here once it is settled.
+**Chosen: manual, from the release.** No secret to rotate, one step per release.
+After a release publishes, regenerate the manifest from the *published* asset
+and push it to the bucket:
 
-1. **Manual, from the release.** After a release, regenerate the manifest from
-   the published asset and push it to the bucket repo. Simple, no secret, and
-   one step per release.
-2. **Automated, from CI.** `publish.yml`'s `build-windows` job regenerates the
-   manifest and pushes it to the bucket repo using a `SCOOP_BUCKET_TOKEN` secret
-   (fine-grained PAT, `contents: write` on that one repo). More moving parts, but
-   no manual step.
+```sh
+curl -sSL -o /tmp/polyclav-windows-x86_64.zip \
+  https://github.com/mschulkind-oss/polyclav/releases/download/vX.Y.Z/polyclav-windows-x86_64.zip
+scripts/scoop-manifest.sh X.Y.Z /tmp/polyclav-windows-x86_64.zip <bucket>/bucket/polyclav.json
+git -C <bucket> commit -am "polyclav X.Y.Z"
+git -C <bucket> push
+```
 
-Whichever is chosen, the check in [`RELEASE.md`](./RELEASE.md) applies: the
-manifest's version and hash must match the asset that was actually published.
+Use `curl`, not `gh release download`: the github broker refuses the latter
+because it writes files on the host, while the asset URL is public.
 
-## Not yet done
+The alternative, if that step gets tedious: have `publish.yml`'s `build-windows`
+job regenerate the manifest and push it with a `SCOOP_BUCKET_TOKEN` secret
+(fine-grained PAT, `contents: write` on just that repo). Not done — one more
+secret to rotate for one step per release.
 
-- The bucket repo and its first manifest do not exist yet; they appear at the
-  first Windows release.
+Either way, the check in [`RELEASE.md`](./RELEASE.md) applies: the manifest's
+version and hash must match the asset that was actually published.
+
+## Status
+
+- **Live.** The bucket exists and carries `polyclav.json` 0.3.1, generated from
+  the published `polyclav-windows-x86_64.zip`
+  (sha256 `1427fe4e…`).
+- `checkver`/`autoupdate` are in the manifest, so `scoop update` can find later
+  releases on its own. A fresh `scoop install` still uses the committed version
+  and hash, so regenerate after each release.
 - The binary is unsigned, so the first run shows SmartScreen's "Windows protected
   your PC". Scoop users are used to this; code signing is tracked separately.
